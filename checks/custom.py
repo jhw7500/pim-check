@@ -5,6 +5,9 @@ from __future__ import annotations
 
 from checks.base_check import BaseCheck
 
+# 타겟에서 실행 금지 패턴 (root로 실행되므로 주의)
+_DANGEROUS_PATTERNS = ["rm -rf", "mkfs", "dd if=", "fdisk", "> /dev/"]
+
 
 class CustomCommandCheck(BaseCheck):
     name = "custom_commands"
@@ -18,6 +21,18 @@ class CustomCommandCheck(BaseCheck):
         for cmd_spec in commands:
             name = cmd_spec.get("name", "unnamed")
             command = cmd_spec.get("command", "")
+
+            # 위험 명령 차단
+            cmd_lower = command.lower()
+            if any(p in cmd_lower for p in _DANGEROUS_PATTERNS):
+                results.append({
+                    "name": name, "command": command, "output": None,
+                    "expected": cmd_spec.get("expected"),
+                    "expected_min": cmd_spec.get("expected_min"),
+                    "on_fail": f"BLOCKED: dangerous command pattern in '{command}'",
+                })
+                continue
+
             output = ssh.run(command)
 
             results.append({

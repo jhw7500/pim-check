@@ -8,8 +8,9 @@ class ProcessCheck(BaseCheck):
 
     def collect(self, ssh, config: dict) -> dict:
         """타겟에서 프로세스 실행 여부 및 CPU 사용률을 수집한다."""
-        required = config["processes"]["required"]
-        optional = config["processes"]["optional"]
+        proc_config = config.get("processes", {})
+        required = proc_config.get("required", [])
+        optional = proc_config.get("optional", [])
         all_procs = required + optional
 
         running = []
@@ -32,9 +33,11 @@ class ProcessCheck(BaseCheck):
 
     def validate(self, data: dict, config: dict) -> tuple[bool, str]:
         """수집된 데이터를 기준값과 비교하여 통과 여부를 반환한다."""
-        required = config["processes"]["required"]
-        bg_check_max = config["cpu"]["bg_check_max_pct"]
-        gst_min, gst_max = config["cpu"]["gst_range"]
+        required = config.get("processes", {}).get("required", [])
+        cpu_config = config.get("cpu", {})
+        bg_check_max = cpu_config.get("bg_check_max_pct", 3.0)
+        gst_range = cpu_config.get("gst_range", [0, 100])
+        gst_min, gst_max = gst_range[0], gst_range[1]
 
         issues = []
 

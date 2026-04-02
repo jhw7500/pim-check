@@ -18,18 +18,27 @@ class SetupManager:
         self.ssh.run(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP}")
 
     def apply_changes(self, changes: dict) -> None:
-        """jq를 사용하여 edgeconf에 변경사항을 적용한다."""
+        """jq --arg를 사용하여 edgeconf에 변경사항을 안전하게 적용한다."""
         for jq_path, value in changes.items():
             if isinstance(value, bool):
+                # bool은 jq 리터럴로 직접 삽입 (--argjson)
                 jq_value = "true" if value else "false"
-            elif isinstance(value, str):
-                jq_value = f'"{value}"'
+                self.ssh.run(
+                    f"jq '{jq_path} = {jq_value}' {EDGECONF_PATH} "
+                    f"> /tmp/_edgeconf_tmp.json && mv /tmp/_edgeconf_tmp.json {EDGECONF_PATH}"
+                )
+            elif isinstance(value, (int, float)):
+                # 숫자도 --argjson으로 안전 삽입
+                self.ssh.run(
+                    f"jq --argjson v {value} '{jq_path} = $v' {EDGECONF_PATH} "
+                    f"> /tmp/_edgeconf_tmp.json && mv /tmp/_edgeconf_tmp.json {EDGECONF_PATH}"
+                )
             else:
-                jq_value = str(value)
-            self.ssh.run(
-                f"jq '{jq_path} = {jq_value}' {EDGECONF_PATH} "
-                f"> /tmp/_edgeconf_tmp.json && mv /tmp/_edgeconf_tmp.json {EDGECONF_PATH}"
-            )
+                # 문자열은 --arg로 안전 삽입 (셸 인젝션 방지)
+                self.ssh.run(
+                    f"jq --arg v '{value}' '{jq_path} = $v' {EDGECONF_PATH} "
+                    f"> /tmp/_edgeconf_tmp.json && mv /tmp/_edgeconf_tmp.json {EDGECONF_PATH}"
+                )
 
     def restore(self) -> None:
         """백업에서 edgeconf 파일을 복원한다."""
