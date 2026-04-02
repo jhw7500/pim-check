@@ -1,0 +1,10 @@
+# 720p 2채널 모니터링
+name: "720p 2채널"
+description: "1280x720 2채널 기본 테스트"
+
+checks:
+  cpu:
+    gst_range: [5, 60]
+  recording:
+    expected_channels: 2
+    session_progress: "2/2"

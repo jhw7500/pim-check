@@ -1,0 +1,57 @@
+# base.yaml — 공통 기본값 (모든 케이스가 상속)
+target:
+  host: 192.168.0.5
+  user: root
+  password: root
+
+monitor:
+  duration_sec: 300
+  interval_sec: 5
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - BG_Check_for_pim
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states:
+      - healthy
+      - degraded
+      - recovering
+      - failed
+    expected_state: healthy
+    max_streak: 0
+
+  legacy_files:
+    must_not_exist:
+      - /tmp/bg_cam_err_streak
+      - /tmp/pim_cam_start_ts
+      - /tmp/cam_state.json
+
+  cpu:
+    bg_check_max_pct: 3.0
+    gst_range: [0, 100]
+
+  thermal:
+    max_temp_c: 85
+    warn_temp_c: 80
+
+  jq:
+    max_forks_per_sample: 2
+
+  recording:
+    expected_channels: null
+    session_progress: null
+
+  logs:
+    error_patterns:
+      - "kernel panic"
+      - "Oops"
+      - "oom-kill"
+      - "CAM_STATE.*invalid"

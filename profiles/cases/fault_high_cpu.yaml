@@ -1,0 +1,24 @@
+# Fault: CPU 이상 사용량 감지
+# gstApp 또는 BG_Check의 CPU가 비정상적으로 높거나 낮은 상태
+name: "Fault: High CPU"
+description: "CPU 사용량 이상 감지 (범위 벗어남)"
+
+checks:
+  cpu:
+    bg_check_max_pct: 2.0
+    gst_range: [10, 80]
+
+  thermal:
+    max_temp_c: 80
+    warn_temp_c: 75
+
+  custom_commands:
+    - name: "System load average"
+      command: "cat /proc/loadavg | awk '{print $1}'"
+      expected_min: 0
+      on_fail: "Cannot read system load"
+
+    - name: "No OOM kills"
+      command: "journalctl -k --since '10 min ago' --no-pager 2>/dev/null | grep -ic 'oom-kill\\|out of memory' || true"
+      expected: "0"
+      on_fail: "OOM killer has been triggered"

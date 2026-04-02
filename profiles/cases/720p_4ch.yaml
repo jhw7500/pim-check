@@ -1,0 +1,10 @@
+# 720p 4채널 모니터링
+name: "720p 4채널"
+description: "1280x720 4채널 테스트"
+
+checks:
+  cpu:
+    gst_range: [20, 80]
+  recording:
+    expected_channels: 4
+    session_progress: "4/4"

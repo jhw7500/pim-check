@@ -1,0 +1,36 @@
+# Fault: 카메라 채널 에러 감지
+# 특정 채널의 ch*_error가 true인 상태 감지
+name: "Fault: Camera Channel Error"
+description: "카메라 채널 에러 플래그 감지 (ch*_error != false)"
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states:
+      - healthy
+      - degraded
+      - recovering
+      - failed
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "Camera ch0 no error"
+      command: "cat /tmp/cam_state/channels/ch0_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 0 has error flag set"
+
+    - name: "Camera ch1 no error"
+      command: "cat /tmp/cam_state/channels/ch1_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 1 has error flag set"
+
+    - name: "Camera ch2 no error"
+      command: "cat /tmp/cam_state/channels/ch2_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 2 has error flag set"
+
+    - name: "Camera ch3 no error"
+      command: "cat /tmp/cam_state/channels/ch3_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 3 has error flag set"

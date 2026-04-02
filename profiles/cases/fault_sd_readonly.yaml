@@ -1,0 +1,21 @@
+# Fault: 저장소 쓰기 불가 감지
+# eMMC 루트 파티션의 쓰기 가능 여부 + 디스크 공간 체크
+name: "Fault: Storage Write Check"
+description: "저장소 쓰기 가능 여부 및 디스크 공간 감지"
+
+checks:
+  custom_commands:
+    - name: "Root filesystem writable"
+      command: "touch /tmp/.pim_check_test && rm -f /tmp/.pim_check_test && echo OK"
+      expected: "OK"
+      on_fail: "Root filesystem is read-only or write failed"
+
+    - name: "shared_v writable"
+      command: "touch /root/shared_v/.pim_check_test && rm -f /root/shared_v/.pim_check_test && echo OK"
+      expected: "OK"
+      on_fail: "shared_v directory is not writable"
+
+    - name: "Root disk free > 1GB"
+      command: "df / --output=avail | tail -1 | tr -d ' '"
+      expected_min: 1048576
+      on_fail: "Root disk free space below 1GB"

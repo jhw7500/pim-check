@@ -1,0 +1,31 @@
+# Fault: 카메라 연결 해제/전체 장애 감지
+# cam_state가 healthy가 아닌 상태 (failed, degraded) 감지
+name: "Fault: Camera Disconnect"
+description: "카메라 전체 연결 해제 또는 심각한 장애 감지"
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states:
+      - healthy
+      - degraded
+      - recovering
+      - failed
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "cam_state dir exists"
+      command: "test -d /tmp/cam_state && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "cam_state directory missing - camera subsystem not initialized"
+
+    - name: "gstApp running"
+      command: "pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "gstApp not running - camera pipeline down"
+
+    - name: "No recent camera errors (last 5min)"
+      command: "journalctl -k --since '5 min ago' --no-pager 2>/dev/null | grep -ic 'max9296.*error\\|camera.*fault' || true"
+      expected: "0"
+      on_fail: "Recent kernel camera errors detected"

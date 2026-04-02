@@ -1,0 +1,24 @@
+# Fault: gstApp 크래시/미실행 감지
+# gstApp가 죽었거나 시작되지 않은 상태
+name: "Fault: gstApp Crash"
+description: "gstApp 프로세스 미실행 또는 크래시 감지"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  custom_commands:
+    - name: "gstApp core dump"
+      command: "test -n \"$(ls /tmp/core.gstApp* 2>/dev/null)\" && echo FOUND || echo NONE"
+      expected: "NONE"
+      on_fail: "gstApp core dump found - process crashed"
+
+    - name: "gstApp restart count"
+      command: "journalctl -t gstApp --since '10 min ago' 2>/dev/null | grep -c 'start\\|init' || echo 0"
+      expected_min: 0
+      on_fail: "gstApp restarting too frequently"

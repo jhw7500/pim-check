@@ -1,0 +1,22 @@
+# Fault: 저장소 필수 디렉토리 존재 여부
+# 녹화/설정에 필요한 디렉토리가 존재하는지 확인
+name: "Fault: Storage Directories"
+description: "필수 저장소 디렉토리 존재 여부 감지"
+
+checks:
+  legacy_files:
+    must_exist:
+      - /root/shared_v
+      - /root/shared_v/edgeconf_pim.json
+    must_not_exist: []
+
+  custom_commands:
+    - name: "edgeconf valid JSON"
+      command: "jq empty /root/shared_v/edgeconf_pim.json 2>&1 && echo VALID || echo INVALID"
+      expected: "VALID"
+      on_fail: "edgeconf_pim.json is not valid JSON"
+
+    - name: "tmp dir writable"
+      command: "touch /tmp/.pim_check_test && rm -f /tmp/.pim_check_test && echo OK"
+      expected: "OK"
+      on_fail: "/tmp is not writable"

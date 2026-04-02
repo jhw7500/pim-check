@@ -1,0 +1,16 @@
+# RTSP 비활성화 테스트
+name: "RTSP 비활성화"
+description: "RTSP off 상태에서 녹화만 동작 확인"
+
+setup:
+  edgeconf_changes:
+    ".RTSP.enable": false
+  reboot_after: true
+  stabilize_sec: 30
+
+checks:
+  cpu:
+    gst_range: [5, 70]
+  recording:
+    expected_channels: null
+    session_progress: null

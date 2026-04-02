@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import glob
+import os
+import sys
+
+from config import load_profile
+from engine import Engine
+from reporter import Reporter
+from setup import SetupManager
+from ssh import SshClient, SshConnectionError
+
+PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="pim-check — iMX8MP 타겟 QA 자동화 툴"
+    )
+    parser.add_argument("--case", type=str, default=None, help="실행할 테스트 케이스 이름")
+    parser.add_argument("--all", action="store_true", help="모든 케이스 실행")
+    parser.add_argument("--host", type=str, default="192.168.0.5", help="타겟 IP 주소")
+    parser.add_argument("--duration", type=int, default=None, help="모니터 duration 오버라이드 (초)")
+    parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
+    parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드 (stub)")
+    return parser.parse_args(argv)
+
+
+def list_cases() -> list[str]:
+    """profiles/cases/*.yaml 글로브로 케이스 목록을 반환한다."""
+    pattern = os.path.join(PROFILES_DIR, "cases", "*.yaml")
+    paths = glob.glob(pattern)
+    return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
+
+
+def run_case(case_name, host, duration) -> int:
+    """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
+    profile = load_profile(PROFILES_DIR, case=case_name)
+
+    # host 오버라이드
+    profile["target"]["host"] = host
+
+    # duration 오버라이드
+    if duration is not None:
+        profile["monitor"]["duration_sec"] = duration
+
+    user = profile["target"].get("user", "root")
+    password = profile["target"].get("password", "root")
+    effective_duration = profile["monitor"].get("duration_sec", 0)
+
+    ssh = SshClient(host, user, password)
+
+    print(f"Connecting to {host}...")
+
+    if not ssh.check_connectivity():
+        print(f"ERROR: Cannot connect to {host}")
+        return 1
+
+    # Amendment 3: Preflight check
+    missing = ssh.preflight_check()
+    if missing:
+        print(f"WARNING: Missing tools on target: {', '.join(missing)}")
+        print("Some checks may produce incomplete results.")
+
+    # Setup (Phase 4): apply edgeconf changes if defined
+    setup_config = profile.get("setup")
+    setup_mgr = SetupManager(ssh)
+    if setup_config:
+        try:
+            setup_mgr.run_setup(setup_config)
+        except TimeoutError as e:
+            print(f"ERROR: Setup failed - {e}")
+            return 1
+
+    try:
+        engine = Engine(ssh, profile)
+
+        if effective_duration <= 0:
+            results = engine.run_snapshot()
+            collected, total = 1, 1
+        else:
+            results, collected, total = engine.run_monitor()
+
+        reporter = Reporter()
+        print(reporter.format(results, case_name, collected, total))
+
+        all_passed = all(r["passed"] for r in results)
+        return 0 if all_passed else 1
+    finally:
+        # Teardown: restore original config
+        if setup_config:
+            try:
+                setup_mgr.run_teardown(setup_config)
+            except TimeoutError as e:
+                print(f"WARNING: Teardown failed - {e}")
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+
+    if args.list:
+        cases = list_cases()
+        if cases:
+            print("Available cases:")
+            for c in cases:
+                print(f"  {c}")
+        else:
+            print("No cases found in profiles/cases/")
+        return 0
+
+    if args.learn:
+        print("Learn mode: not yet implemented (planned for future release)")
+        return 0
+
+    if args.all:
+        cases = list_cases()
+        if not cases:
+            print("No cases found.")
+            return 1
+        worst = 0
+        for case_name in cases:
+            ret = run_case(case_name, args.host, args.duration)
+            if ret != 0:
+                worst = ret
+        return worst
+
+    return run_case(args.case, args.host, args.duration)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
