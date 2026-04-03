@@ -1,0 +1,39 @@
+# 동작 검증: HD→FHD 해상도 변경
+# SD 없이도 가능 — 설정 변경 + 재부팅 + gstApp/cam_state 확인
+name: "Verify: Resolution HD→FHD"
+description: "해상도를 FHD로 변경하고 gstApp/cam_state가 정상 동작하는지 확인"
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1920
+    ".VHL_CAM.cam_height": 1080
+  reboot_after: true
+  stabilize_sec: 40
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states: [healthy, degraded, recovering, failed]
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "edgeconf cam_width=1920 적용됨"
+      command: "jq '.VHL_CAM.cam_width' /root/shared_v/edgeconf_pim.json"
+      expected: "1920"
+      on_fail: "cam_width가 1920으로 변경되지 않음"
+
+    - name: "edgeconf cam_height=1080 적용됨"
+      command: "jq '.VHL_CAM.cam_height' /root/shared_v/edgeconf_pim.json"
+      expected: "1080"
+      on_fail: "cam_height가 1080으로 변경되지 않음"
+
+    - name: "gstApp 실행 중"
+      command: "pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "해상도 변경 후 gstApp 미실행"
+
+    - name: "gstApp CPU 부하 확인 (FHD 범위)"
+      command: "ps -C gstApp -o %cpu= | head -1 | tr -d ' ' | cut -d. -f1"
+      expected_min: 10
+      on_fail: "gstApp CPU가 너무 낮음 — 동작 안 하는 것일 수 있음"

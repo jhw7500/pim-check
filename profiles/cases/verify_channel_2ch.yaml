@@ -1,0 +1,45 @@
+# 동작 검증: 4ch→2ch 채널 변경
+name: "Verify: Channel 4ch→2ch"
+description: "ch2/ch3 비활성화 후 2ch 모드 동작 확인"
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1280
+    ".VHL_CAM.cam_height": 720
+    ".VHL_CAM.i2c1.ch2.enable": false
+    ".VHL_CAM.i2c1.ch3.enable": false
+  reboot_after: true
+  stabilize_sec: 30
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states: [healthy, degraded, recovering, failed]
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "ch2 disable 적용됨"
+      command: "jq '.VHL_CAM.i2c1.ch2.enable' /root/shared_v/edgeconf_pim.json"
+      expected: "false"
+      on_fail: "ch2가 비활성화되지 않음"
+
+    - name: "ch3 disable 적용됨"
+      command: "jq '.VHL_CAM.i2c1.ch3.enable' /root/shared_v/edgeconf_pim.json"
+      expected: "false"
+      on_fail: "ch3가 비활성화되지 않음"
+
+    - name: "gstApp 실행 중"
+      command: "pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "2ch 모드에서 gstApp 미실행"
+
+    - name: "cam_state healthy"
+      command: "cat /tmp/cam_state/state 2>/dev/null || echo unknown"
+      expected: "healthy"
+      on_fail: "2ch 모드에서 cam_state가 healthy가 아님"
+
+    - name: "ch2 에러 파일 없음 (비활성화됨)"
+      command: "cat /tmp/cam_state/channels/ch2_error 2>/dev/null || echo DISABLED"
+      expected: "false"
+      on_fail: "ch2 비활성화 상태인데 에러 플래그 발생"

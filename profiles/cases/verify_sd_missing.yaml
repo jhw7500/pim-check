@@ -1,0 +1,62 @@
+# SD 불량/미삽입 상태 동작 검증
+# SD 카드 없을 때 시스템이 정상 대응하는지 확인
+name: "Verify: SD Missing Behavior"
+description: "SD 카드 미삽입 상태에서 시스템 안정성 확인"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states: [healthy, degraded, recovering, failed]
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    # === SD 미삽입 감지 ===
+    - name: "SD 카드 블록 디바이스 없음"
+      command: "test -b /dev/mmcblk1 && echo PRESENT || echo MISSING"
+      expected: "MISSING"
+      on_fail: "SD 카드 블록 디바이스가 존재함 (미삽입 테스트 환경 아님)"
+
+    - name: "SD 에러 파일 생성됨"
+      command: "test -e /tmp/err_sdcard.log && echo EXISTS || echo NONE"
+      expected: "EXISTS"
+      on_fail: "SD 미삽입인데 에러 파일이 생성되지 않음"
+
+    # === SD 없어도 시스템 안정 ===
+    - name: "gstApp 크래시 안 함"
+      command: "pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "SD 없는 상태에서 gstApp 크래시"
+
+    - name: "eMMC에 영상 쓰지 않음"
+      command: "find /mnt/sd-cam -name '*.mp4' 2>/dev/null | wc -l | tr -d ' '"
+      expected: "0"
+      on_fail: "SD 없는데 eMMC에 영상 저장됨 — Board #24 위반"
+
+    - name: "cam_state 정상 유지"
+      command: "cat /tmp/cam_state/state 2>/dev/null || echo unknown"
+      expected: "healthy"
+      on_fail: "SD 없는 상태에서 cam_state 이상"
+
+    - name: "ORD 프로세스 안정"
+      command: "pgrep -x ord > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "SD 없는 상태에서 ORD 크래시"
+
+    - name: "시스템 로그에 panic 없음"
+      command: "journalctl -k --since '5 min ago' --no-pager 2>/dev/null | grep -ic 'panic\\|oops' || true"
+      expected: "0"
+      on_fail: "SD 미삽입 상태에서 커널 패닉 발생"
+
+    - name: "tmp_path fallback 동작"
+      command: "jq '.VHL_CAM.tmp_path_fallback_active' /root/shared_v/edgeconf_pim.json 2>/dev/null || echo false"
+      expected: "true"
+      on_fail: "tmp_path fallback이 비활성화됨"

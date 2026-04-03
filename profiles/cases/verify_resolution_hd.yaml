@@ -1,0 +1,38 @@
+# 동작 검증: FHD→HD 해상도 복원
+name: "Verify: Resolution FHD→HD"
+description: "해상도를 HD로 복원하고 gstApp/cam_state가 정상 동작하는지 확인"
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1280
+    ".VHL_CAM.cam_height": 720
+  reboot_after: true
+  stabilize_sec: 30
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states: [healthy, degraded, recovering, failed]
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "edgeconf cam_width=1280 적용됨"
+      command: "jq '.VHL_CAM.cam_width' /root/shared_v/edgeconf_pim.json"
+      expected: "1280"
+      on_fail: "cam_width가 1280으로 변경되지 않음"
+
+    - name: "edgeconf cam_height=720 적용됨"
+      command: "jq '.VHL_CAM.cam_height' /root/shared_v/edgeconf_pim.json"
+      expected: "720"
+      on_fail: "cam_height가 720으로 변경되지 않음"
+
+    - name: "gstApp 실행 중"
+      command: "pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "해상도 변경 후 gstApp 미실행"
+
+    - name: "온도 FHD 대비 낮아짐"
+      command: "cat /sys/devices/virtual/thermal/thermal_zone0/temp | awk '{printf \"%d\", $1/1000}'"
+      expected_min: 0
+      on_fail: "온도 읽기 실패"

@@ -1,0 +1,40 @@
+# 동작 검증: 2ch→4ch 채널 복원
+name: "Verify: Channel 2ch→4ch"
+description: "ch2/ch3 활성화 후 4ch 모드 동작 확인"
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1280
+    ".VHL_CAM.cam_height": 720
+    ".VHL_CAM.i2c1.ch2.enable": true
+    ".VHL_CAM.i2c1.ch3.enable": true
+  reboot_after: true
+  stabilize_sec: 30
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states: [healthy, degraded, recovering, failed]
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "ch2 enable 적용됨"
+      command: "jq '.VHL_CAM.i2c1.ch2.enable' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "ch2가 활성화되지 않음"
+
+    - name: "ch3 enable 적용됨"
+      command: "jq '.VHL_CAM.i2c1.ch3.enable' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "ch3가 활성화되지 않음"
+
+    - name: "4채널 모두 에러 파일 존재"
+      command: "ls /tmp/cam_state/channels/ 2>/dev/null | grep -c 'error'"
+      expected_min: 4
+      on_fail: "4채널 에러 파일이 모두 생성되지 않음"
+
+    - name: "전 채널 에러 없음"
+      command: "cat /tmp/cam_state/channels/ch0_error /tmp/cam_state/channels/ch1_error /tmp/cam_state/channels/ch2_error /tmp/cam_state/channels/ch3_error 2>/dev/null | grep -c 'true' || true"
+      expected: "0"
+      on_fail: "일부 채널에 에러 발생"

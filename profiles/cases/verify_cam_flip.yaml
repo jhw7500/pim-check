@@ -1,0 +1,26 @@
+# 동작 검증: Cam Flip 설정 변경
+name: "Verify: Cam H-Flip"
+description: "ch0 H-Flip 설정 변경 후 적용 확인"
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.i2c2.ch0.hflip": true
+  reboot_after: true
+  stabilize_sec: 30
+
+checks:
+  custom_commands:
+    - name: "ch0 hflip=true 적용됨"
+      command: "jq '.VHL_CAM.i2c2.ch0.hflip' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "ch0 hflip 설정이 적용되지 않음"
+
+    - name: "gstApp 정상 실행"
+      command: "pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "Flip 설정 변경 후 gstApp 미실행"
+
+    - name: "cam_state healthy"
+      command: "cat /tmp/cam_state/state 2>/dev/null || echo unknown"
+      expected: "healthy"
+      on_fail: "Flip 설정 후 cam_state 이상"
