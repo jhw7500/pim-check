@@ -4,6 +4,7 @@ tests/test_simulation.py - 시뮬레이션 케이스 코드 기반 검증 (1차)
 """
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import MagicMock
 
@@ -12,7 +13,7 @@ from checks.custom import CustomCommandCheck
 from checks.process import ProcessCheck
 from checks.cam_state import CamStateCheck
 
-PROFILES_DIR = "/home/jhw/ai/opencode/projects/pim-package/tools/pim-check/profiles"
+PROFILES_DIR = os.path.join(os.path.dirname(__file__), "..", "profiles")
 
 
 class TestFaultStorageWrite(unittest.TestCase):

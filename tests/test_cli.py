@@ -22,9 +22,16 @@ class TestParseArgs(unittest.TestCase):
     def test_defaults(self):
         args = pim_check.parse_args([])
         self.assertIsNone(args.case)
-        self.assertEqual(args.host, "192.168.0.5")
+        self.assertIsNone(args.host)
+        self.assertIsNone(args.user)
+        self.assertIsNone(args.password)
         self.assertIsNone(args.duration)
         self.assertFalse(args.all)
+
+    def test_user_password_flags(self):
+        args = pim_check.parse_args(["--user", "admin", "--password", "secret"])
+        self.assertEqual(args.user, "admin")
+        self.assertEqual(args.password, "secret")
 
     def test_case_flag(self):
         args = pim_check.parse_args(["--case", "fhd_4ch"])
@@ -63,7 +70,7 @@ class TestMainFlow(unittest.TestCase):
         MockReporter.return_value.format.return_value = "PASS report"
 
         # duration=0 → run_snapshot 경로
-        ret = pim_check.run_case("healthcheck", "192.168.0.5", 0)
+        ret = pim_check.run_case("healthcheck", "192.168.0.5", None, None, 0)
         self.assertEqual(ret, 0)
         MockEngine.return_value.run_snapshot.assert_called_once()
         MockEngine.return_value.run_monitor.assert_not_called()
@@ -82,7 +89,7 @@ class TestMainFlow(unittest.TestCase):
 
         MockReporter.return_value.format.return_value = "FAIL report"
 
-        ret = pim_check.run_case("healthcheck", "192.168.0.5", 0)
+        ret = pim_check.run_case("healthcheck", "192.168.0.5", None, None, 0)
         self.assertEqual(ret, 1)
 
 

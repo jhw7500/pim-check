@@ -21,7 +21,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument("--case", type=str, default=None, help="실행할 테스트 케이스 이름")
     parser.add_argument("--all", action="store_true", help="모든 케이스 실행")
-    parser.add_argument("--host", type=str, default="192.168.0.5", help="타겟 IP 주소")
+    parser.add_argument("--host", type=str, default=None, help="타겟 IP 주소")
+    parser.add_argument("--user", type=str, default=None, help="SSH 유저")
+    parser.add_argument("--password", type=str, default=None, help="SSH 비밀번호")
     parser.add_argument("--duration", type=int, default=None, help="모니터 duration 오버라이드 (초)")
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
     parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드 (stub)")
@@ -35,17 +37,21 @@ def list_cases() -> list[str]:
     return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
 
 
-def run_case(case_name, host, duration) -> int:
+def run_case(case_name, host, user, password, duration) -> int:
     """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
-    # host 오버라이드
-    profile["target"]["host"] = host
-
-    # duration 오버라이드
+    # CLI 오버라이드 (지정된 값만 덮어씀)
+    if host is not None:
+        profile["target"]["host"] = host
+    if user is not None:
+        profile["target"]["user"] = user
+    if password is not None:
+        profile["target"]["password"] = password
     if duration is not None:
         profile["monitor"]["duration_sec"] = duration
 
+    host = profile["target"].get("host", "192.168.0.5")
     user = profile["target"].get("user", "root")
     password = profile["target"].get("password", "root")
     effective_duration = profile["monitor"].get("duration_sec", 0)
@@ -121,12 +127,12 @@ def main(argv=None) -> int:
             return 1
         worst = 0
         for case_name in cases:
-            ret = run_case(case_name, args.host, args.duration)
+            ret = run_case(case_name, args.host, args.user, args.password, args.duration)
             if ret != 0:
                 worst = ret
         return worst
 
-    return run_case(args.case, args.host, args.duration)
+    return run_case(args.case, args.host, args.user, args.password, args.duration)
 
 
 if __name__ == "__main__":
