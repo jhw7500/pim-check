@@ -117,7 +117,15 @@ def main(argv=None) -> int:
         return 0
 
     if args.learn:
-        print("Learn mode: not yet implemented (planned for future release)")
+        from learner import learn_baseline
+        host = args.host or "192.168.0.5"
+        ssh = SshClient(host, args.user or "root", args.password or "root")
+        print(f"Learning baseline from {host}...")
+        if not ssh.check_connectivity():
+            print(f"ERROR: Cannot reach {host}")
+            return 1
+        yaml_output = learn_baseline(ssh, name=args.case)
+        print(yaml_output)
         return 0
 
     if args.all:
