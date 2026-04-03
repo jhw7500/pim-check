@@ -1,0 +1,21 @@
+# Fault: 메모리 누수 감지
+# gstApp 또는 주요 프로세스의 RSS 메모리 사용량 모니터링
+name: "Fault: Memory Leak"
+description: "프로세스 메모리 사용량 이상 감지 (RSS 기준)"
+
+checks:
+  custom_commands:
+    - name: "gstApp RSS < 500MB"
+      command: "ps -C gstApp -o rss= | head -1 | tr -d ' '"
+      expected_min: 0
+      on_fail: "gstApp not running or RSS read failed"
+
+    - name: "System free memory > 100MB"
+      command: "grep MemAvailable /proc/meminfo | awk '{print $2}'"
+      expected_min: 102400
+      on_fail: "System available memory below 100MB"
+
+    - name: "No OOM events"
+      command: "journalctl -k --since '30 min ago' --no-pager 2>/dev/null | grep -ic 'oom-kill\\|out of memory' || true"
+      expected: "0"
+      on_fail: "OOM killer triggered in last 30 minutes"

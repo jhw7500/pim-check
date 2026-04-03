@@ -1,0 +1,31 @@
+# Fault: I2C 버스 에러 감지
+# MAX9296/AP1302 관련 I2C 통신 에러 모니터링
+name: "Fault: I2C Bus Error"
+description: "I2C 버스 에러 감지 (카메라 통신 장애)"
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states:
+      - healthy
+      - degraded
+      - recovering
+      - failed
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "No recent I2C errors"
+      command: "journalctl -k --since '5 min ago' --no-pager 2>/dev/null | grep -ic 'i2c.*error\\|i2c.*timeout\\|i2c.*nak' || true"
+      expected: "0"
+      on_fail: "I2C bus errors detected in kernel log"
+
+    - name: "MAX9296 device present"
+      command: "test -d /sys/bus/i2c/devices/2-0048 && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "MAX9296 I2C device not found on bus"
+
+    - name: "Camera channels responding"
+      command: "ls /tmp/cam_state/channels/ 2>/dev/null | wc -l | tr -d ' '"
+      expected_min: 1
+      on_fail: "No camera channel state files found"

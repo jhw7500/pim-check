@@ -73,6 +73,11 @@ class CustomCommandCheck(BaseCheck):
                     issues.append(f'{r["name"]}: {r["on_fail"]} ({val} < {r["expected_min"]})')
                 continue
 
+            # expected도 expected_min도 없으면 — 명령 실행 성공 여부만 확인
+            if output is None:
+                issues.append(f'{r["name"]}: {r["on_fail"]} (command returned no output)')
+                continue
+
         if issues:
             return (False, "; ".join(issues))
         return (True, "OK")

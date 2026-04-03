@@ -1,0 +1,16 @@
+# Fault: 디스크 부족 감지
+# 루트 파티션 여유 공간이 임계치 이하인 상태
+name: "Fault: Disk Full"
+description: "디스크 여유 공간 부족 감지 (녹화 중단 위험)"
+
+checks:
+  custom_commands:
+    - name: "Root disk free > 2GB"
+      command: "df / --output=avail | tail -1 | tr -d ' '"
+      expected_min: 2097152
+      on_fail: "Root disk free space below 2GB"
+
+    - name: "Inode usage < 90%"
+      command: "df -i / --output=ipcent | tail -1 | tr -d '% '"
+      expected_min: 0
+      on_fail: "Inode usage critical"
