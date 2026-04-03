@@ -18,10 +18,16 @@ class ProcessCheck(BaseCheck):
         cpu: dict[str, float] = {}
 
         for proc in all_procs:
+            # pgrep -x: 정확한 프로세스 이름 매칭 (바이너리)
+            # pgrep -f: 명령줄 전체 매칭 (셸 스크립트 폴백)
             result = ssh.run(f"pgrep -x {proc}")
+            if result is None:
+                result = ssh.run(f"pgrep -f {proc}")
             if result is not None:
                 running.append(proc)
-                cpu_raw = ssh.run(f"ps -C {proc} -o %cpu= | head -1")
+                # ps -C는 정확한 이름만 지원하므로 PID 기반으로 CPU 조회
+                pid = result.splitlines()[0].strip()
+                cpu_raw = ssh.run(f"ps -p {pid} -o %cpu= 2>/dev/null | head -1")
                 try:
                     cpu[proc] = float(cpu_raw)
                 except (TypeError, ValueError):
