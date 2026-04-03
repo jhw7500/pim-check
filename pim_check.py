@@ -26,7 +26,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--password", type=str, default=None, help="SSH 비밀번호")
     parser.add_argument("--duration", type=int, default=None, help="모니터 duration 오버라이드 (초)")
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
-    parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드 (stub)")
+    parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드")
+    parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
     return parser.parse_args(argv)
 
 
@@ -37,7 +38,7 @@ def list_cases() -> list[str]:
     return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
 
 
-def run_case(case_name, host, user, password, duration) -> int:
+def run_case(case_name, host, user, password, duration, save_json=False) -> int:
     """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
@@ -92,6 +93,11 @@ def run_case(case_name, host, user, password, duration) -> int:
         reporter = Reporter()
         print(reporter.format(results, case_name, collected, total))
 
+        if save_json:
+            report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+            filepath = reporter.save_json(results, case_name, host, collected, total, report_dir)
+            print(f"JSON report saved: {filepath}")
+
         all_passed = all(r["passed"] for r in results)
         return 0 if all_passed else 1
     finally:
@@ -135,12 +141,12 @@ def main(argv=None) -> int:
             return 1
         worst = 0
         for case_name in cases:
-            ret = run_case(case_name, args.host, args.user, args.password, args.duration)
+            ret = run_case(case_name, args.host, args.user, args.password, args.duration, args.json)
             if ret != 0:
                 worst = ret
         return worst
 
-    return run_case(args.case, args.host, args.user, args.password, args.duration)
+    return run_case(args.case, args.host, args.user, args.password, args.duration, args.json)
 
 
 if __name__ == "__main__":
