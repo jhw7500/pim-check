@@ -1,0 +1,26 @@
+# Fault: RTC 시간 초기화/정지 감지
+# RTC 통신은 되지만 시간이 1970/2000년이거나 진행되지 않는 경우
+name: "Fault: RTC Time Stuck"
+description: "RTC 시간 초기화 또는 정지 상태 감지"
+
+checks:
+  custom_commands:
+    - name: "RTC device accessible"
+      command: "hwclock -r > /dev/null 2>&1 && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "Cannot read RTC"
+
+    - name: "RTC year not reset (>= 2024)"
+      command: "hwclock -r 2>/dev/null | grep -oE '[0-9]{4}' | head -1 || echo 0"
+      expected_min: 2024
+      on_fail: "RTC year is reset — battery dead or RTC initialization failed"
+
+    - name: "System year valid"
+      command: "date +%Y"
+      expected_min: 2024
+      on_fail: "System clock year invalid — NTP sync may have failed"
+
+    - name: "RTC is advancing (2s check)"
+      command: "T1=$(hwclock -r 2>/dev/null | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1); sleep 2; T2=$(hwclock -r 2>/dev/null | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1); [ \"$T1\" != \"$T2\" ] && echo ADVANCING || echo STUCK"
+      expected: "ADVANCING"
+      on_fail: "RTC time is not advancing — clock oscillator may be dead"

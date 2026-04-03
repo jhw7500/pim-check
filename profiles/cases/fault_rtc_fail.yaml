@@ -1,0 +1,26 @@
+# Fault: RTC 통신 실패 감지
+# 부팅 후 RTC 디바이스와 I2C 통신이 안 되는 경우
+name: "Fault: RTC Communication Failure"
+description: "RTC 디바이스 통신 실패 감지"
+
+checks:
+  custom_commands:
+    - name: "RTC device exists"
+      command: "test -c /dev/rtc0 && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "RTC device /dev/rtc0 not found — driver not loaded or I2C failure"
+
+    - name: "RTC readable via hwclock"
+      command: "hwclock -r > /dev/null 2>&1 && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "hwclock cannot read RTC — I2C bus communication failure"
+
+    - name: "No RTC errors in dmesg"
+      command: "journalctl -k --no-pager 2>/dev/null | grep -ic 'rtc.*error\\|rtc.*fail\\|rtc.*timeout' || true"
+      expected: "0"
+      on_fail: "RTC errors found in kernel log"
+
+    - name: "I2C bus for RTC responsive"
+      command: "i2cdetect -y 0 2>/dev/null | grep -c 'UU\\|[0-9a-f][0-9a-f]' || echo 0"
+      expected_min: 1
+      on_fail: "I2C bus 0 has no devices responding"

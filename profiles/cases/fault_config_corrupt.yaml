@@ -1,0 +1,31 @@
+# Fault: 설정 파일 손상 감지
+# edgeconf_pim.json이 빈 파일, 잘못된 JSON, 필수 키 누락
+name: "Fault: Config Corrupt"
+description: "edgeconf 설정 파일 무결성 확인"
+
+checks:
+  legacy_files:
+    must_exist:
+      - /root/shared_v/edgeconf_pim.json
+    must_not_exist: []
+
+  custom_commands:
+    - name: "edgeconf is valid JSON"
+      command: "jq empty /root/shared_v/edgeconf_pim.json 2>&1 && echo VALID || echo INVALID"
+      expected: "VALID"
+      on_fail: "edgeconf_pim.json is not valid JSON — file corrupted"
+
+    - name: "edgeconf not empty"
+      command: "test -s /root/shared_v/edgeconf_pim.json && echo OK || echo EMPTY"
+      expected: "OK"
+      on_fail: "edgeconf_pim.json is empty"
+
+    - name: "edgeconf has VHL_CAM section"
+      command: "jq 'has(\"VHL_CAM\")' /root/shared_v/edgeconf_pim.json 2>/dev/null || echo false"
+      expected: "true"
+      on_fail: "edgeconf missing VHL_CAM section"
+
+    - name: "edgeconf cam_width is numeric"
+      command: "jq '.VHL_CAM.cam_width | type' /root/shared_v/edgeconf_pim.json 2>/dev/null || echo null"
+      expected: "\"number\""
+      on_fail: "cam_width is not a number — config may be corrupted"

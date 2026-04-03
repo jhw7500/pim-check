@@ -1,0 +1,40 @@
+# Fault: gstApp 좀비/비정상 동작 감지
+# 프로세스는 실행 중이지만 실제로 동작하지 않는 상태
+# 영상 파일 미생성, 권한 문제, 커널 드라이버 에러 등
+name: "Fault: gstApp Zombie"
+description: "gstApp 프로세스 살아있지만 비정상 동작 감지"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  custom_commands:
+    - name: "gstApp file descriptors open"
+      command: "ls /proc/$(pgrep -x gstApp)/fd 2>/dev/null | wc -l | tr -d ' '"
+      expected_min: 5
+      on_fail: "gstApp has too few open file descriptors — may be stuck"
+
+    - name: "gstApp not in D state"
+      command: "cat /proc/$(pgrep -x gstApp)/status 2>/dev/null | grep State | awk '{print $2}'"
+      expected: "S"
+      on_fail: "gstApp in uninterruptible sleep (D state) — likely stuck on I/O"
+
+    - name: "Recording files being updated"
+      command: "find /tmp/cam_state/recording/ -mmin -2 2>/dev/null | wc -l | tr -d ' '"
+      expected_min: 1
+      on_fail: "No recording state files updated in last 2 minutes"
+
+    - name: "No gstApp segfault in dmesg"
+      command: "journalctl -k --since '5 min ago' --no-pager 2>/dev/null | grep -ic 'gstApp.*segfault\\|gstApp.*signal' || true"
+      expected: "0"
+      on_fail: "gstApp crash signal detected in kernel log"
+
+    - name: "Video device accessible"
+      command: "test -c /dev/video0 && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "Video device /dev/video0 not found — driver issue"

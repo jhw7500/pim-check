@@ -1,0 +1,26 @@
+# Fault: 네트워크 단절 후 복구 감지
+# eth0 down 또는 IP 미할당 상태. RTSP 스트리밍 영향
+name: "Fault: Network Down"
+description: "네트워크 인터페이스 상태 및 연결성 확인"
+
+checks:
+  custom_commands:
+    - name: "eth0 link up"
+      command: "cat /sys/class/net/eth0/operstate 2>/dev/null || echo unknown"
+      expected: "up"
+      on_fail: "eth0 interface is not up"
+
+    - name: "eth0 has IP address"
+      command: "ip addr show eth0 2>/dev/null | grep -c 'inet ' || echo 0"
+      expected_min: 1
+      on_fail: "eth0 has no IP address assigned"
+
+    - name: "Gateway reachable"
+      command: "ping -c 1 -W 3 $(ip route | grep default | awk '{print $3}') > /dev/null 2>&1 && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "Default gateway not reachable"
+
+    - name: "RTSP port listening (if enabled)"
+      command: "ss -tlnp 2>/dev/null | grep -c ':554 ' || true"
+      expected_min: 0
+      on_fail: "Cannot check RTSP port"

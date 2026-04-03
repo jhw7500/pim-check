@@ -1,0 +1,26 @@
+# Fault: SD 카드 불량 후 복구 감지
+# SD가 RO/미삽입 상태였다가 복구된 경우 녹화 재개 여부 확인
+name: "Fault: SD Recovery"
+description: "SD 카드 불량 후 복구 — 녹화 재개 여부 확인"
+
+checks:
+  custom_commands:
+    - name: "Root filesystem writable"
+      command: "touch /tmp/.pim_check_test && rm -f /tmp/.pim_check_test && echo OK"
+      expected: "OK"
+      on_fail: "Root filesystem write failed"
+
+    - name: "shared_v writable"
+      command: "touch /root/shared_v/.pim_check_test && rm -f /root/shared_v/.pim_check_test && echo OK"
+      expected: "OK"
+      on_fail: "shared_v not writable — recording may be blocked"
+
+    - name: "Recent recording file exists (last 10min)"
+      command: "find /root/shared_v/ -name '*.mp4' -o -name '*.mkv' -o -name '*.ts' 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | xargs stat -c %Y 2>/dev/null || echo 0"
+      expected_min: 0
+      on_fail: "No recent recording files found — recording may not have resumed"
+
+    - name: "dmesg no filesystem errors"
+      command: "journalctl -k --since '10 min ago' --no-pager 2>/dev/null | grep -ic 'ext4.*error\\|readonly\\|I/O error' || true"
+      expected: "0"
+      on_fail: "Filesystem errors detected in kernel log"

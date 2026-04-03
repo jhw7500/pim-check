@@ -1,0 +1,46 @@
+# Fault: 카메라 일부 채널 미연결 감지
+# 4ch 모드에서 일부 채널만 연결된 상태
+name: "Fault: Camera Partial Connect"
+description: "카메라 일부 채널 미연결 또는 에러 감지"
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    valid_states:
+      - healthy
+      - degraded
+      - recovering
+      - failed
+    expected_state: healthy
+    max_streak: 0
+
+  custom_commands:
+    - name: "All 4 channels have state files"
+      command: "ls /tmp/cam_state/channels/ 2>/dev/null | grep -c 'error' || echo 0"
+      expected_min: 4
+      on_fail: "Not all 4 camera channel error files present"
+
+    - name: "Channel 0 no error"
+      command: "cat /tmp/cam_state/channels/ch0_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 0 has error or is missing"
+
+    - name: "Channel 1 no error"
+      command: "cat /tmp/cam_state/channels/ch1_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 1 has error or is missing"
+
+    - name: "Channel 2 no error"
+      command: "cat /tmp/cam_state/channels/ch2_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 2 has error or is missing"
+
+    - name: "Channel 3 no error"
+      command: "cat /tmp/cam_state/channels/ch3_error 2>/dev/null || echo MISSING"
+      expected: "false"
+      on_fail: "Camera channel 3 has error or is missing"
+
+    - name: "Recording progress matches enabled channels"
+      command: "cat /tmp/cam_state/state 2>/dev/null || echo unknown"
+      expected: "healthy"
+      on_fail: "Camera state is not healthy — partial connection detected"

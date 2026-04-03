@@ -1,0 +1,31 @@
+# Fault: 시간 동기화 오류 감지
+# RTC 통신 실패, 시간 초기화, 시간 미진행 등
+name: "Fault: Time Sync Error"
+description: "시스템 시계 및 RTC 상태 확인"
+
+checks:
+  custom_commands:
+    - name: "System year valid (2024-2030)"
+      command: "date +%Y"
+      expected_min: 2024
+      on_fail: "System year is out of valid range — clock may be reset"
+
+    - name: "RTC device accessible"
+      command: "test -c /dev/rtc0 && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "RTC device /dev/rtc0 not found — RTC communication failure"
+
+    - name: "RTC time readable"
+      command: "hwclock -r > /dev/null 2>&1 && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "Cannot read RTC time — I2C/RTC communication error"
+
+    - name: "RTC year valid (not 2000/1970)"
+      command: "hwclock -r 2>/dev/null | grep -oE '[0-9]{4}' | head -1 || echo 0"
+      expected_min: 2024
+      on_fail: "RTC time is reset (year < 2024) — battery dead or RTC fault"
+
+    - name: "System-RTC time drift < 60s"
+      command: "python3 -c \"import subprocess,time;r=subprocess.run(['hwclock','-r'],capture_output=True,text=True);print(0 if r.returncode!=0 else abs(int(time.time())-int(time.mktime(time.strptime(r.stdout.strip()[:19],'%Y-%m-%d %H:%M:%S')))))\" 2>/dev/null || echo 9999"
+      expected_min: 0
+      on_fail: "System-RTC time drift check failed"

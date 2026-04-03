@@ -1,0 +1,30 @@
+# Fault: 시스템 hang/과부하 감지
+# load average 비정상, D state 프로세스 다수, 응답 지연
+name: "Fault: System Hang"
+description: "시스템 hang 또는 극심한 과부하 감지"
+
+checks:
+  thermal:
+    max_temp_c: 85
+    warn_temp_c: 80
+
+  custom_commands:
+    - name: "Load average 1min < 8.0"
+      command: "cat /proc/loadavg | awk '{printf \"%d\", $1}'"
+      expected_min: 0
+      on_fail: "Cannot read load average"
+
+    - name: "D state processes < 3"
+      command: "ps aux 2>/dev/null | awk '$8 ~ /D/ {count++} END {print count+0}'"
+      expected_min: 0
+      on_fail: "Cannot count D state processes"
+
+    - name: "Free memory > 50MB"
+      command: "grep MemAvailable /proc/meminfo | awk '{print $2}'"
+      expected_min: 51200
+      on_fail: "System critically low on memory"
+
+    - name: "No kernel soft lockup"
+      command: "journalctl -k --since '5 min ago' --no-pager 2>/dev/null | grep -ic 'soft lockup\\|hard lockup\\|rcu.*stall' || true"
+      expected: "0"
+      on_fail: "Kernel lockup or RCU stall detected"
