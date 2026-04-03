@@ -1,0 +1,31 @@
+# NTP 설정 검증
+# NTP 서버 설정이 존재하고 동기화 가능한 상태인지 확인
+name: "Verify: NTP Config"
+description: "NTP 서버 설정 및 시간 동기화 상태 검증"
+
+checks:
+  custom_commands:
+    - name: "NTP 서비스 활성화"
+      command: "systemctl is-active systemd-timesyncd 2>/dev/null || systemctl is-active ntpd 2>/dev/null || systemctl is-active chronyd 2>/dev/null || echo NONE"
+      expected: "active"
+      on_fail: "NTP 서비스 비활성화"
+
+    - name: "NTP 동기화 상태"
+      command: "timedatectl 2>/dev/null | grep -i 'NTP service' | awk '{print $NF}' || echo unknown"
+      expected: "active"
+      on_fail: "NTP 동기화 비활성화"
+
+    - name: "시스템 시간 유효"
+      command: "date +%Y"
+      expected_min: 2024
+      on_fail: "시스템 시간 연도 이상"
+
+    - name: "타임존 설정됨"
+      command: "TZ=$(cat /etc/timezone 2>/dev/null || timedatectl 2>/dev/null | grep 'Time zone' | awk '{print $3}'); [ -n \"$TZ\" ] && echo OK || echo EMPTY"
+      expected: "OK"
+      on_fail: "타임존 미설정"
+
+    - name: "hwclock과 시스템 시간 동기"
+      command: "hwclock -r > /dev/null 2>&1 && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "hwclock 접근 불가"

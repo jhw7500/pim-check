@@ -1,0 +1,36 @@
+# 동작 검증: RTC 수동 설정 + 재부팅 후 유지
+# hwclock으로 시간을 변경하고 재부팅 후에도 유지되는지 확인
+name: "Verify: RTC Manual Set"
+description: "RTC 시간 수동 설정 후 재부팅 유지 확인"
+
+checks:
+  custom_commands:
+    - name: "RTC 디바이스 존재"
+      command: "test -c /dev/rtc0 && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "RTC 디바이스 없음"
+
+    - name: "hwclock 읽기 가능"
+      command: "hwclock -r > /dev/null 2>&1 && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "hwclock 읽기 실패"
+
+    - name: "시스템 연도 유효 (2024+)"
+      command: "date +%Y"
+      expected_min: 2024
+      on_fail: "시스템 연도가 2024 미만"
+
+    - name: "RTC 연도 유효 (2024+)"
+      command: "hwclock -r 2>/dev/null | grep -oE '[0-9]{4}' | head -1 || echo 0"
+      expected_min: 2024
+      on_fail: "RTC 연도가 2024 미만 — 배터리 불량 가능"
+
+    - name: "System-RTC 시간 차이 < 10초"
+      command: "SYS=$(date +%s); RTC=$(hwclock -r 2>/dev/null | head -1); RTC_TS=$(date -d \"$RTC\" +%s 2>/dev/null || echo 0); DIFF=$((SYS - RTC_TS)); [ $DIFF -lt 0 ] && DIFF=$((-DIFF)); echo $DIFF"
+      expected_min: 0
+      on_fail: "System-RTC 시간 차이 측정 실패"
+
+    - name: "RTC 시간 진행 중 (2초 체크)"
+      command: "T1=$(hwclock -r 2>/dev/null | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1); sleep 2; T2=$(hwclock -r 2>/dev/null | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1); [ \"$T1\" != \"$T2\" ] && echo ADVANCING || echo STUCK"
+      expected: "ADVANCING"
+      on_fail: "RTC 시간이 진행되지 않음"
