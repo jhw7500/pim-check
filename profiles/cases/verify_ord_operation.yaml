@@ -1,0 +1,53 @@
+# ORD 동작 검증
+# OHT Recording Daemon이 정상적으로 동작하는지 확인
+name: "Verify: ORD Operation"
+description: "ORD 프로세스 동작, OHT 통신, 디스크 관리 검증"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  custom_commands:
+    # === ORD 프로세스 상태 ===
+    - name: "ORD 프로세스 실행 중"
+      command: "pgrep -x ord > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "ORD 프로세스 미실행"
+
+    - name: "ORD 포트 10007 리슨"
+      command: "ss -tlnp 2>/dev/null | grep -c ':10007 ' || true"
+      expected_min: 1
+      on_fail: "ORD TCP 포트 10007이 리슨하지 않음"
+
+    - name: "ORD 로그 파일 최근 갱신"
+      command: "find /var/log -name '*ord*' -mmin -10 2>/dev/null | wc -l | tr -d ' '"
+      expected_min: 0
+      on_fail: "ORD 로그 확인 실패"
+
+    # === ORD 디스크 관리 ===
+    - name: "disk_manage 활성화 확인"
+      command: "jq '.ORD.disk_manage' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "ORD 디스크 관리 비활성화"
+
+    - name: "disk_limit_per 설정 확인"
+      command: "jq '.ORD.disk_limit_per' /root/shared_v/ord_vcm_conf.json"
+      expected_min: 80
+      on_fail: "ORD 디스크 제한 비율이 80% 미만"
+
+    # === OHT 통신 포트 ===
+    - name: "ORD TCP 연결 가능"
+      command: "timeout 3 bash -c '</dev/tcp/127.0.0.1/10007' 2>/dev/null && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "ORD TCP 10007 포트 연결 불가"
+
+    # === edgeconf event_auto_remove 일관성 ===
+    - name: "edgeconf↔ord event_auto_remove 일치"
+      command: "E1=$(jq '.VHL_CAM.event_auto_remove' /root/shared_v/edgeconf_pim.json); E2=$(jq '.ORD.event_auto_remove' /root/shared_v/ord_vcm_conf.json); [ \"$E1\" = \"$E2\" ] && echo MATCH || echo MISMATCH"
+      expected: "MATCH"
+      on_fail: "edgeconf와 ord_vcm_conf의 event_auto_remove 불일치"

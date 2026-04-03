@@ -1,0 +1,58 @@
+# VCM 동작 검증
+# Video Camera Manager가 정상적으로 동작하는지 확인
+name: "Verify: VCM Operation"
+description: "VCM 프로세스 동작, 자막 생성, 파일 관리 검증"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  custom_commands:
+    # === VCM 프로세스 상태 ===
+    - name: "VCM 프로세스 실행 중"
+      command: "pgrep -x vcm > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "VCM 프로세스 미실행"
+
+    - name: "VCM 포트 10009 리슨"
+      command: "ss -tlnp 2>/dev/null | grep -c ':10009 ' || true"
+      expected_min: 1
+      on_fail: "VCM TCP 포트 10009이 리슨하지 않음"
+
+    - name: "VCM TCP 연결 가능"
+      command: "timeout 3 bash -c '</dev/tcp/127.0.0.1/10009' 2>/dev/null && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "VCM TCP 10009 포트 연결 불가"
+
+    # === VCM 설정 검증 ===
+    - name: "file_time_check 활성화"
+      command: "jq '.VCM.file_time_check' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "VCM 파일 시간 체크 비활성화"
+
+    - name: "srt_enable 상태 확인"
+      command: "jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json 2>/dev/null || echo null"
+      expected: "false"
+      on_fail: "VCM SRT가 활성화됨"
+
+    # === 자막 파일 생성 확인 ===
+    - name: "recording 디렉토리 존재"
+      command: "test -d /tmp/cam_state/recording && echo YES || echo NO"
+      expected: "YES"
+      on_fail: "cam_state/recording 디렉토리 없음"
+
+    - name: "recording 상태 파일 최근 갱신"
+      command: "find /tmp/cam_state/recording/ -mmin -5 2>/dev/null | wc -l | tr -d ' '"
+      expected_min: 1
+      on_fail: "recording 상태 파일이 5분 이내 갱신되지 않음"
+
+    # === ETC 설정 ===
+    - name: "file_check_reboot 활성화"
+      command: "jq '.ETC.file_check_reboot' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "파일 체크 후 리부트 비활성화"

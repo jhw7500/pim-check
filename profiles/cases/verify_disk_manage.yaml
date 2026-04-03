@@ -1,0 +1,49 @@
+# 디스크 관리 동작 검증
+# ORD의 디스크 관리 + 자동 삭제 설정 확인
+name: "Verify: Disk Management"
+description: "ORD 디스크 관리, 자동 삭제, 용량 제한 검증"
+
+checks:
+  custom_commands:
+    # === 디스크 관리 설정 ===
+    - name: "disk_manage 활성화"
+      command: "jq '.ORD.disk_manage' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "디스크 관리 비활성화 — 용량 초과 시 삭제 안 됨"
+
+    - name: "disk_limit_per 설정 (90%)"
+      command: "jq '.ORD.disk_limit_per' /root/shared_v/ord_vcm_conf.json"
+      expected: "90"
+      on_fail: "디스크 제한 비율이 90%가 아님"
+
+    - name: "disk_limit_file 설정 (1000)"
+      command: "jq '.ORD.disk_limit_file' /root/shared_v/ord_vcm_conf.json"
+      expected_min: 100
+      on_fail: "디스크 파일 수 제한이 너무 낮음"
+
+    - name: "disk_manage_period 설정"
+      command: "jq '.ORD.disk_manage_period' /root/shared_v/ord_vcm_conf.json"
+      expected_min: 10
+      on_fail: "디스크 관리 주기가 너무 짧음"
+
+    # === event_auto_remove 일관성 ===
+    - name: "edgeconf event_auto_remove"
+      command: "jq '.VHL_CAM.event_auto_remove' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "이벤트 자동 삭제 비활성화"
+
+    - name: "ord event_auto_remove"
+      command: "jq '.ORD.event_auto_remove' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "ORD 이벤트 자동 삭제 비활성화"
+
+    - name: "event_storage_size 설정"
+      command: "jq '.VHL_CAM.event_storage_size' /root/shared_v/edgeconf_pim.json"
+      expected_min: 5
+      on_fail: "이벤트 저장 크기가 5% 미만"
+
+    # === 실제 디스크 상태 ===
+    - name: "루트 파티션 여유 확인"
+      command: "df / | tail -1 | awk '{print $4}'"
+      expected_min: 1048576
+      on_fail: "루트 파티션 여유 공간 1GB 미만"

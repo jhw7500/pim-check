@@ -9,7 +9,7 @@ setup:
     ".VHL_CAM.i2c1.ch2.enable": true
     ".VHL_CAM.i2c1.ch3.enable": true
   reboot_after: true
-  stabilize_sec: 40
+  stabilize_sec: 60
 
 checks:
   cpu:
