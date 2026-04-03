@@ -1,0 +1,70 @@
+# ORD/VCM 프로세스 + 설정값 정합성 검증
+# ord_vcm_conf.json 설정이 실제 프로세스 동작과 일치하는지 확인
+name: "Config: ORD/VCM Process"
+description: "ORD/VCM 프로세스 상태 및 설정값 정합성 검증"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  custom_commands:
+    # === ORD 프로세스 ===
+    - name: "ORD 프로세스 실행 중"
+      command: "pgrep -x ord > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "ORD 프로세스 미실행"
+
+    - name: "ORD 포트 리슨 (10007)"
+      command: "P=$(jq '.ORD.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c \":$P \" || true"
+      expected_min: 1
+      on_fail: "ORD 포트가 리슨하지 않음"
+
+    # === VCM 프로세스 ===
+    - name: "VCM 프로세스 실행 중"
+      command: "pgrep -x vcm > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "VCM 프로세스 미실행"
+
+    - name: "VCM 포트 리슨 (10009)"
+      command: "P=$(jq '.VCM.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c \":$P \" || true"
+      expected_min: 1
+      on_fail: "VCM 포트가 리슨하지 않음"
+
+    # === ORD 디스크 관리 설정 ===
+    - name: "ORD disk_manage 활성화"
+      command: "jq '.ORD.disk_manage' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "ORD 디스크 관리 비활성화"
+
+    - name: "ORD disk_limit_per 설정 (90%)"
+      command: "jq '.ORD.disk_limit_per' /root/shared_v/ord_vcm_conf.json"
+      expected_min: 80
+      on_fail: "ORD 디스크 제한 비율 너무 낮음"
+
+    # === VCM SRT 설정 ===
+    - name: "VCM srt_enable 확인"
+      command: "jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json"
+      expected: "false"
+      on_fail: "VCM SRT가 활성화됨 (기본값: false)"
+
+    - name: "VCM file_time_check 활성화"
+      command: "jq '.VCM.file_time_check' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "VCM 파일 시간 체크 비활성화"
+
+    # === ETC 설정 ===
+    - name: "file_check_reboot 활성화"
+      command: "jq '.ETC.file_check_reboot' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "파일 체크 후 리부트 비활성화"
+
+    # === edgeconf event_auto_remove 일치 ===
+    - name: "edgeconf와 ord_vcm event_auto_remove 일치"
+      command: "E1=$(jq '.VHL_CAM.event_auto_remove' /root/shared_v/edgeconf_pim.json); E2=$(jq '.ORD.event_auto_remove' /root/shared_v/ord_vcm_conf.json); [ \"$E1\" = \"$E2\" ] && echo MATCH || echo \"MISMATCH edgeconf=$E1 ord=$E2\""
+      expected: "MATCH"
+      on_fail: "edgeconf와 ord_vcm_conf의 event_auto_remove 불일치"

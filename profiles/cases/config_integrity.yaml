@@ -1,0 +1,66 @@
+# 설정 파일 무결성 검증
+# edgeconf_pim.json + ord_vcm_conf.json 구조/타입 일관성
+name: "Config: File Integrity"
+description: "설정 파일 JSON 무결성 + 필수 키 존재 + 값 타입 검증"
+
+checks:
+  legacy_files:
+    must_exist:
+      - /root/shared_v/edgeconf_pim.json
+      - /root/shared_v/ord_vcm_conf.json
+    must_not_exist: []
+
+  custom_commands:
+    # === JSON 유효성 ===
+    - name: "edgeconf JSON 유효"
+      command: "jq empty /root/shared_v/edgeconf_pim.json 2>&1 && echo VALID || echo INVALID"
+      expected: "VALID"
+      on_fail: "edgeconf_pim.json이 유효한 JSON이 아님"
+
+    - name: "ord_vcm_conf JSON 유효"
+      command: "jq empty /root/shared_v/ord_vcm_conf.json 2>&1 && echo VALID || echo INVALID"
+      expected: "VALID"
+      on_fail: "ord_vcm_conf.json이 유효한 JSON이 아님"
+
+    # === edgeconf 필수 섹션 ===
+    - name: "edgeconf에 VHL_CAM 섹션 존재"
+      command: "jq 'has(\"VHL_CAM\")' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "edgeconf에 VHL_CAM 섹션 누락"
+
+    - name: "edgeconf에 NETWORK 섹션 존재"
+      command: "jq 'has(\"NETWORK\")' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "edgeconf에 NETWORK 섹션 누락"
+
+    # === ord_vcm_conf 필수 섹션 ===
+    - name: "ord_vcm_conf에 ORD 섹션 존재"
+      command: "jq 'has(\"ORD\")' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "ord_vcm_conf에 ORD 섹션 누락"
+
+    - name: "ord_vcm_conf에 VCM 섹션 존재"
+      command: "jq 'has(\"VCM\")' /root/shared_v/ord_vcm_conf.json"
+      expected: "true"
+      on_fail: "ord_vcm_conf에 VCM 섹션 누락"
+
+    # === 값 타입 검증 ===
+    - name: "cam_width는 숫자"
+      command: "jq '.VHL_CAM.cam_width | type' /root/shared_v/edgeconf_pim.json"
+      expected: "\"number\""
+      on_fail: "cam_width가 숫자가 아님"
+
+    - name: "fps는 숫자"
+      command: "jq '.VHL_CAM.fps | type' /root/shared_v/edgeconf_pim.json"
+      expected: "\"number\""
+      on_fail: "fps가 숫자가 아님"
+
+    - name: "ORD port_num은 숫자"
+      command: "jq '.ORD.port_num | type' /root/shared_v/ord_vcm_conf.json"
+      expected: "\"number\""
+      on_fail: "ORD port_num이 숫자가 아님"
+
+    - name: "edgeconf 파일 크기 > 100 bytes"
+      command: "stat -c %s /root/shared_v/edgeconf_pim.json"
+      expected_min: 100
+      on_fail: "edgeconf 파일이 비정상적으로 작음 (손상 가능성)"

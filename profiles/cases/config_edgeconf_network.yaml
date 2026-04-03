@@ -1,0 +1,54 @@
+# edgeconf 네트워크 설정 검증
+# NETWORK 설정값과 실제 인터페이스 상태 일치 확인
+name: "Config: Network Settings"
+description: "edgeconf NETWORK 설정과 실제 네트워크 상태 일관성 검증"
+
+checks:
+  custom_commands:
+    # === 사용 인터페이스 확인 ===
+    - name: "NETWORK.used 설정 확인"
+      command: "jq -r '.NETWORK.used' /root/shared_v/edgeconf_pim.json"
+      expected: "ETH0"
+      on_fail: "NETWORK.used가 ETH0이 아님"
+
+    # === ETH0 설정 ↔ 실제 IP ===
+    - name: "ETH0 설정된 IP와 실제 IP 일치"
+      command: "CONF_IP=$(jq -r '.NETWORK.ETH0.address' /root/shared_v/edgeconf_pim.json); REAL_IP=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1); [ \"$CONF_IP\" = \"$REAL_IP\" ] && echo MATCH || echo \"MISMATCH conf=$CONF_IP real=$REAL_IP\""
+      expected: "MATCH"
+      on_fail: "ETH0 설정 IP와 실제 IP 불일치"
+
+    # === ETH0 method ===
+    - name: "ETH0 method 유효"
+      command: "M=$(jq -r '.NETWORK.ETH0.method' /root/shared_v/edgeconf_pim.json); echo \"$M\" | grep -qE 'static|DHCP|dhcp' && echo OK || echo INVALID"
+      expected: "OK"
+      on_fail: "ETH0 method가 static/DHCP가 아님"
+
+    # === WLAN0 SSID 설정 ===
+    - name: "WLAN0 SSID 설정됨"
+      command: "S=$(jq -r '.NETWORK.WLAN0.ssid' /root/shared_v/edgeconf_pim.json); [ -n \"$S\" ] && [ \"$S\" != \"null\" ] && echo OK || echo EMPTY"
+      expected: "OK"
+      on_fail: "WLAN0 SSID가 비어있음"
+
+    # === WLAN0 실제 연결 확인 ===
+    - name: "WLAN0 연결 상태"
+      command: "iw dev wlp1s0 info 2>/dev/null | grep -q ssid && echo CONNECTED || echo DISCONNECTED"
+      expected: "CONNECTED"
+      on_fail: "WiFi가 연결되지 않음"
+
+    # === ETH1 설정 확인 ===
+    - name: "ETH1 설정 존재"
+      command: "jq '.NETWORK.ETH1 | has(\"address\")' /root/shared_v/edgeconf_pim.json"
+      expected: "true"
+      on_fail: "ETH1 설정 누락"
+
+    # === netmask 유효성 ===
+    - name: "ETH0 netmask 유효"
+      command: "NM=$(jq -r '.NETWORK.ETH0.netmask' /root/shared_v/edgeconf_pim.json); echo \"$NM\" | grep -qE '^255\\.' && echo OK || echo INVALID"
+      expected: "OK"
+      on_fail: "ETH0 netmask 형식 이상"
+
+    # === DNS/Gateway ===
+    - name: "ETH0 gateway 설정됨"
+      command: "GW=$(jq -r '.NETWORK.ETH0.gateway' /root/shared_v/edgeconf_pim.json); [ -n \"$GW\" ] && [ \"$GW\" != \"null\" ] && echo OK || echo EMPTY"
+      expected: "OK"
+      on_fail: "ETH0 gateway 미설정"
