@@ -91,3 +91,48 @@ class TestEngine:
         thermal = next(r for r in merged if r["name"] == "thermal")
         assert thermal["passed"] is False
         assert "90" in thermal["reason"]
+
+    @patch("engine.time.sleep")
+    def test_thermal_shutdown_recovery(self, mock_sleep):
+        """모니터링 중 SSH 끊김 → 복귀 대기 → 계속 수집"""
+        from engine import Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 10, "interval_sec": 1}
+
+        call_count = [0]
+
+        def mock_connectivity():
+            call_count[0] += 1
+            # 처음 2번 False (shutdown 감지) → 3번째 True (복귀)
+            if call_count[0] <= 2:
+                return False
+            return True
+
+        self.ssh.check_connectivity = mock_connectivity
+        self.ssh.run = MagicMock(return_value=None)
+
+        engine = Engine(self.ssh, profile)
+        results, collected, total = engine.run_monitor()
+
+        # 복귀 후 최소 1개 스냅샷 수집
+        assert collected >= 1
+        assert isinstance(results, list)
+
+    @patch("engine.time.sleep")
+    def test_thermal_shutdown_timeout(self, mock_sleep):
+        """모니터링 중 SSH 끊김 → 복귀 안 됨 → 수집된 것으로 리포트"""
+        from engine import Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 5, "interval_sec": 1}
+
+        self.ssh.check_connectivity = MagicMock(return_value=False)
+        self.ssh.run = MagicMock(return_value=None)
+
+        engine = Engine(self.ssh, profile)
+        results, collected, total = engine.run_monitor()
+
+        # 타겟 복귀 못 했으므로 0개 수집
+        assert collected == 0
+        assert results == []

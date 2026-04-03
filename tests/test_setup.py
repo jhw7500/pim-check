@@ -58,7 +58,7 @@ class TestRestoreEdgeconf(unittest.TestCase):
 class TestRebootAndWait(unittest.TestCase):
     def setUp(self):
         self.ssh = MagicMock()
-        self.mgr = SetupManager(self.ssh, reboot_timeout=30)
+        self.mgr = SetupManager(self.ssh, reboot_timeout=300, poll_interval=5)
 
     @patch("setup.time.sleep")
     def test_reboot_and_wait(self, mock_sleep):
@@ -76,7 +76,7 @@ class TestRebootAndWait(unittest.TestCase):
     def test_reboot_timeout_raises(self, mock_sleep):
         """check_connectivity가 계속 False일 때 TimeoutError 발생 확인"""
         self.ssh.check_connectivity.return_value = False
-        mgr = SetupManager(self.ssh, reboot_timeout=10)
+        mgr = SetupManager(self.ssh, reboot_timeout=10, poll_interval=2)
         with self.assertRaises(TimeoutError):
             mgr.reboot_and_wait(stabilize_sec=5)
 
