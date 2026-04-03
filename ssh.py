@@ -103,7 +103,10 @@ class SshClient:
         required_tools = ["jq", "journalctl"]
         missing = []
         for tool in required_tools:
-            result = self.run(f"which {tool}")
-            if result is None:
+            try:
+                result = self.run(f"which {tool}")
+                if result is None:
+                    missing.append(tool)
+            except (SshTimeoutError, SshConnectionError):
                 missing.append(tool)
         return missing

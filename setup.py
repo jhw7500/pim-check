@@ -46,7 +46,10 @@ class SetupManager:
 
     def reboot_and_wait(self, stabilize_sec: int = 30) -> None:
         """타겟을 재부팅하고 온라인 복귀를 기다린다."""
-        self.ssh.run("reboot")
+        try:
+            self.ssh.run("reboot")
+        except Exception:
+            pass  # reboot 시 SSH 연결 끊김은 정상
         time.sleep(5)  # 셧다운 대기
 
         elapsed = 5
