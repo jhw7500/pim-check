@@ -19,8 +19,10 @@ class TestBackupEdgeconf(unittest.TestCase):
 
     def test_backup_edgeconf(self):
         """backup()이 올바른 cp 명령을 실행하는지 확인"""
-        self.mgr.backup()
-        self.ssh.run.assert_called_once_with(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP}")
+        self.ssh.run.return_value = "OK"
+        result = self.mgr.backup()
+        self.ssh.run.assert_called_once_with(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK")
+        self.assertTrue(result)
 
 
 class TestApplyEdgeconfChanges(unittest.TestCase):

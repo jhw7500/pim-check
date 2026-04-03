@@ -18,9 +18,10 @@ class SetupManager:
         self.reboot_timeout = reboot_timeout
         self.poll_interval = poll_interval
 
-    def backup(self) -> None:
-        """edgeconf 파일을 백업한다."""
-        self.ssh.run(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP}")
+    def backup(self) -> bool:
+        """edgeconf 파일을 백업한다. 성공 시 True."""
+        result = self.ssh.run(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK")
+        return result == "OK"
 
     def apply_changes(self, changes: dict) -> None:
         """jq --arg를 사용하여 edgeconf에 변경사항을 안전하게 적용한다."""
@@ -37,8 +38,9 @@ class SetupManager:
                     f"> /tmp/_edgeconf_tmp.json && mv /tmp/_edgeconf_tmp.json {EDGECONF_PATH}"
                 )
             else:
+                safe_value = str(value).replace("'", "'\\''")
                 self.ssh.run(
-                    f"jq --arg v '{value}' '{jq_path} = $v' {EDGECONF_PATH} "
+                    f"jq --arg v '{safe_value}' '{jq_path} = $v' {EDGECONF_PATH} "
                     f"> /tmp/_edgeconf_tmp.json && mv /tmp/_edgeconf_tmp.json {EDGECONF_PATH}"
                 )
 
@@ -113,7 +115,9 @@ class SetupManager:
             return
 
         print(f"Config differs — applying {len(changes)} changes...")
-        self.backup()
+        if not self.backup():
+            print("ERROR: Failed to backup edgeconf — aborting setup")
+            return
         self.apply_changes(changes)
 
         if setup_config.get("reboot_after", False):

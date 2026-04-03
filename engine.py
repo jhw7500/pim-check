@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import time
 
 from checks import ALL_CHECKS
@@ -77,6 +78,8 @@ class Engine:
         """
         duration = self.profile["monitor"]["duration_sec"]
         interval = self.profile["monitor"]["interval_sec"]
+        if interval <= 0:
+            interval = 5
         samples_total = max(1, duration // interval)
 
         snapshots: list[list] = []
@@ -123,9 +126,9 @@ class Engine:
             for entry in snapshot:
                 name = entry["name"]
                 if name not in merged:
-                    merged[name] = dict(entry)
+                    merged[name] = copy.deepcopy(entry)
                 else:
                     if not entry["passed"]:
-                        merged[name] = dict(entry)
+                        merged[name] = copy.deepcopy(entry)
 
         return list(merged.values())

@@ -63,9 +63,12 @@ class CustomCommandCheck(BaseCheck):
             # expected_min: 숫자 최소값
             if r["expected_min"] is not None:
                 try:
-                    val = int(output.strip()) if output else 0
+                    val = int(output.strip()) if output else None
                 except ValueError:
-                    val = 0
+                    val = None
+                if val is None:
+                    issues.append(f'{r["name"]}: {r["on_fail"]} (non-numeric output: {output})')
+                    continue
                 if val < r["expected_min"]:
                     issues.append(f'{r["name"]}: {r["on_fail"]} ({val} < {r["expected_min"]})')
                 continue

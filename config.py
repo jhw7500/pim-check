@@ -45,7 +45,7 @@ def load_profile(profiles_dir: str, case: str | None = None) -> dict:
         if not os.path.exists(case_path):
             raise FileNotFoundError(f"Case file not found: {case_path}")
         with open(case_path, "r") as f:
-            case_data = yaml.safe_load(f)
+            case_data = yaml.safe_load(f) or {}
         profile = deep_merge(profile, case_data)
 
     return profile

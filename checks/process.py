@@ -37,7 +37,8 @@ class ProcessCheck(BaseCheck):
         cpu_config = config.get("cpu", {})
         bg_check_max = cpu_config.get("bg_check_max_pct", 3.0)
         gst_range = cpu_config.get("gst_range", [0, 100])
-        gst_min, gst_max = gst_range[0], gst_range[1]
+        gst_min = gst_range[0] if len(gst_range) >= 1 else 0
+        gst_max = gst_range[1] if len(gst_range) >= 2 else 100
 
         issues = []
 
