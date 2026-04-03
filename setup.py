@@ -63,17 +63,46 @@ class SetupManager:
             f"Target did not come back online within {self.reboot_timeout}s"
         )
 
+    def check_current(self, changes: dict) -> bool:
+        """현재 edgeconf 값이 변경 목표와 이미 일치하는지 확인한다."""
+        for jq_path, expected in changes.items():
+            current = self.ssh.run(f"jq '{jq_path}' {EDGECONF_PATH}")
+            if current is None:
+                return False
+            current = current.strip()
+            # jq 출력값과 Python 값 비교
+            if isinstance(expected, bool):
+                if current != ("true" if expected else "false"):
+                    return False
+            elif isinstance(expected, (int, float)):
+                try:
+                    if float(current) != float(expected):
+                        return False
+                except ValueError:
+                    return False
+            else:
+                # 문자열: jq는 따옴표 포함 출력
+                if current.strip('"') != str(expected):
+                    return False
+        return True
+
     def run_setup(self, setup_config: dict) -> None:
-        """setup_config에 따라 edgeconf 변경을 적용하고 필요시 재부팅한다."""
+        """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다."""
         changes = setup_config.get("edgeconf_changes", {})
         if not changes:
             return
 
+        if self.check_current(changes):
+            print("Config already matches target — skipping setup/reboot")
+            return
+
+        print(f"Config differs — applying {len(changes)} changes...")
         self.backup()
         self.apply_changes(changes)
 
         if setup_config.get("reboot_after", False):
             stabilize_sec = setup_config.get("stabilize_sec", 30)
+            print("Rebooting target...")
             self.reboot_and_wait(stabilize_sec=stabilize_sec)
 
     def run_teardown(self, setup_config: dict) -> None:

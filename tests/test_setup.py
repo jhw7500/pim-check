@@ -81,5 +81,53 @@ class TestRebootAndWait(unittest.TestCase):
             mgr.reboot_and_wait(stabilize_sec=5)
 
 
+class TestCheckCurrent(unittest.TestCase):
+    def setUp(self):
+        self.ssh = MagicMock()
+        self.mgr = SetupManager(self.ssh)
+
+    def test_config_already_matches(self):
+        """현재 설정이 목표와 일치하면 True 반환"""
+        def side_effect(cmd):
+            if "cam_width" in cmd:
+                return "1280"
+            if "cam_height" in cmd:
+                return "720"
+            if "ch2.enable" in cmd:
+                return "false"
+            return None
+
+        self.ssh.run.side_effect = side_effect
+        changes = {
+            ".VHL_CAM.cam_width": 1280,
+            ".VHL_CAM.cam_height": 720,
+            ".VHL_CAM.i2c1.ch2.enable": False,
+        }
+        self.assertTrue(self.mgr.check_current(changes))
+
+    def test_config_differs(self):
+        """현재 설정이 목표와 다르면 False 반환"""
+        def side_effect(cmd):
+            if "cam_width" in cmd:
+                return "1920"  # 목표는 1280
+            return "720"
+
+        self.ssh.run.side_effect = side_effect
+        changes = {".VHL_CAM.cam_width": 1280, ".VHL_CAM.cam_height": 720}
+        self.assertFalse(self.mgr.check_current(changes))
+
+    @patch("setup.time.sleep")
+    def test_run_setup_skips_when_matched(self, mock_sleep):
+        """설정이 이미 맞으면 backup/apply/reboot 안 함"""
+        self.ssh.run.return_value = "1280"
+        self.mgr.run_setup({
+            "edgeconf_changes": {".VHL_CAM.cam_width": 1280},
+            "reboot_after": True,
+        })
+        # backup이 호출되지 않아야 함 (check_current만 호출)
+        calls = [str(c) for c in self.ssh.run.call_args_list]
+        self.assertFalse(any("cp " in c for c in calls))
+
+
 if __name__ == "__main__":
     unittest.main()

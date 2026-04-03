@@ -2,6 +2,15 @@
 name: "720p 2채널"
 description: "1280x720 2채널 기본 테스트"
 
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1280
+    ".VHL_CAM.cam_height": 720
+    ".VHL_CAM.i2c1.ch2.enable": false
+    ".VHL_CAM.i2c1.ch3.enable": false
+  reboot_after: true
+  stabilize_sec: 30
+
 checks:
   cpu:
     gst_range: [5, 60]
