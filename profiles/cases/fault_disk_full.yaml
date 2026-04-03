@@ -6,11 +6,11 @@ description: "디스크 여유 공간 부족 감지 (녹화 중단 위험)"
 checks:
   custom_commands:
     - name: "Root disk free > 2GB"
-      command: "df / --output=avail | tail -1 | tr -d ' '"
+      command: "df / | tail -1 | awk '{print $4}'"
       expected_min: 2097152
       on_fail: "Root disk free space below 2GB"
 
-    - name: "Inode usage < 90%"
-      command: "df -i / --output=ipcent | tail -1 | tr -d '% '"
-      expected_min: 0
-      on_fail: "Inode usage critical"
+    - name: "Inode free > 100000"
+      command: "df -i / | tail -1 | awk '{print $4}'"
+      expected_min: 100000
+      on_fail: "Inode free count critically low"
