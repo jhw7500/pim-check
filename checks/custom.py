@@ -6,7 +6,7 @@ from __future__ import annotations
 from checks.base_check import BaseCheck
 
 # 타겟에서 실행 금지 패턴 (root로 실행되므로 주의)
-_DANGEROUS_PATTERNS = ["rm -rf", "mkfs", "dd if=", "fdisk", "> /dev/"]
+_DANGEROUS_PATTERNS = ["rm -rf", "mkfs", "dd if=", "fdisk", "> /dev/sd", "> /dev/mmc"]
 
 
 class CustomCommandCheck(BaseCheck):
