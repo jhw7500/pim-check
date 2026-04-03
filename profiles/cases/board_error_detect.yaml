@@ -1,0 +1,45 @@
+# Board 에러 상태 감지 (체크리스트 Board 탭 이상 감지)
+# 에러 파일 존재, SD 비정상, 네트워크 단절 등 감지
+name: "Board Error Detect"
+description: "Board 탭 체크리스트 — 에러/비정상 상태 감지 전용"
+
+checks:
+  legacy_files:
+    must_not_exist:
+      - /tmp/err_cam0.log
+      - /tmp/err_cam1.log
+      - /tmp/err_cam2.log
+      - /tmp/err_cam3.log
+      - /tmp/err_sdcard.log
+      - /tmp/err_cpu_temp.log
+      - /tmp/err_wifi.log
+      - /tmp/err_voltage.log
+    must_exist:
+      - /sys/devices/platform/leds/leds/gpio1_led/brightness
+      - /sys/devices/platform/leds/leds/gpio2_led/brightness
+      - /sys/devices/platform/leds/leds/gpio3_led/brightness
+
+  thermal:
+    max_temp_c: 85
+    warn_temp_c: 80
+
+  custom_commands:
+    - name: "네트워크 인터페이스 up 수"
+      command: "ip -br link show 2>/dev/null | grep -c ' UP ' || echo 0"
+      expected_min: 1
+      on_fail: "UP 상태 네트워크 인터페이스 없음"
+
+    - name: "영상 저장 파티션 RO 체크"
+      command: "mount | grep sd_cam | grep -q 'rw' && echo RW || echo NOT_MOUNTED"
+      expected: "RW"
+      on_fail: "CAM SD 카드 미마운트 또는 Read-Only"
+
+    - name: "dmesg 하드웨어 에러"
+      command: "journalctl -k --since '10 min ago' --no-pager 2>/dev/null | grep -ic 'error\\|fail\\|fault' || true"
+      expected: "0"
+      on_fail: "최근 10분 내 커널 하드웨어 에러 로그 발견"
+
+    - name: "vsftpd 프로세스"
+      command: "pgrep -x vsftpd > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "FTP 서버(vsftpd) 미실행"

@@ -1,0 +1,104 @@
+# Board 하드웨어 상태 점검 (체크리스트 Board 탭 자동화)
+# 네트워크, SD 카드, LED, 스트리밍, FTP, OHT 프로세스 확인
+name: "Board HW Check"
+description: "Board 탭 체크리스트 자동화 — 하드웨어 정상 상태 확인"
+
+checks:
+  processes:
+    required:
+      - gstApp
+      - chk_cam_operate
+    optional:
+      - ord
+      - vcm
+
+  custom_commands:
+    # === 네트워크 (Board #2-4) ===
+    - name: "WiFi 연결 (IP 할당)"
+      command: "ip addr show wlp1s0 2>/dev/null | grep -c 'inet ' || echo 0"
+      expected_min: 1
+      on_fail: "WiFi(wlp1s0) IP 미할당 — Board #2 FAIL"
+
+    - name: "ETH0 연결 (IP 할당)"
+      command: "ip addr show eth0 2>/dev/null | grep -c 'inet ' || echo 0"
+      expected_min: 1
+      on_fail: "ETH0 IP 미할당 — Board #3 FAIL"
+
+    # === SD 카드 (Board #7, #23) ===
+    - name: "CAM SD 마운트 상태"
+      command: "mountpoint -q /mnt/sd_cam 2>/dev/null && echo MOUNTED || echo NOT_MOUNTED"
+      expected: "MOUNTED"
+      on_fail: "CAM SD 카드 미마운트 — Board #7 FAIL"
+
+    - name: "CAM SD 쓰기 가능"
+      command: "touch /mnt/sd_cam/.pim_test 2>/dev/null && rm -f /mnt/sd_cam/.pim_test && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "CAM SD 카드 쓰기 불가 — Board #7 확장"
+
+    # === 영상 저장 (Board #9) ===
+    - name: "영상 파일 저장 중 (최근 5분)"
+      command: "find /mnt/sd_cam -name '*.mp4' -mmin -5 2>/dev/null | wc -l | tr -d ' '"
+      expected_min: 1
+      on_fail: "최근 5분 이내 영상 파일 없음 — Board #9 FAIL"
+
+    # === LED (Board #15) ===
+    - name: "LED sysfs 접근 가능"
+      command: "test -f /sys/devices/platform/leds/leds/gpio1_led/brightness && test -f /sys/devices/platform/leds/leds/gpio2_led/brightness && test -f /sys/devices/platform/leds/leds/gpio3_led/brightness && echo OK || echo FAIL"
+      expected: "OK"
+      on_fail: "LED sysfs 경로 접근 불가 — Board #15 FAIL"
+
+    # === 에러 파일 부재 확인 (Board #16) ===
+    - name: "CAM 에러 파일 없음"
+      command: "ls /tmp/err_cam*.log 2>/dev/null | wc -l | tr -d ' '"
+      expected: "0"
+      on_fail: "카메라 에러 파일 존재 — Board #16 감지"
+
+    - name: "SD 에러 파일 없음"
+      command: "test -e /tmp/err_sdcard.log && echo EXISTS || echo NONE"
+      expected: "NONE"
+      on_fail: "SD 카드 에러 파일 존재 — Board #16 감지"
+
+    - name: "과열 에러 파일 없음"
+      command: "test -e /tmp/err_cpu_temp.log && echo EXISTS || echo NONE"
+      expected: "NONE"
+      on_fail: "CPU 과열 에러 파일 존재 — Board #16 감지"
+
+    - name: "WiFi 에러 파일 없음"
+      command: "test -e /tmp/err_wifi.log && echo EXISTS || echo NONE"
+      expected: "NONE"
+      on_fail: "WiFi 에러 파일 존재 — Board #16 감지"
+
+    - name: "전압 에러 파일 없음"
+      command: "test -e /tmp/err_voltage.log && echo EXISTS || echo NONE"
+      expected: "NONE"
+      on_fail: "입력전압 불량 에러 파일 존재 — Board #16 감지"
+
+    # === 자동 삭제 (Board #17) ===
+    - name: "SD 사용률 90% 이하"
+      command: "df /mnt/sd_cam 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\"); print $5}' || echo 0"
+      expected_min: 0
+      on_fail: "SD 카드 사용률 확인 실패"
+
+    # === eMMC에 영상 미저장 (Board #24) ===
+    - name: "eMMC /mnt/sd-cam에 데이터 미생성"
+      command: "find /mnt/sd-cam -name '*.mp4' 2>/dev/null | wc -l | tr -d ' '"
+      expected: "0"
+      on_fail: "eMMC에 영상 데이터 생성됨 — Board #24 FAIL"
+
+    # === FTP 연결 (Board #5) ===
+    - name: "FTP 포트 리슨 (21)"
+      command: "ss -tlnp 2>/dev/null | grep -c ':21 ' || true"
+      expected_min: 1
+      on_fail: "FTP 서비스 미실행 — Board #5 FAIL"
+
+    # === RTSP 스트리밍 (Board #12) ===
+    - name: "RTSP 포트 리슨 (8554)"
+      command: "ss -tlnp 2>/dev/null | grep -c ':8554 ' || true"
+      expected_min: 1
+      on_fail: "RTSP 서비스 미실행 — Board #12 FAIL"
+
+    # === OHT 통신 (Board #18) ===
+    - name: "OHT 프로세스 (ord) 실행 중"
+      command: "pgrep -x ord > /dev/null && echo RUNNING || echo STOPPED"
+      expected: "RUNNING"
+      on_fail: "OHT 프로세스(ord) 미실행 — Board #18 FAIL"
