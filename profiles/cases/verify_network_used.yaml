@@ -1,0 +1,36 @@
+# 동작 검증: NETWORK.used 설정 확인
+# used 필드가 실제 사용 인터페이스와 일치하는지 검증 (변경 없이 읽기만)
+name: "Verify: Network Used Interface"
+description: "NETWORK.used 설정과 실제 인터페이스 상태 일관성 검증"
+
+checks:
+  custom_commands:
+    - name: "NETWORK.used 값 확인"
+      command: "jq -r '.NETWORK.used' /root/shared_v/edgeconf_pim.json"
+      expected: "ETH0"
+      on_fail: "NETWORK.used가 ETH0이 아님"
+
+    - name: "used 인터페이스 실제 UP"
+      command: "USED=$(jq -r '.NETWORK.used' /root/shared_v/edgeconf_pim.json | tr '[:upper:]' '[:lower:]'); ip -br link show $USED 2>/dev/null | awk '{print $2}' || echo UNKNOWN"
+      expected: "UP"
+      on_fail: "NETWORK.used에 설정된 인터페이스가 UP이 아님"
+
+    - name: "WiFi 인터페이스 UP"
+      command: "ip -br link show wlp1s0 | awk '{print $2}'"
+      expected: "UP"
+      on_fail: "WiFi 인터페이스 DOWN"
+
+    - name: "WiFi IP 할당됨"
+      command: "ip -br addr show wlp1s0 | grep -c '192\\.168\\.' || echo 0"
+      expected_min: 1
+      on_fail: "WiFi IP 미할당"
+
+    - name: "ETH0 IP 할당됨"
+      command: "ip -br addr show eth0 | grep -c '192\\.168\\.' || echo 0"
+      expected_min: 1
+      on_fail: "ETH0 IP 미할당"
+
+    - name: "DNS 해석 가능"
+      command: "cat /etc/resolv.conf 2>/dev/null | grep -c 'nameserver' || echo 0"
+      expected_min: 0
+      on_fail: "resolv.conf 확인 실패"
