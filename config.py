@@ -43,7 +43,12 @@ def load_profile(profiles_dir: str, case: str | None = None) -> dict:
     if case is not None:
         case_path = os.path.join(profiles_dir, "cases", f"{case}.yaml")
         if not os.path.exists(case_path):
-            raise FileNotFoundError(f"Case file not found: {case_path}")
+            # generated/ 디렉토리에서도 탐색
+            gen_path = os.path.join(profiles_dir, "generated", f"{case}.yaml")
+            if os.path.exists(gen_path):
+                case_path = gen_path
+            else:
+                raise FileNotFoundError(f"Case file not found: {case_path}")
         with open(case_path, "r") as f:
             case_data = yaml.safe_load(f) or {}
         profile = deep_merge(profile, case_data)

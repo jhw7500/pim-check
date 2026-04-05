@@ -1,0 +1,87 @@
+# profiles/schema.yaml — 설정 축 정의 + 기대값 규칙
+# pim-check 테스트 케이스 자동 생성용
+version: 1
+
+sources:
+  edgeconf:
+    path: /root/shared_v/edgeconf_pim.json
+    axes:
+      resolution:
+        keys:
+          ".VHL_CAM.cam_width": [1280, 1920]
+          ".VHL_CAM.cam_height": [720, 1080]
+        combinations:
+          - name: "720p"
+            values:
+              ".VHL_CAM.cam_width": 1280
+              ".VHL_CAM.cam_height": 720
+          - name: "fhd"
+            values:
+              ".VHL_CAM.cam_width": 1920
+              ".VHL_CAM.cam_height": 1080
+
+      channels:
+        keys:
+          ".VHL_CAM.i2c1.ch2.enable": [true, false]
+          ".VHL_CAM.i2c1.ch3.enable": [true, false]
+        combinations:
+          - name: "2ch"
+            values:
+              ".VHL_CAM.i2c1.ch2.enable": false
+              ".VHL_CAM.i2c1.ch3.enable": false
+            expect:
+              channel_count: 2
+          - name: "4ch"
+            values:
+              ".VHL_CAM.i2c1.ch2.enable": true
+              ".VHL_CAM.i2c1.ch3.enable": true
+            expect:
+              channel_count: 4
+
+      # 확장 예시:
+      # fps:
+      #   keys:
+      #     ".VHL_CAM.fps": [15, 30]
+      #   combinations:
+      #     - name: "15fps"
+      #       values: {".VHL_CAM.fps": 15}
+      #     - name: "30fps"
+      #       values: {".VHL_CAM.fps": 30}
+
+  # 후순위 확장
+  # ord_vcm:
+  #   path: /root/shared_v/ord_vcm_conf.json
+  #   axes: ...
+
+# 기대값 계산 규칙
+# 우선순위: 정확한 키 매칭 > 와일드카드 매칭 (fnmatch 스타일)
+# 와일드카드 충돌 시 가장 구체적인 패턴이 우선 (* 개수가 적은 것)
+expectations:
+  cpu:
+    gst_range:
+      "720p+2ch": [5, 60]
+      "720p+4ch": [20, 80]
+      "fhd+2ch": [20, 80]
+      "fhd+4ch": [50, 95]
+  thermal:
+    warn_temp_c:
+      # 720p는 thermal 체크 생략 (기존 수동 케이스에도 없음)
+      "fhd+*": 82
+  cam_state:
+    dir: /tmp/cam_state
+    expected_state: healthy
+    max_streak: 0
+  recording:
+    from_axis: "channels.expect.channel_count"
+  stabilize_sec:
+    "720p+2ch": 30
+    "720p+4ch": 40
+    "fhd+2ch": 40
+    "fhd+4ch": 60
+
+# 조합 생성 규칙
+generation:
+  cross: [resolution, channels]
+  mode: all
+  output_dir: profiles/generated
+  filename_pattern: "gen_{resolution}_{channels}.yaml"

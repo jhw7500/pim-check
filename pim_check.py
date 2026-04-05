@@ -28,13 +28,18 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
     parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드")
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
+    parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
+    parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
     return parser.parse_args(argv)
 
 
-def list_cases() -> list[str]:
+def list_cases(include_generated: bool = False) -> list[str]:
     """profiles/cases/*.yaml 글로브로 케이스 목록을 반환한다."""
     pattern = os.path.join(PROFILES_DIR, "cases", "*.yaml")
     paths = glob.glob(pattern)
+    if include_generated:
+        gen_pattern = os.path.join(PROFILES_DIR, "generated", "*.yaml")
+        paths.extend(glob.glob(gen_pattern))
     return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
 
 
@@ -113,13 +118,20 @@ def main(argv=None) -> int:
     args = parse_args(argv)
 
     if args.list:
-        cases = list_cases()
+        cases = list_cases(include_generated=args.include_generated)
         if cases:
             print("Available cases:")
             for c in cases:
                 print(f"  {c}")
         else:
             print("No cases found in profiles/cases/")
+        return 0
+
+    if args.generate:
+        from generator import generate_cases
+        print("Generating test cases from schema...")
+        generated = generate_cases(PROFILES_DIR)
+        print(f"\n{len(generated)} case(s) generated.")
         return 0
 
     if args.learn:
@@ -135,7 +147,7 @@ def main(argv=None) -> int:
         return 0
 
     if args.all:
-        cases = list_cases()
+        cases = list_cases(include_generated=args.include_generated)
         if not cases:
             print("No cases found.")
             return 1
