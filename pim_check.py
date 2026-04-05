@@ -28,6 +28,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
     parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드")
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
+    parser.add_argument("--html", action="store_true", help="결과를 HTML 파일로 저장")
+    parser.add_argument("--history", action="store_true", help="결과를 히스토리에 추가")
     parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
     parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
     return parser.parse_args(argv)
@@ -43,7 +45,8 @@ def list_cases(include_generated: bool = False) -> list[str]:
     return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
 
 
-def run_case(case_name, host, user, password, duration, save_json=False) -> int:
+def run_case(case_name, host, user, password, duration, save_json=False,
+             save_html=False, save_history=False) -> int:
     """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
@@ -98,10 +101,20 @@ def run_case(case_name, host, user, password, duration, save_json=False) -> int:
         reporter = Reporter()
         print(reporter.format(results, case_name, collected, total))
 
+        report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+
         if save_json:
-            report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
             filepath = reporter.save_json(results, case_name, host, collected, total, report_dir)
             print(f"JSON report saved: {filepath}")
+
+        if save_html:
+            from html_reporter import save_html as _save_html
+            filepath = _save_html(results, case_name, host, collected, total, report_dir)
+            print(f"HTML report saved: {filepath}")
+
+        if save_history:
+            from history import append_result
+            append_result(results, case_name, host, collected, total, report_dir)
 
         all_passed = all(r["passed"] for r in results)
         return 0 if all_passed else 1
@@ -153,12 +166,14 @@ def main(argv=None) -> int:
             return 1
         worst = 0
         for case_name in cases:
-            ret = run_case(case_name, args.host, args.user, args.password, args.duration, args.json)
+            ret = run_case(case_name, args.host, args.user, args.password,
+                           args.duration, args.json, args.html, args.history)
             if ret != 0:
                 worst = ret
         return worst
 
-    return run_case(args.case, args.host, args.user, args.password, args.duration, args.json)
+    return run_case(args.case, args.host, args.user, args.password,
+                    args.duration, args.json, args.html, args.history)
 
 
 if __name__ == "__main__":

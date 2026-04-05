@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 
 class SshTimeoutError(Exception):
@@ -35,8 +36,12 @@ class SshClient:
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
 
-    def run(self, command: str) -> str | None:
+    def run(self, command: str, retries: int = 0) -> str | None:
         """타겟에서 명령을 실행하고 stdout을 반환한다.
+
+        Args:
+            command: 실행할 셸 명령
+            retries: 접속 실패(255) 시 재시도 횟수 (기본 0)
 
         Returns:
             str: 성공 시 stdout (strip 적용)
@@ -44,8 +49,21 @@ class SshClient:
 
         Raises:
             SshTimeoutError: command_timeout 초과
-            SshConnectionError: returncode 255 (접속 실패)
+            SshConnectionError: retries 소진 후에도 접속 실패
         """
+        last_error = None
+        for attempt in range(1 + retries):
+            try:
+                return self._run_once(command)
+            except SshConnectionError as e:
+                last_error = e
+                if attempt < retries:
+                    wait = min(2 ** attempt, 10)
+                    time.sleep(wait)
+        raise last_error
+
+    def _run_once(self, command: str) -> str | None:
+        """단일 SSH 명령 실행."""
         cmd = [
             "sshpass", "-e",
             "ssh",
