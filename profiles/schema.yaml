@@ -1,5 +1,6 @@
 # profiles/schema.yaml — 설정 축 정의 + 기대값 규칙
 # pim-check 테스트 케이스 자동 생성용
+# 실제 타겟 JSON 구조 확인 완료 (2026-04-05)
 version: 1
 
 sources:
@@ -38,20 +39,44 @@ sources:
             expect:
               channel_count: 4
 
-      # 확장 예시:
-      # fps:
-      #   keys:
-      #     ".VHL_CAM.fps": [15, 30]
-      #   combinations:
-      #     - name: "15fps"
-      #       values: {".VHL_CAM.fps": 15}
-      #     - name: "30fps"
-      #       values: {".VHL_CAM.fps": 30}
+      fps:
+        keys:
+          ".VHL_CAM.fps": [15, 30]
+        combinations:
+          - name: "15fps"
+            values:
+              ".VHL_CAM.fps": 15
+          - name: "30fps"
+            values:
+              ".VHL_CAM.fps": 30
 
-  # 후순위 확장
-  # ord_vcm:
-  #   path: /root/shared_v/ord_vcm_conf.json
-  #   axes: ...
+  ord_vcm:
+    path: /root/shared_v/ord_vcm_conf.json
+    axes:
+      ord_disk:
+        keys:
+          ".ORD.disk_manage": [true, false]
+          ".ORD.event_auto_remove": [true, false]
+        combinations:
+          - name: "disk_on"
+            values:
+              ".ORD.disk_manage": true
+              ".ORD.event_auto_remove": true
+          - name: "disk_off"
+            values:
+              ".ORD.disk_manage": false
+              ".ORD.event_auto_remove": false
+
+      vcm_srt:
+        keys:
+          ".VCM.srt_enable": [true, false]
+        combinations:
+          - name: "srt_on"
+            values:
+              ".VCM.srt_enable": true
+          - name: "srt_off"
+            values:
+              ".VCM.srt_enable": false
 
 # 기대값 계산 규칙
 # 우선순위: 정확한 키 매칭 > 와일드카드 매칭 (fnmatch 스타일)
@@ -59,10 +84,16 @@ sources:
 expectations:
   cpu:
     gst_range:
-      "720p+2ch": [5, 60]
-      "720p+4ch": [20, 80]
-      "fhd+2ch": [20, 80]
-      "fhd+4ch": [50, 95]
+      # resolution + channels + fps 조합
+      "720p+2ch+15fps": [5, 60]
+      "720p+2ch+30fps": [10, 70]
+      "720p+4ch+15fps": [20, 80]
+      "720p+4ch+30fps": [30, 90]
+      "fhd+2ch+15fps": [20, 80]
+      "fhd+2ch+30fps": [30, 90]
+      "fhd+4ch+15fps": [50, 95]
+      "fhd+4ch+30fps": [60, 100]
+      # ord_vcm 조합은 CPU 무관
   thermal:
     warn_temp_c:
       # 720p는 thermal 체크 생략 (기존 수동 케이스에도 없음)
@@ -74,14 +105,29 @@ expectations:
   recording:
     from_axis: "channels.expect.channel_count"
   stabilize_sec:
-    "720p+2ch": 30
-    "720p+4ch": 40
-    "fhd+2ch": 40
-    "fhd+4ch": 60
+    "720p+2ch+*": 30
+    "720p+4ch+*": 40
+    "fhd+2ch+*": 40
+    "fhd+4ch+*": 60
+    # ord_vcm은 재부팅 불필요
+    "disk_*": 0
+    "srt_*": 0
 
 # 조합 생성 규칙
+# edgeconf: resolution x channels x fps = 8 조합
+# ord_vcm: ord_disk x vcm_srt = 4 조합 (별도 그룹)
 generation:
-  cross: [resolution, channels]
-  mode: all
-  output_dir: profiles/generated
-  filename_pattern: "gen_{resolution}_{channels}.yaml"
+  groups:
+    - name: edgeconf_camera
+      source: edgeconf
+      cross: [resolution, channels, fps]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_{channels}_{fps}.yaml"
+
+    - name: ord_vcm_config
+      source: ord_vcm
+      cross: [ord_disk, vcm_srt]
+      output_dir: profiles/generated
+      filename_pattern: "gen_ord_{ord_disk}_{vcm_srt}.yaml"
+      # ord_vcm 케이스는 재부팅 불필요, 스냅샷만
+      no_reboot: true

@@ -3,6 +3,9 @@ generator.py — schema.yaml 기반 테스트 케이스 자동 생성
 
 profiles/schema.yaml에 정의된 설정 축과 기대값 규칙을 읽어
 조합별 YAML 테스트 케이스를 profiles/generated/에 생성한다.
+
+groups 구조를 지원하여 edgeconf와 ord_vcm 등 여러 소스에서
+독립적으로 케이스를 생성할 수 있다.
 """
 from __future__ import annotations
 
@@ -41,12 +44,8 @@ def _changes_match(a: dict, b: dict) -> bool:
     return a == b
 
 
-def generate_combinations(schema: dict):
+def generate_combinations(axes: dict, cross_axes: list[str]):
     """교차 축의 모든 조합을 생성한다."""
-    source = schema["sources"]["edgeconf"]
-    axes = source["axes"]
-    cross_axes = schema["generation"]["cross"]
-
     axis_combos = []
     for axis_name in cross_axes:
         axis_combos.append([
@@ -72,7 +71,7 @@ def resolve_rule(rules: dict, combo_key: str):
     return None
 
 
-def build_case(combo: tuple, schema: dict) -> tuple[dict, str]:
+def build_case(combo: tuple, schema: dict, no_reboot: bool = False) -> tuple[dict, str]:
     """조합 하나로부터 YAML 케이스 dict를 생성한다."""
     edgeconf_changes = {}
     combo_key_parts = []
@@ -119,21 +118,56 @@ def build_case(combo: tuple, schema: dict) -> tuple[dict, str]:
             "session_progress": f"{ch_count}/{ch_count}",
         }
 
-    # Stabilize
+    # Stabilize / reboot
     stab_rules = expectations.get("stabilize_sec", {})
     stabilize = resolve_rule(stab_rules, combo_key) or 30
 
-    case = {
-        "name": f"[auto] {'_'.join(name_parts)}",
-        "description": f"Auto-generated: {' '.join(name_parts)}",
-        "setup": {
-            "edgeconf_changes": edgeconf_changes,
-            "reboot_after": True,
-            "stabilize_sec": stabilize,
-        },
-        "checks": checks,
-    }
+    if no_reboot:
+        case = {
+            "name": f"[auto] {'_'.join(name_parts)}",
+            "description": f"Auto-generated: {' '.join(name_parts)}",
+            "checks": checks,
+        }
+        # no_reboot 케이스는 edgeconf_changes 대신 custom_commands로 검증
+        case["monitor"] = {"duration_sec": 0}
+        case["checks"]["custom_commands"] = _build_config_checks(edgeconf_changes)
+    else:
+        case = {
+            "name": f"[auto] {'_'.join(name_parts)}",
+            "description": f"Auto-generated: {' '.join(name_parts)}",
+            "setup": {
+                "edgeconf_changes": edgeconf_changes,
+                "reboot_after": True,
+                "stabilize_sec": stabilize,
+            },
+            "checks": checks,
+        }
+
     return case, "_".join(name_parts)
+
+
+def _build_config_checks(changes: dict) -> list[dict]:
+    """edgeconf_changes를 custom_commands 검증 항목으로 변환한다."""
+    commands = []
+    for jq_path, expected in changes.items():
+        # ord_vcm_conf.json 경로 판별
+        if jq_path.startswith(".ORD") or jq_path.startswith(".VCM") or jq_path.startswith(".ETC"):
+            conf_file = "/root/shared_v/ord_vcm_conf.json"
+        else:
+            conf_file = "/root/shared_v/edgeconf_pim.json"
+
+        if isinstance(expected, bool):
+            expected_str = "true" if expected else "false"
+        else:
+            expected_str = str(expected)
+
+        commands.append({
+            "name": f"config {jq_path} == {expected_str}",
+            "command": f"jq '{jq_path}' {conf_file}",
+            "expected": expected_str,
+            "on_fail": f"{jq_path} 값이 {expected_str}와 다름",
+        })
+    return commands
 
 
 def generate_cases(profiles_dir: str) -> list[str]:
@@ -144,36 +178,59 @@ def generate_cases(profiles_dir: str) -> list[str]:
     cases_dir = os.path.join(profiles_dir, "cases")
     manual_changes = list_manual_cases(cases_dir)
 
-    output_dir = os.path.join(
-        os.path.dirname(os.path.abspath(profiles_dir)),
-        schema["generation"]["output_dir"],
-    )
-    os.makedirs(output_dir, exist_ok=True)
-
-    pattern = schema["generation"]["filename_pattern"]
+    generation = schema["generation"]
+    sources = schema["sources"]
     generated = []
 
-    for combo in generate_combinations(schema):
-        case_data, slug = build_case(combo, schema)
+    # groups 구조 지원 (하위 호환: groups가 없으면 단일 그룹으로 동작)
+    if "groups" in generation:
+        groups = generation["groups"]
+    else:
+        groups = [{
+            "name": "default",
+            "source": "edgeconf",
+            "cross": generation["cross"],
+            "output_dir": generation["output_dir"],
+            "filename_pattern": generation["filename_pattern"],
+        }]
 
-        # 수동 케이스와 중복 체크
-        if any(_changes_match(case_data["setup"]["edgeconf_changes"], m)
-               for m in manual_changes):
-            combo_names = {c["name"]: axis for axis, c in combo}
-            print(f"  skip: {slug} (manual case exists)")
-            continue
+    for group in groups:
+        source_name = group["source"]
+        source = sources[source_name]
+        axes = source["axes"]
+        cross_axes = group["cross"]
+        no_reboot = group.get("no_reboot", False)
 
-        # 파일명 생성
-        name_map = {axis: c["name"] for axis, c in combo}
-        filename = pattern.format(**name_map)
-        filepath = os.path.join(output_dir, filename)
+        output_dir = os.path.join(
+            os.path.dirname(os.path.abspath(profiles_dir)),
+            group["output_dir"],
+        )
+        os.makedirs(output_dir, exist_ok=True)
 
-        with open(filepath, "w") as f:
-            f.write(f"# Auto-generated by pim-check generator\n")
-            yaml.dump(case_data, f, default_flow_style=False, allow_unicode=True,
-                      sort_keys=False)
+        pattern = group["filename_pattern"]
+        print(f"\n[{group['name']}] source={source_name}, axes={cross_axes}")
 
-        generated.append(filepath)
-        print(f"  generated: {filename}")
+        for combo in generate_combinations(axes, cross_axes):
+            case_data, slug = build_case(combo, schema, no_reboot=no_reboot)
+
+            # 수동 케이스와 중복 체크 (reboot 케이스만)
+            if not no_reboot and "setup" in case_data:
+                if any(_changes_match(case_data["setup"]["edgeconf_changes"], m)
+                       for m in manual_changes):
+                    print(f"  skip: {slug} (manual case exists)")
+                    continue
+
+            # 파일명 생성
+            name_map = {axis: c["name"] for axis, c in combo}
+            filename = pattern.format(**name_map)
+            filepath = os.path.join(output_dir, filename)
+
+            with open(filepath, "w") as f:
+                f.write("# Auto-generated by pim-check generator\n")
+                yaml.dump(case_data, f, default_flow_style=False,
+                          allow_unicode=True, sort_keys=False)
+
+            generated.append(filepath)
+            print(f"  generated: {filename}")
 
     return generated

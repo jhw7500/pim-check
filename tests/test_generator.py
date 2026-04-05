@@ -65,11 +65,13 @@ class TestGenerateCombinations(unittest.TestCase):
         }
 
     def test_generates_all_combinations(self):
-        combos = list(generate_combinations(self.schema))
+        axes = self.schema["sources"]["edgeconf"]["axes"]
+        combos = list(generate_combinations(axes, ["resolution", "channels"]))
         self.assertEqual(len(combos), 4)
 
     def test_combo_structure(self):
-        combos = list(generate_combinations(self.schema))
+        axes = self.schema["sources"]["edgeconf"]["axes"]
+        combos = list(generate_combinations(axes, ["resolution", "channels"]))
         first = combos[0]
         self.assertEqual(first[0][0], "resolution")
         self.assertEqual(first[1][0], "channels")
