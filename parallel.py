@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
-from config import load_profile
+from config import load_profile, deep_merge
 from engine import Engine
 from reporter import Reporter
 from setup import SetupManager
@@ -36,9 +36,15 @@ def run_on_target(
     password: str,
     case_name: str | None,
     duration: int | None,
+    overrides: dict | None = None,
 ) -> dict:
     """단일 타겟에서 케이스를 실행하고 결과를 반환한다."""
     profile = load_profile(PROFILES_DIR, case=case_name)
+
+    # 타겟별 overrides 적용
+    if overrides:
+        checks = profile.get("checks", {})
+        profile["checks"] = deep_merge(checks, overrides)
 
     if host:
         profile["target"]["host"] = host
@@ -132,13 +138,20 @@ def run_parallel(
     password: str = "root",
     duration: int | None = None,
     max_workers: int = 4,
+    target_overrides: dict | None = None,
 ) -> list[dict]:
-    """여러 타겟에서 동시에 케이스를 실행한다."""
+    """여러 타겟에서 동시에 케이스를 실행한다.
+
+    Args:
+        target_overrides: {host: {check_overrides}} 형태의 타겟별 override
+    """
     results = []
+    overrides_map = target_overrides or {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(run_on_target, host, user, password, case_name, duration): host
+            executor.submit(run_on_target, host, user, password, case_name,
+                            duration, overrides_map.get(host)): host
             for host in hosts
         }
         for future in as_completed(futures):

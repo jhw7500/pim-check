@@ -319,11 +319,18 @@ def main(argv=None) -> int:
                 print("No targets defined. Use --targets or profiles/targets.yaml")
                 return 1
             hosts = [t["host"] for t in target_entries]
+        # 타겟별 overrides 수집
+        target_overrides = {}
+        if not args.targets:
+            for t in target_entries:
+                if "overrides" in t:
+                    target_overrides[t["host"]] = t["overrides"]
         results = run_parallel(
             hosts, args.case,
             user=args.user or "root",
             password=args.password or "root",
             duration=args.duration,
+            target_overrides=target_overrides or None,
         )
         print(format_parallel_results(results))
 
