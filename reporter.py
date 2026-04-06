@@ -64,6 +64,9 @@ class Reporter:
                     line += f" — {r['reason']}"
             if r["passed"] and r.get("reason", "OK") != "OK":
                 line += f" — {r['reason']}"
+            duration = r.get("duration_ms")
+            if duration is not None:
+                line += f" ({duration}ms)"
             detail_lines.append(line)
 
         lines = [header, "", summary, samples_line, ""] + detail_lines + [""]

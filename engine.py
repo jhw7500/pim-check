@@ -29,6 +29,7 @@ class Engine:
         results = []
 
         for check in self.checks:
+            _check_start = time.time()
             data = {}
             passed = False
             reason = ""
@@ -52,6 +53,7 @@ class Engine:
                 "passed": passed,
                 "reason": reason,
                 "data": data,
+                "duration_ms": int((time.time() - _check_start) * 1000),
             })
 
         return results
