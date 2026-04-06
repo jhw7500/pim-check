@@ -36,6 +36,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--parallel", action="store_true", help="다수 타겟 병렬 실행")
     parser.add_argument("--targets", type=str, default=None, help="병렬 타겟 목록 (쉼표 구분: 192.168.0.5,192.168.0.6)")
     parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
+    parser.add_argument("--validate-schema", action="store_true", help="schema.yaml 유효성 검증")
     parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
     parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
     return parser.parse_args(argv)
@@ -154,6 +155,52 @@ def main(argv=None) -> int:
         report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
         filepath = save_dashboard(report_dir)
         print(f"Dashboard saved: {filepath}")
+        return 0
+
+    if args.validate_schema:
+        from generator import load_schema
+        schema_path = os.path.join(PROFILES_DIR, "schema.yaml")
+        if not os.path.exists(schema_path):
+            print(f"ERROR: {schema_path} not found")
+            return 1
+        schema = load_schema(schema_path)
+        errors = []
+        # 필수 키 검사
+        if "sources" not in schema:
+            errors.append("missing 'sources' section")
+        if "generation" not in schema:
+            errors.append("missing 'generation' section")
+        # sources 검사
+        for src_name, src in schema.get("sources", {}).items():
+            if "axes" not in src:
+                errors.append(f"source '{src_name}': missing 'axes'")
+            for axis_name, axis in src.get("axes", {}).items():
+                if "combinations" not in axis:
+                    errors.append(f"source '{src_name}' axis '{axis_name}': missing 'combinations'")
+                for i, combo in enumerate(axis.get("combinations", [])):
+                    if "name" not in combo:
+                        errors.append(f"source '{src_name}' axis '{axis_name}' combo[{i}]: missing 'name'")
+                    if "values" not in combo:
+                        errors.append(f"source '{src_name}' axis '{axis_name}' combo[{i}]: missing 'values'")
+        # generation groups 검사
+        gen = schema.get("generation", {})
+        groups = gen.get("groups", [{"source": "edgeconf", "cross": gen.get("cross", []),
+                                      "output_dir": gen.get("output_dir", ""),
+                                      "filename_pattern": gen.get("filename_pattern", "")}])
+        for g in groups:
+            src = g.get("source", "")
+            if src and src not in schema.get("sources", {}):
+                errors.append(f"group '{g.get('name', '?')}': source '{src}' not defined in sources")
+            for axis in g.get("cross", []):
+                if src in schema.get("sources", {}) and axis not in schema["sources"][src].get("axes", {}):
+                    errors.append(f"group '{g.get('name', '?')}': axis '{axis}' not defined in source '{src}'")
+
+        if errors:
+            print(f"Schema validation FAILED ({len(errors)} errors):")
+            for e in errors:
+                print(f"  - {e}")
+            return 1
+        print(f"Schema validation OK — {len(schema.get('sources', {}))} sources, {sum(len(s.get('axes', {})) for s in schema.get('sources', {}).values())} axes")
         return 0
 
     if args.generate:
