@@ -13,8 +13,13 @@ services:
       - TZ=${TZ:-Asia/Seoul}
     restart: unless-stopped
     command: python web.py --host 0.0.0.0 --port 8080
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-  # 정기 테스트 실행 (5분 간격)
+  # 정기 테스트 실행
   runner:
     build: .
     volumes:
@@ -30,6 +35,9 @@ services:
       - TZ=${TZ:-Asia/Seoul}
     restart: unless-stopped
     entrypoint: ["python", "runner_loop.py"]
+    depends_on:
+      dashboard:
+        condition: service_healthy
 
 volumes:
   reports:
