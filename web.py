@@ -536,6 +536,7 @@ def _build_case_detail_html(case_name: str) -> str:
     <table><thead><tr><th>Time</th><th>Result</th><th>Checks</th><th>Host</th></tr></thead>
     <tbody>{history_rows}</tbody></table>
   </div>
+  <input id="host" type="text" value="192.168.0.5" placeholder="Target IP" style="width:140px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px">
   <button class="btn" onclick="runLive('{case_name}')">Run Now (Live)</button>
   <div id="livelog" style="display:none;margin-top:12px;background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;max-height:300px;overflow-y:auto"></div>
   <script>
@@ -543,7 +544,7 @@ def _build_case_detail_html(case_name: str) -> str:
     const log = document.getElementById('livelog');
     log.style.display = 'block';
     log.innerHTML = '';
-    const host = '192.168.0.5';
+    const host = document.getElementById('host').value || '192.168.0.5';
     const es = new EventSource('/api/stream?case=' + c + '&host=' + host);
     es.addEventListener('start', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#60a5fa">' + d.message + '</div>'; }});
     es.addEventListener('phase', e => {{ const d = JSON.parse(e.data); const c = d.ok ? '#22c55e' : '#fbbf24'; log.innerHTML += '<div style="color:' + c + '">[' + d.phase + '] ' + d.message + '</div>'; }});

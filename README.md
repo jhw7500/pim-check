@@ -109,6 +109,22 @@ python3 web.py --auth admin:secret      # Basic Auth
 - 다크모드 토글
 - 30초 자동 새로고침
 
+### 실시간 로그 스트리밍
+
+"Run Live" 버튼을 클릭하면 SSE(Server-Sent Events)로 체크별 결과가 실시간 표시됩니다.
+
+이벤트 타입: `start`, `phase`, `check_start`, `check_result`, `warning`, `error`, `done`
+
+```javascript
+// 프로그래밍 방식으로 SSE 수신
+const es = new EventSource('/api/stream?case=720p_2ch&host=192.168.0.5');
+es.addEventListener('check_result', e => {
+  const data = JSON.parse(e.data);
+  console.log(data.check, data.passed ? 'PASS' : 'FAIL', data.duration_ms + 'ms');
+});
+es.addEventListener('done', e => { es.close(); });
+```
+
 ### API 엔드포인트
 
 | 경로 | 설명 |
