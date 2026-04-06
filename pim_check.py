@@ -30,6 +30,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
     parser.add_argument("--html", action="store_true", help="결과를 HTML 파일로 저장")
     parser.add_argument("--history", action="store_true", help="결과를 히스토리에 추가")
+    parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
     parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
     parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
     return parser.parse_args(argv)
@@ -138,6 +139,13 @@ def main(argv=None) -> int:
                 print(f"  {c}")
         else:
             print("No cases found in profiles/cases/")
+        return 0
+
+    if args.history_report:
+        from history import save_dashboard
+        report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+        filepath = save_dashboard(report_dir)
+        print(f"Dashboard saved: {filepath}")
         return 0
 
     if args.generate:

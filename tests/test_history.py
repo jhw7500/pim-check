@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 
-from history import append_result, read_history
+from history import append_result, generate_dashboard, read_history, save_dashboard
 
 
 class TestHistory(unittest.TestCase):
@@ -51,6 +51,47 @@ class TestHistory(unittest.TestCase):
             self.assertIn("timestamp", entry)
             self.assertIn("checks", entry)
             self.assertEqual(entry["checks"]["check"], True)
+
+
+class TestDashboard(unittest.TestCase):
+    def test_empty_dashboard(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            html = generate_dashboard(history_dir=tmpdir)
+            self.assertIn("No history data yet", html)
+
+    def test_dashboard_with_entries(self):
+        results = [
+            {"name": "process", "passed": True, "reason": "OK"},
+            {"name": "thermal", "passed": False, "reason": "too hot"},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            append_result(results, "case_a", "192.168.0.5", history_dir=tmpdir)
+            append_result(results, "case_b", "192.168.0.5", history_dir=tmpdir)
+            html = generate_dashboard(history_dir=tmpdir)
+            self.assertIn("<!DOCTYPE html>", html)
+            self.assertIn("case_a", html)
+            self.assertIn("case_b", html)
+            self.assertIn("FAIL", html)
+            self.assertIn("0%", html)  # 각 run은 2체크 중 1실패 → FAIL, pass rate 0%
+
+    def test_dashboard_case_none_fallback(self):
+        results = [{"name": "check", "passed": True, "reason": "OK"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            append_result(results, None, history_dir=tmpdir)
+            html = generate_dashboard(history_dir=tmpdir)
+            self.assertIn("healthcheck", html)
+
+    def test_save_dashboard(self):
+        results = [{"name": "check", "passed": True, "reason": "OK"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            append_result(results, "mycase", history_dir=tmpdir)
+            filepath = save_dashboard(history_dir=tmpdir)
+            self.assertTrue(os.path.exists(filepath))
+            self.assertTrue(filepath.endswith("dashboard.html"))
+            with open(filepath) as f:
+                content = f.read()
+            self.assertIn("<!DOCTYPE html>", content)
+            self.assertIn("mycase", content)
 
 
 if __name__ == "__main__":
