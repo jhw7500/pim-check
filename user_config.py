@@ -36,6 +36,14 @@ def init_user_config(path: str = DEFAULT_PATH) -> str:
         "default_password": "root",
         "webhook_url": "",
         "log_enabled": False,
+        "email": {
+            "smtp_host": "",
+            "smtp_port": 587,
+            "sender": "",
+            "password": "",
+            "recipients": [],
+            "use_tls": True,
+        },
     }
     save_user_config(default, path)
     return path
