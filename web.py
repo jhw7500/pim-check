@@ -264,6 +264,7 @@ def _build_dashboard_html() -> str:
       <select id="case">{case_options}</select>
       <input id="host" type="text" value="192.168.0.5" placeholder="Target IP" style="width:140px">
       <button class="btn btn-primary" onclick="runSelected()">Run Now</button>
+      <button class="btn" style="background:#8b5cf6;color:#fff" onclick="runLive()">Run Live</button>
       <span style="color:#9ca3af">|</span>
       <input id="interval" type="number" value="300" min="30" style="width:70px"> sec
       <button class="btn btn-success" onclick="startAuto()">Auto Start</button>
@@ -334,6 +335,30 @@ function startAuto() {{
 function stopAuto() {{
   fetch('/api/auto/stop').then(r => r.json())
     .then(() => {{ showStatus('Auto mode stopped', '#fffbeb'); setTimeout(() => location.reload(), 1000); }});
+}}
+
+function runLive() {{
+  const caseName = document.getElementById('case').value;
+  const host = document.getElementById('host').value;
+  let log = document.getElementById('livelog');
+  if (!log) {{
+    log = document.createElement('div');
+    log.id = 'livelog';
+    log.style.cssText = 'margin-top:12px;background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;max-height:300px;overflow-y:auto';
+    document.getElementById('status').parentNode.appendChild(log);
+  }}
+  log.style.display = 'block';
+  log.innerHTML = '';
+  const es = new EventSource('/api/stream?case=' + caseName + '&host=' + host);
+  es.addEventListener('start', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#60a5fa">' + d.message + '</div>'; }});
+  es.addEventListener('phase', e => {{ const d = JSON.parse(e.data); const c = d.ok ? '#22c55e' : '#fbbf24'; log.innerHTML += '<div style="color:' + c + '">[' + d.phase + '] ' + d.message + '</div>'; }});
+  es.addEventListener('check_start', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#9ca3af">  checking ' + d.check + '...</div>'; }});
+  es.addEventListener('check_result', e => {{ const d = JSON.parse(e.data); const c = d.passed ? '#22c55e' : d.known_issue ? '#fbbf24' : '#ef4444'; const s = d.passed ? 'PASS' : d.known_issue ? 'WARN' : 'FAIL'; log.innerHTML += '<div style="color:' + c + '">  ' + s + ' ' + d.check + ' (' + d.duration_ms + 'ms)' + (d.reason && !d.passed ? ' - ' + d.reason : '') + '</div>'; }});
+  es.addEventListener('warning', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#fbbf24">WARNING: ' + d.message + '</div>'; }});
+  es.addEventListener('error', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#ef4444">ERROR: ' + d.message + '</div>'; }});
+  es.addEventListener('done', e => {{ const d = JSON.parse(e.data); const c = d.status === 'PASS' ? '#22c55e' : d.status === 'WARN' ? '#fbbf24' : '#ef4444'; log.innerHTML += '<div style="color:' + c + ';font-weight:bold;margin-top:8px">' + d.message + '</div>'; es.close(); setTimeout(() => location.reload(), 3000); }});
+  es.onerror = () => {{ log.innerHTML += '<div style="color:#ef4444">Connection lost</div>'; es.close(); }};
+  setInterval(() => {{ log.scrollTop = log.scrollHeight; }}, 500);
 }}
 
 function runTag(tag) {{
@@ -511,7 +536,27 @@ def _build_case_detail_html(case_name: str) -> str:
     <table><thead><tr><th>Time</th><th>Result</th><th>Checks</th><th>Host</th></tr></thead>
     <tbody>{history_rows}</tbody></table>
   </div>
-  <button class="btn" onclick="fetch('/api/run?case={case_name}&host=192.168.0.5').then(()=>location.reload())">Run Now</button>
+  <button class="btn" onclick="runLive('{case_name}')">Run Now (Live)</button>
+  <div id="livelog" style="display:none;margin-top:12px;background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;max-height:300px;overflow-y:auto"></div>
+  <script>
+  function runLive(c) {{
+    const log = document.getElementById('livelog');
+    log.style.display = 'block';
+    log.innerHTML = '';
+    const host = '192.168.0.5';
+    const es = new EventSource('/api/stream?case=' + c + '&host=' + host);
+    es.addEventListener('start', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#60a5fa">' + d.message + '</div>'; }});
+    es.addEventListener('phase', e => {{ const d = JSON.parse(e.data); const c = d.ok ? '#22c55e' : '#fbbf24'; log.innerHTML += '<div style="color:' + c + '">[' + d.phase + '] ' + d.message + '</div>'; }});
+    es.addEventListener('check_start', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#9ca3af">  checking ' + d.check + '...</div>'; }});
+    es.addEventListener('check_result', e => {{ const d = JSON.parse(e.data); const c = d.passed ? '#22c55e' : d.known_issue ? '#fbbf24' : '#ef4444'; const s = d.passed ? 'PASS' : d.known_issue ? 'WARN' : 'FAIL'; log.innerHTML += '<div style="color:' + c + '">  ' + s + ' ' + d.check + ' (' + d.duration_ms + 'ms)' + (d.reason && !d.passed ? ' - ' + d.reason : '') + '</div>'; }});
+    es.addEventListener('warning', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#fbbf24">WARNING: ' + d.message + '</div>'; }});
+    es.addEventListener('error', e => {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#ef4444">ERROR: ' + d.message + '</div>'; }});
+    es.addEventListener('done', e => {{ const d = JSON.parse(e.data); const c = d.status === 'PASS' ? '#22c55e' : d.status === 'WARN' ? '#fbbf24' : '#ef4444'; log.innerHTML += '<div style="color:' + c + ';font-weight:bold;margin-top:8px">' + d.message + '</div>'; es.close(); setTimeout(() => location.reload(), 3000); }});
+    es.onerror = () => {{ log.innerHTML += '<div style="color:#ef4444">Connection lost</div>'; es.close(); }};
+    log.scrollTop = log.scrollHeight;
+    setInterval(() => {{ log.scrollTop = log.scrollHeight; }}, 500);
+  }}
+  </script>
 </div></body></html>"""
 
 
@@ -633,12 +678,52 @@ class DashboardHandler(BaseHTTPRequestHandler):
             html = _build_case_detail_html(case)
             self._respond(200, html, "text/html")
 
+        elif path == "/api/stream":
+            case = params.get("case", [None])[0]
+            host = params.get("host", ["192.168.0.5"])[0]
+            self._handle_stream(case, host)
+            return
+
         elif path == "/metrics":
             metrics = _build_prometheus_metrics()
             self._respond(200, metrics, "text/plain")
 
         else:
             self._respond(404, "Not Found", "text/plain")
+
+    def _handle_stream(self, case: str | None, host: str):
+        """SSE 스트리밍으로 테스트 실행 로그를 실시간 전송."""
+        from stream import StreamRunner, format_sse
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        runner = StreamRunner(
+            case, host,
+            profiles_dir=PROFILES_DIR,
+            reports_dir=REPORTS_DIR,
+        )
+        runner.start()
+
+        try:
+            while True:
+                try:
+                    event = runner.events.get(timeout=30)
+                    sse_text = format_sse(event["event"], event["data"])
+                    self.wfile.write(sse_text.encode("utf-8"))
+                    self.wfile.flush()
+                    if event["event"] == "done":
+                        break
+                except Exception:
+                    # 큐 타임아웃 또는 연결 끊김
+                    self.wfile.write(format_sse("ping", {}).encode("utf-8"))
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _respond(self, code: int, body: str, content_type: str):
         self.send_response(code)
