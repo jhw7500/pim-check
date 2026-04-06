@@ -30,6 +30,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
     parser.add_argument("--html", action="store_true", help="결과를 HTML 파일로 저장")
     parser.add_argument("--history", action="store_true", help="결과를 히스토리에 추가")
+    parser.add_argument("--dry-run", action="store_true", help="재부팅 없이 설정 차이만 확인")
     parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
     parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
     parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
@@ -168,6 +169,36 @@ def main(argv=None) -> int:
             return 1
         yaml_output = learn_baseline(ssh, name=args.case)
         print(yaml_output)
+        return 0
+
+    if args.dry_run:
+        from setup import SetupManager
+        cases = [args.case] if args.case else list_cases(include_generated=args.include_generated)
+        if not cases:
+            print("No cases to check.")
+            return 0
+        host = args.host or "192.168.0.5"
+        ssh = SshClient(host, args.user or "root", args.password or "root")
+        if not ssh.check_connectivity():
+            print(f"ERROR: Cannot connect to {host}")
+            return 1
+        setup_mgr = SetupManager(ssh)
+        for case_name in cases:
+            profile = load_profile(PROFILES_DIR, case=case_name)
+            setup_config = profile.get("setup")
+            if not setup_config or not setup_config.get("edgeconf_changes"):
+                print(f"  {case_name}: no setup (snapshot only)")
+                continue
+            changes = setup_config["edgeconf_changes"]
+            if setup_mgr.check_current(changes):
+                print(f"  {case_name}: config matches (no reboot needed)")
+            else:
+                print(f"  {case_name}: config DIFFERS — would change:")
+                for k, v in changes.items():
+                    current = ssh.run(f"jq '{k}' /root/shared_v/edgeconf_pim.json")
+                    if current is not None and current.strip('"') == str(v):
+                        continue
+                    print(f"    {k}: {current} → {v}")
         return 0
 
     if args.all:
