@@ -176,6 +176,43 @@ def save_dashboard(history_dir: str = "reports") -> str:
     return filepath
 
 
+def export_csv(history_dir: str = "reports", case_filter: str | None = None) -> str:
+    """히스토리를 CSV 파일로 내보낸다. 파일 경로를 반환."""
+    import csv
+
+    entries = read_history(history_dir, case_filter)
+    os.makedirs(history_dir, exist_ok=True)
+    filepath = os.path.join(history_dir, "history.csv")
+
+    # 모든 체크 이름 수집
+    all_checks: list[str] = []
+    for e in entries:
+        for name in e.get("checks", {}).keys():
+            if name not in all_checks:
+                all_checks.append(name)
+
+    with open(filepath, "w", newline="") as f:
+        writer = csv.writer(f)
+        header = ["timestamp", "host", "case", "result", "passed", "total",
+                  "samples_collected", "samples_total"] + all_checks
+        writer.writerow(header)
+        for e in entries:
+            checks = e.get("checks", {})
+            row = [
+                e.get("timestamp", ""),
+                e.get("host", ""),
+                e.get("case", ""),
+                e.get("result", ""),
+                e.get("passed", 0),
+                e.get("total", 0),
+                e.get("samples_collected", 0),
+                e.get("samples_total", 0),
+            ] + [checks.get(c, "") for c in all_checks]
+            writer.writerow(row)
+
+    return filepath
+
+
 def read_history(history_dir: str = "reports", case_filter: str | None = None) -> list[dict]:
     """히스토리를 읽어 dict 리스트로 반환한다."""
     filepath = os.path.join(history_dir, "history.jsonl")

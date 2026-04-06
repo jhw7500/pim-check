@@ -1,6 +1,7 @@
 # FHD 4채널 고부하 테스트
 name: "FHD 4채널 모니터링"
 description: "1920x1080 4채널 고부하 테스트"
+tags: [smoke, camera, stress]
 
 setup:
   edgeconf_changes:

@@ -33,6 +33,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="재부팅 없이 설정 차이만 확인")
     parser.add_argument("--watch", type=int, default=None, metavar="INTERVAL",
                         help="연속 모니터링 모드 (초 단위 간격, 예: --watch 300)")
+    parser.add_argument("--tag", type=str, default=None, help="태그 필터 (예: --tag smoke)")
+    parser.add_argument("--webhook", type=str, default=None, help="FAIL 시 알림 URL")
+    parser.add_argument("--export-csv", action="store_true", help="히스토리를 CSV로 내보내기")
+    parser.add_argument("--diff-targets", type=str, default=None,
+                        help="두 타겟의 edgeconf 비교 (예: --diff-targets 192.168.0.5,192.168.0.6)")
     parser.add_argument("--parallel", action="store_true", help="다수 타겟 병렬 실행")
     parser.add_argument("--targets", type=str, default=None, help="병렬 타겟 목록 (쉼표 구분: 192.168.0.5,192.168.0.6)")
     parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
@@ -42,18 +47,33 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def list_cases(include_generated: bool = False) -> list[str]:
+def list_cases(include_generated: bool = False, tag: str | None = None) -> list[str]:
     """profiles/cases/*.yaml 글로브로 케이스 목록을 반환한다."""
+    import yaml as _yaml
     pattern = os.path.join(PROFILES_DIR, "cases", "*.yaml")
     paths = glob.glob(pattern)
     if include_generated:
         gen_pattern = os.path.join(PROFILES_DIR, "generated", "*.yaml")
         paths.extend(glob.glob(gen_pattern))
-    return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
+
+    names = sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
+
+    if tag:
+        filtered = []
+        for name in names:
+            for p in paths:
+                if os.path.splitext(os.path.basename(p))[0] == name:
+                    with open(p) as f:
+                        data = _yaml.safe_load(f) or {}
+                    if tag in data.get("tags", []):
+                        filtered.append(name)
+                    break
+        return filtered
+    return names
 
 
 def run_case(case_name, host, user, password, duration, save_json=False,
-             save_html=False, save_history=False) -> int:
+             save_html=False, save_history=False, webhook_url=None) -> int:
     """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
@@ -127,7 +147,14 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
         # known_issue가 붙은 FAIL은 실패로 치지 않음
         real_fails = [r for r in results if not r["passed"] and "known_issue" not in r]
-        return 0 if not real_fails else 1
+        exit_code = 0 if not real_fails else 1
+
+        if webhook_url and exit_code != 0:
+            from notifier import send_webhook
+            status = "FAIL"
+            send_webhook(webhook_url, results, case_name, host, status)
+
+        return exit_code
     finally:
         # Teardown: setup이 실제로 변경한 경우에만 복원
         if setup_config and setup_changed:
@@ -141,13 +168,72 @@ def main(argv=None) -> int:
     args = parse_args(argv)
 
     if args.list:
-        cases = list_cases(include_generated=args.include_generated)
+        cases = list_cases(include_generated=args.include_generated, tag=args.tag)
         if cases:
             print("Available cases:")
             for c in cases:
                 print(f"  {c}")
         else:
             print("No cases found in profiles/cases/")
+        return 0
+
+    if args.export_csv:
+        from history import export_csv
+        report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+        filepath = export_csv(report_dir)
+        print(f"CSV exported: {filepath}")
+        return 0
+
+    if args.diff_targets:
+        parts = [h.strip() for h in args.diff_targets.split(",")]
+        if len(parts) != 2:
+            print("ERROR: --diff-targets requires exactly 2 hosts (comma-separated)")
+            return 1
+        host_a, host_b = parts
+        user = args.user or "root"
+        password = args.password or "root"
+        ssh_a = SshClient(host_a, user, password)
+        ssh_b = SshClient(host_b, user, password)
+        if not ssh_a.check_connectivity():
+            print(f"ERROR: Cannot connect to {host_a}")
+            return 1
+        if not ssh_b.check_connectivity():
+            print(f"ERROR: Cannot connect to {host_b}")
+            return 1
+        conf_a = ssh_a.run("cat /root/shared_v/edgeconf_pim.json")
+        conf_b = ssh_b.run("cat /root/shared_v/edgeconf_pim.json")
+        if conf_a is None or conf_b is None:
+            print("ERROR: Failed to read edgeconf from one or both targets")
+            return 1
+        import json
+        dict_a = json.loads(conf_a)
+        dict_b = json.loads(conf_b)
+
+        def _flat(d, prefix=""):
+            items = {}
+            for k, v in d.items():
+                key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict):
+                    items.update(_flat(v, key))
+                else:
+                    items[key] = v
+            return items
+
+        flat_a = _flat(dict_a)
+        flat_b = _flat(dict_b)
+        all_keys = sorted(set(flat_a.keys()) | set(flat_b.keys()))
+        diffs = []
+        for k in all_keys:
+            va = flat_a.get(k, "<missing>")
+            vb = flat_b.get(k, "<missing>")
+            if va != vb:
+                diffs.append((k, va, vb))
+        if diffs:
+            print(f"edgeconf diff: {host_a} vs {host_b} ({len(diffs)} differences)")
+            for k, va, vb in diffs:
+                print(f"  {k}: {va} | {vb}")
+        else:
+            print(f"edgeconf identical: {host_a} vs {host_b}")
         return 0
 
     if args.history_report:
@@ -282,7 +368,7 @@ def main(argv=None) -> int:
         return 0
 
     if args.all:
-        cases = list_cases(include_generated=args.include_generated)
+        cases = list_cases(include_generated=args.include_generated, tag=args.tag)
         if not cases:
             print("No cases found.")
             return 1
@@ -290,7 +376,7 @@ def main(argv=None) -> int:
         worst = 0
         for case_name in cases:
             ret = run_case(case_name, args.host, args.user, args.password,
-                           args.duration, args.json, args.html, args.history)
+                           args.duration, args.json, args.html, args.history, args.webhook)
             case_results[case_name] = "PASS" if ret == 0 else "FAIL"
             if ret != 0:
                 worst = ret
@@ -314,7 +400,7 @@ def main(argv=None) -> int:
         try:
             while True:
                 run_case(case, args.host, args.user, args.password,
-                         args.duration, args.json, args.html, args.history)
+                         args.duration, args.json, args.html, args.history, args.webhook)
                 print(f"\n--- Next run in {interval}s ---\n")
                 _time.sleep(interval)
         except KeyboardInterrupt:
@@ -322,7 +408,7 @@ def main(argv=None) -> int:
             return 0
 
     return run_case(args.case, args.host, args.user, args.password,
-                    args.duration, args.json, args.html, args.history)
+                    args.duration, args.json, args.html, args.history, args.webhook)
 
 
 if __name__ == "__main__":
