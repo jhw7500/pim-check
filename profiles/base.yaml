@@ -55,3 +55,9 @@ checks:
       - "Oops"
       - "oom-kill"
       - "CAM_STATE.*invalid"
+
+# 알려진 이슈: FAIL 대신 WARN으로 표시
+known_issues:
+  - check: thermal
+    reason_contains: "Temperature"
+    label: "HW cooling issue (ISSUES.md #4)"

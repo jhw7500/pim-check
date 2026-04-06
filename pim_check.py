@@ -101,7 +101,8 @@ def run_case(case_name, host, user, password, duration, save_json=False,
             results, collected, total = engine.run_monitor()
 
         reporter = Reporter()
-        print(reporter.format(results, case_name, collected, total))
+        known_issues = profile.get("known_issues")
+        print(reporter.format(results, case_name, collected, total, known_issues=known_issues))
 
         report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
@@ -118,8 +119,9 @@ def run_case(case_name, host, user, password, duration, save_json=False,
             from history import append_result
             append_result(results, case_name, host, collected, total, report_dir)
 
-        all_passed = all(r["passed"] for r in results)
-        return 0 if all_passed else 1
+        # known_issue가 붙은 FAIL은 실패로 치지 않음
+        real_fails = [r for r in results if not r["passed"] and "known_issue" not in r]
+        return 0 if not real_fails else 1
     finally:
         # Teardown: setup이 실제로 변경한 경우에만 복원
         if setup_config and setup_changed:

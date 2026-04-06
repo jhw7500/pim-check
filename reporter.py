@@ -15,6 +15,7 @@ class Reporter:
         case_name: str | None,
         samples_collected: int = 1,
         samples_total: int = 1,
+        known_issues: list | None = None,
     ) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -24,11 +25,28 @@ class Reporter:
             header += f" — Case: {case_name}"
         header += " ==="
 
+        # Apply known issues
+        warn_count = 0
+        if known_issues:
+            for r in results:
+                if not r["passed"]:
+                    for ki in known_issues:
+                        if r["name"] == ki["check"] and ki["reason_contains"] in r.get("reason", ""):
+                            r["known_issue"] = ki["label"]
+                            warn_count += 1
+
         # Summary
         total = len(results)
         passed = sum(1 for r in results if r["passed"])
-        status = "PASS" if passed == total else "FAIL"
-        summary = f"Result: {status} ({passed}/{total} checks passed)"
+        real_fails = total - passed - warn_count
+        if real_fails <= 0 and passed + warn_count == total:
+            status = "PASS" if warn_count == 0 else "WARN"
+        else:
+            status = "FAIL"
+        summary = f"Result: {status} ({passed}/{total} checks passed"
+        if warn_count > 0:
+            summary += f", {warn_count} known issues"
+        summary += ")"
         samples_line = f"Samples: {samples_collected}/{samples_total}"
 
         # Per-result lines
@@ -36,9 +54,11 @@ class Reporter:
         for r in results:
             if r["passed"]:
                 line = f"[+] {r['name']}: PASS"
+            elif "known_issue" in r:
+                line = f"[!] {r['name']}: WARN (known: {r['known_issue']})"
             else:
                 line = f"[X] {r['name']}: FAIL"
-            if r.get("reason", "OK") != "OK":
+            if r.get("reason", "OK") != "OK" and "known_issue" not in r:
                 line += f" — {r['reason']}"
             detail_lines.append(line)
 
