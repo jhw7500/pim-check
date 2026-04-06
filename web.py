@@ -229,9 +229,23 @@ def _build_dashboard_html() -> str:
   #status {{ padding:8px 12px; border-radius:6px; margin-top:12px; display:none; }}
   .spinner {{ display:inline-block; width:14px; height:14px; border:2px solid #ccc; border-top-color:#3b82f6; border-radius:50%; animation:spin .6s linear infinite; }}
   @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+  .theme-toggle {{ position:fixed; top:16px; right:16px; cursor:pointer; font-size:20px;
+    background:none; border:none; padding:4px 8px; border-radius:6px; }}
+  .theme-toggle:hover {{ background:#e5e7eb; }}
+  body.dark {{ background:#111827; color:#e5e7eb; }}
+  body.dark .panel, body.dark .stat {{ background:#1f2937; border-color:#374151; }}
+  body.dark h1 {{ color:#f9fafb; }}
+  body.dark h2 {{ color:#d1d5db; }}
+  body.dark th {{ background:#374151; color:#d1d5db; border-color:#4b5563; }}
+  body.dark td {{ border-color:#374151; }}
+  body.dark select, body.dark input {{ background:#374151; color:#e5e7eb; border-color:#4b5563; }}
+  body.dark .btn-sm {{ background:#374151; border-color:#4b5563; color:#e5e7eb; }}
+  body.dark .btn-sm:hover {{ background:#4b5563; }}
+  body.dark .theme-toggle:hover {{ background:#374151; }}
 </style>
 </head>
 <body>
+<button class="theme-toggle" onclick="toggleTheme()">🌓</button>
 <div class="container">
   <h1>pim-check Dashboard
     <span class="badge" style="background:{auto_color}">{auto_status}</span>
@@ -335,6 +349,12 @@ function runTag(tag) {{
     }})
     .catch(e => showStatus('Error: ' + e, '#fef2f2'));
 }}
+
+function toggleTheme() {{
+  document.body.classList.toggle('dark');
+  localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+}}
+if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
 
 // 자동 새로고침 (30초)
 setTimeout(() => location.reload(), 30000);
