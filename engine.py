@@ -22,23 +22,25 @@ class Engine:
         """모든 체크를 한 번 실행하고 결과 목록을 반환한다.
 
         Args:
-            retries: SSH 에러 발생 시 개별 체크 재시도 횟수 (기본 1)
+            retries: SSH 에러 발생 시 기본 재시도 횟수 (retry_policy로 체크별 override 가능)
         """
         config = self.profile.get("checks", {})
+        retry_policy = self.profile.get("retry_policy", {})
         results = []
 
         for check in self.checks:
             data = {}
             passed = False
             reason = ""
+            check_retries = retry_policy.get(check.name, retries)
 
-            for attempt in range(1 + retries):
+            for attempt in range(1 + check_retries):
                 try:
                     data = check.collect(self.ssh, config)
                     passed, reason = check.validate(data, config)
                     break
                 except (SshTimeoutError, SshConnectionError) as exc:
-                    if attempt < retries:
+                    if attempt < check_retries:
                         time.sleep(2)
                         continue
                     data = {}

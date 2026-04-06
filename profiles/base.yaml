@@ -56,6 +56,14 @@ checks:
       - "oom-kill"
       - "CAM_STATE.*invalid"
 
+# 체크별 재시도 횟수 (SSH 에러 시)
+retry_policy:
+  process: 2
+  cam_state: 2
+  thermal: 0
+  recording: 1
+  custom_commands: 1
+
 # 알려진 이슈: FAIL 대신 WARN으로 표시
 known_issues:
   - check: thermal

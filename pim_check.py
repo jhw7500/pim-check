@@ -407,8 +407,12 @@ def main(argv=None) -> int:
         try:
             while True:
                 run_case(case, args.host, args.user, args.password,
-                         args.duration, args.json, args.html, args.history, args.webhook)
-                print(f"\n--- Next run in {interval}s ---\n")
+                         args.duration, args.json, args.html, True, args.webhook)
+                # 매 실행 후 대시보드 자동 갱신
+                from history import save_dashboard
+                report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+                save_dashboard(report_dir)
+                print(f"\n--- Next run in {interval}s (dashboard updated) ---\n")
                 _time.sleep(interval)
         except KeyboardInterrupt:
             print("\nWatch mode stopped.")
