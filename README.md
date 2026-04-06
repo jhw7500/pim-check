@@ -7,7 +7,7 @@ iMX8MP 타겟 QA 자동화 도구. SSH 기반 외부 관찰자 패턴으로 타�
 **호스트 (개발 PC):**
 - Python 3.9+
 - PyYAML (`pip install pyyaml`)
-- sshpass
+- sshpass (Linux) 또는 paramiko (`pip install paramiko`, Windows/Linux 모두 지원)
 
 **타겟:**
 - SSH 접속 가능
@@ -57,6 +57,15 @@ python3 pim_check.py --all --include-generated
 
 # 조합: 전체 실행 + HTML + 히스토리
 python3 pim_check.py --all --include-generated --html --history
+
+# 재부팅 없이 설정 차이 미리보기
+python3 pim_check.py --dry-run --case gen_fhd_2ch_30fps
+
+# 다수 타겟 병렬 실행
+python3 pim_check.py --parallel --targets 192.168.0.5,192.168.0.6 --case 720p_2ch
+
+# targets.yaml 기반 병렬 실행
+python3 pim_check.py --parallel --case 720p_2ch --history
 ```
 
 ## 케이스 종류
@@ -118,6 +127,32 @@ checks:                             # 체크 항목 override
 | log | journalctl 에러 패턴 |
 | recording | 녹화 진행 상태 |
 | custom | YAML 정의 SSH 명령 |
+
+## Known Issues
+
+`profiles/base.yaml`의 `known_issues` 섹션에 알려진 하드웨어 이슈를 등록하면, 해당 FAIL이 WARN으로 표시되고 exit code에 영향을 주지 않습니다.
+
+```yaml
+known_issues:
+  - check: thermal
+    reason_contains: "Temperature"
+    label: "HW cooling issue (ISSUES.md #4)"
+```
+
+## 병렬 실행
+
+`profiles/targets.yaml`에 타겟 목록을 정의하거나 `--targets`로 직접 지정:
+
+```yaml
+# profiles/targets.yaml
+targets:
+  - host: 192.168.0.5
+    user: root
+    password: root
+  - host: 192.168.214.4
+    user: root
+    password: root
+```
 
 ## 테스트
 
