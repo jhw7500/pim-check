@@ -50,6 +50,28 @@ sources:
             values:
               ".VHL_CAM.fps": 30
 
+      hflip:
+        keys:
+          ".VHL_CAM.i2c2.ch0.hflip": [true, false]
+        combinations:
+          - name: "hflip_off"
+            values:
+              ".VHL_CAM.i2c2.ch0.hflip": false
+          - name: "hflip_on"
+            values:
+              ".VHL_CAM.i2c2.ch0.hflip": true
+
+      capture:
+        keys:
+          ".VHL_CAM.capture.enable": [true, false]
+        combinations:
+          - name: "cap_off"
+            values:
+              ".VHL_CAM.capture.enable": false
+          - name: "cap_on"
+            values:
+              ".VHL_CAM.capture.enable": true
+
   ord_vcm:
     path: /root/shared_v/ord_vcm_conf.json
     axes:
@@ -123,6 +145,18 @@ generation:
       cross: [resolution, channels, fps]
       output_dir: profiles/generated
       filename_pattern: "gen_{resolution}_{channels}_{fps}.yaml"
+
+    - name: edgeconf_hflip
+      source: edgeconf
+      cross: [resolution, hflip]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_{hflip}.yaml"
+
+    - name: edgeconf_capture
+      source: edgeconf
+      cross: [resolution, capture]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_{capture}.yaml"
 
     - name: ord_vcm_config
       source: ord_vcm

@@ -38,6 +38,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--export-csv", action="store_true", help="히스토리를 CSV로 내보내기")
     parser.add_argument("--diff-targets", type=str, default=None,
                         help="두 타겟의 edgeconf 비교 (예: --diff-targets 192.168.0.5,192.168.0.6)")
+    parser.add_argument("--log", action="store_true", help="실행 로그를 파일에 저장")
+    parser.add_argument("--init-config", action="store_true", help="~/.pim-check.yaml 기본 설정 생성")
+    parser.add_argument("--compare", action="store_true", help="최근 두 실행 결과 비교")
     parser.add_argument("--parallel", action="store_true", help="다수 타겟 병렬 실행")
     parser.add_argument("--targets", type=str, default=None, help="병렬 타겟 목록 (쉼표 구분: 192.168.0.5,192.168.0.6)")
     parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
@@ -197,6 +200,40 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 def main(argv=None) -> int:
     args = parse_args(argv)
 
+    # 사용자 설정 파일 로드 + CLI 기본값 적용
+    from user_config import load_user_config, apply_defaults, init_user_config
+    user_cfg = load_user_config()
+    apply_defaults(args, user_cfg)
+
+    if args.init_config:
+        path = init_user_config()
+        print(f"Config created: {path}")
+        return 0
+
+    if args.compare:
+        from compare import compare_runs, format_comparison
+        report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+        result = compare_runs(report_dir, case_filter=args.case)
+        print(format_comparison(result))
+        return 0
+
+    # 로그 파일 출력
+    _logger = None
+    if args.log or user_cfg.get("log_enabled"):
+        from logger import FileLogger
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports", "logs")
+        _logger = FileLogger(log_dir)
+        _logger.__enter__()
+
+    try:
+        return _main_run(args)
+    finally:
+        if _logger:
+            print(f"\nLog saved: {_logger.filepath}")
+            _logger.__exit__(None, None, None)
+
+
+def _main_run(args) -> int:
     if args.list:
         cases = list_cases(include_generated=args.include_generated, tag=args.tag)
         if cases:
