@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  # 웹 대시보드 (항상 실행)
+  dashboard:
+    build: .
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
+    volumes:
+      - reports:/app/reports
+      - ./profiles:/app/profiles:ro
+    environment:
+      - TZ=${TZ:-Asia/Seoul}
+    restart: unless-stopped
+    command: python web.py --host 0.0.0.0 --port 8080
+
+  # 정기 테스트 실행 (5분 간격)
+  runner:
+    build: .
+    volumes:
+      - reports:/app/reports
+      - ./profiles:/app/profiles:ro
+    environment:
+      - TARGET_HOST=${TARGET_HOST:-192.168.0.5}
+      - TARGET_USER=${TARGET_USER:-root}
+      - TARGET_PASSWORD=${TARGET_PASSWORD:-root}
+      - RUN_INTERVAL=${RUN_INTERVAL:-300}
+      - RUN_CASE=${RUN_CASE:-}
+      - RUN_TAG=${RUN_TAG:-smoke}
+      - TZ=${TZ:-Asia/Seoul}
+    restart: unless-stopped
+    entrypoint: ["python", "runner_loop.py"]
+
+volumes:
+  reports:
