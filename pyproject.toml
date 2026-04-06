@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "pim-check"
+version = "2.0.0"
+description = "iMX8MP 타겟 QA 자동화 도구"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=5.0",
+]
+
+[project.optional-dependencies]
+windows = ["paramiko>=2.0"]
+all = ["paramiko>=2.0"]
+
+[project.scripts]
+pim-check = "pim_check:main"
+pim-check-web = "web:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

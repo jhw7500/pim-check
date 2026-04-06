@@ -363,6 +363,64 @@ setTimeout(() => location.reload(), 30000);
 </html>"""
 
 
+def _build_prometheus_metrics() -> str:
+    """Prometheus exposition format 메트릭을 생성한다."""
+    history = read_history(REPORTS_DIR)
+    total_runs = len(history)
+    total_pass = sum(1 for e in history if e["result"] == "PASS")
+    total_fail = total_runs - total_pass
+
+    # 케이스별 집계
+    case_stats: dict[str, dict] = {}
+    for e in history:
+        case = e.get("case") or "healthcheck"
+        if case not in case_stats:
+            case_stats[case] = {"pass": 0, "fail": 0, "total": 0}
+        case_stats[case]["total"] += 1
+        if e["result"] == "PASS":
+            case_stats[case]["pass"] += 1
+        else:
+            case_stats[case]["fail"] += 1
+
+    lines = [
+        "# HELP pimcheck_runs_total Total test runs",
+        "# TYPE pimcheck_runs_total counter",
+        f"pimcheck_runs_total {total_runs}",
+        "",
+        "# HELP pimcheck_runs_passed Total passed runs",
+        "# TYPE pimcheck_runs_passed counter",
+        f"pimcheck_runs_passed {total_pass}",
+        "",
+        "# HELP pimcheck_runs_failed Total failed runs",
+        "# TYPE pimcheck_runs_failed counter",
+        f"pimcheck_runs_failed {total_fail}",
+        "",
+        "# HELP pimcheck_pass_rate Overall pass rate",
+        "# TYPE pimcheck_pass_rate gauge",
+        f"pimcheck_pass_rate {(total_pass / total_runs) if total_runs else 0:.4f}",
+        "",
+        "# HELP pimcheck_case_runs_total Runs per case",
+        "# TYPE pimcheck_case_runs_total counter",
+    ]
+    for case, stats in sorted(case_stats.items()):
+        lines.append(f'pimcheck_case_runs_total{{case="{case}"}} {stats["total"]}')
+    lines.append("")
+    lines.append("# HELP pimcheck_case_pass_rate Pass rate per case")
+    lines.append("# TYPE pimcheck_case_pass_rate gauge")
+    for case, stats in sorted(case_stats.items()):
+        rate = stats["pass"] / stats["total"] if stats["total"] else 0
+        lines.append(f'pimcheck_case_pass_rate{{case="{case}"}} {rate:.4f}')
+    lines.append("")
+
+    # 자동 실행 상태
+    lines.append("# HELP pimcheck_auto_running Auto mode status")
+    lines.append("# TYPE pimcheck_auto_running gauge")
+    lines.append(f"pimcheck_auto_running {1 if _auto_state['running'] else 0}")
+    lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
 def _build_case_detail_html(case_name: str) -> str:
     """케이스 상세 페이지 HTML."""
     history = read_history(REPORTS_DIR, case_filter=case_name)
@@ -574,6 +632,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             case = path[6:]  # /case/720p_2ch → 720p_2ch
             html = _build_case_detail_html(case)
             self._respond(200, html, "text/html")
+
+        elif path == "/metrics":
+            metrics = _build_prometheus_metrics()
+            self._respond(200, metrics, "text/plain")
 
         else:
             self._respond(404, "Not Found", "text/plain")
