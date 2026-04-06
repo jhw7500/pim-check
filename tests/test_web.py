@@ -94,6 +94,37 @@ class TestDashboardHandlerAPI(unittest.TestCase):
         self.assertEqual(code, 404)
 
 
+class TestRunSelectedAPI(unittest.TestCase):
+    def _make_request(self, path):
+        handler = MagicMock(spec=DashboardHandler)
+        handler.path = path
+        handler.headers = {}
+        handler.AUTH = None
+        wfile = BytesIO()
+        handler.wfile = wfile
+
+        def fake_respond(code, body, content_type):
+            handler._status_code = code
+            wfile.write(body.encode("utf-8"))
+
+        handler._respond = fake_respond
+        DashboardHandler.do_GET(handler)
+        body = wfile.getvalue().decode("utf-8")
+        return (getattr(handler, "_status_code", 0), body)
+
+    def test_run_selected_empty(self):
+        code, body = self._make_request("/api/run-selected?host=192.168.0.5&cases=")
+        self.assertEqual(code, 400)
+
+    def test_run_selected_returns_count(self):
+        # 실제 타겟 없이 테스트하면 UNREACHABLE/ERROR 반환
+        code, body = self._make_request("/api/run-selected?host=192.168.99.99&cases=720p_2ch")
+        self.assertEqual(code, 200)
+        data = json.loads(body)
+        self.assertEqual(data["count"], 1)
+        self.assertIn("results", data)
+
+
 class TestCaseDetailHtml(unittest.TestCase):
     def test_renders_with_no_history(self):
         from web import _build_case_detail_html

@@ -30,6 +30,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
     parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드")
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
+    parser.add_argument("--junit", action="store_true", help="JUnit XML 리포트 저장 (CI용)")
     parser.add_argument("--html", action="store_true", help="결과를 HTML 파일로 저장")
     parser.add_argument("--history", action="store_true", help="결과를 히스토리에 추가")
     parser.add_argument("--dry-run", action="store_true", help="재부팅 없이 설정 차이만 확인")
@@ -109,7 +110,7 @@ def list_cases(include_generated: bool = False, tag: str | None = None) -> list[
 
 def run_case(case_name, host, user, password, duration, save_json=False,
              save_html=False, save_history=False, webhook_url=None,
-             quiet=False) -> int:
+             quiet=False, save_junit=False) -> int:
     """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
@@ -181,6 +182,12 @@ def run_case(case_name, host, user, password, duration, save_json=False,
             filepath = _save_html(results, case_name, host, collected, total, report_dir)
             if not quiet:
                 print(f"HTML report saved: {filepath}")
+
+        if save_junit:
+            from junit_reporter import save_junit_xml
+            filepath = save_junit_xml(results, case_name, host, collected, total, report_dir)
+            if not quiet:
+                print(f"JUnit XML saved: {filepath}")
 
         if save_history:
             from history import append_result
@@ -469,7 +476,7 @@ def _main_run(args) -> int:
             print(dim(f"\n[{i}/{len(cases)}] {case_name}"))
             ret = run_case(case_name, args.host, args.user, args.password,
                            args.duration, args.json, args.html, args.history,
-                           args.webhook, args.quiet)
+                           args.webhook, args.quiet, args.junit)
             case_results[case_name] = "PASS" if ret == 0 else "FAIL"
             if ret != 0:
                 worst = ret
@@ -497,7 +504,7 @@ def _main_run(args) -> int:
             while True:
                 run_case(case, args.host, args.user, args.password,
                          args.duration, args.json, args.html, True, args.webhook,
-                         args.quiet)
+                         args.quiet, args.junit)
                 # 매 실행 후 대시보드 자동 갱신
                 from history import save_dashboard
                 report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
@@ -510,7 +517,7 @@ def _main_run(args) -> int:
 
     return run_case(args.case, args.host, args.user, args.password,
                     args.duration, args.json, args.html, args.history,
-                    args.webhook, args.quiet)
+                    args.webhook, args.quiet, args.junit)
 
 
 if __name__ == "__main__":

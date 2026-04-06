@@ -52,6 +52,31 @@
   - Docker 지원 (`Dockerfile`)
   - `pip install pim-check` (`pyproject.toml`)
 
+- **실시간 로그 스트리밍** (SSE)
+  - `/api/stream`: 테스트 실행 중 체크별 결과 실시간 전송
+  - 대시보드 "Run Live" 버튼 + EventSource 7개 이벤트 타입
+  - 케이스 상세 페이지에서도 Live 실행 지원
+
+- **체크박스 케이스 선택**
+  - 카테고리별 체크박스 (Normal, Fault, Verify, Config, Auto-Generated)
+  - 그룹별 "all" 일괄 선택, Select All / Clear
+  - "Run Selected" → `/api/run-selected` 선택된 케이스만 실행
+  - 케이스별 마지막 결과 색상 dot 표시
+
+- **Auto Rotate 모드**
+  - Auto Single: 한 케이스 반복
+  - Auto Rotate: 모든 케이스 순회 + 태그 필터 지원
+  - 순회 중 중단 가능 (running=False 시 즉시 break)
+
+- **대시보드 리디자인**
+  - 다크 테마 기본 + 라이트 모드 토글
+  - gradient 헤더, 5열 grid 통계, alert-bar
+  - SVG 미니 추이 차트, 2열 레이아웃
+
+- **Docker Compose**
+  - dashboard(웹 UI) + runner(정기 실행) 2 서비스
+  - reports 볼륨 공유, 환경변수 설정 (.env)
+
 ### 안정성 개선
 
 - SSH 재시도: ssh.py (연결 레벨) + engine.py (체크 레벨)

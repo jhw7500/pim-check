@@ -1,0 +1,82 @@
+{
+  "dashboard": {
+    "title": "pim-check QA Dashboard",
+    "uid": "pim-check",
+    "panels": [
+      {
+        "title": "Total Runs",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [{"expr": "pimcheck_runs_total", "legendFormat": "Total"}]
+      },
+      {
+        "title": "Pass Rate",
+        "type": "gauge",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [{"expr": "pimcheck_pass_rate * 100", "legendFormat": "Pass Rate"}],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 50},
+                {"color": "green", "value": 80}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Passed vs Failed",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+        "targets": [
+          {"expr": "pimcheck_runs_passed", "legendFormat": "Passed"},
+          {"expr": "pimcheck_runs_failed", "legendFormat": "Failed"}
+        ]
+      },
+      {
+        "title": "Auto Running",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+        "targets": [{"expr": "pimcheck_auto_running", "legendFormat": "Auto"}],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"type": "value", "options": {"0": {"text": "Stopped", "color": "gray"}}},
+              {"type": "value", "options": {"1": {"text": "Running", "color": "green"}}}
+            ]
+          }
+        }
+      },
+      {
+        "title": "Pass Rate per Case",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [{"expr": "pimcheck_case_pass_rate * 100", "legendFormat": "{{case}}"}],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 50},
+                {"color": "green", "value": 80}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Runs per Case",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "targets": [{"expr": "pimcheck_case_runs_total", "legendFormat": "{{case}}"}]
+      }
+    ],
+    "templating": {"list": []},
+    "time": {"from": "now-24h", "to": "now"},
+    "refresh": "30s"
+  }
+}
