@@ -19,6 +19,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="pim-check — iMX8MP 타겟 QA 자동화 툴"
     )
+    parser.add_argument("--version", action="version", version="pim-check 2.0.0")
+    parser.add_argument("--quiet", action="store_true", help="출력 최소화 (exit code만)")
     parser.add_argument("--case", type=str, default=None, help="실행할 테스트 케이스 이름")
     parser.add_argument("--all", action="store_true", help="모든 케이스 실행")
     parser.add_argument("--host", type=str, default=None, help="타겟 IP 주소")
@@ -106,7 +108,8 @@ def list_cases(include_generated: bool = False, tag: str | None = None) -> list[
 
 
 def run_case(case_name, host, user, password, duration, save_json=False,
-             save_html=False, save_history=False, webhook_url=None) -> int:
+             save_html=False, save_history=False, webhook_url=None,
+             quiet=False) -> int:
     """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
@@ -127,10 +130,12 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
     ssh = SshClient(host, user, password)
 
-    print(f"Connecting to {host}...")
+    if not quiet:
+        print(f"Connecting to {host}...")
 
     if not ssh.check_connectivity():
-        print(f"ERROR: Cannot connect to {host}")
+        if not quiet:
+            print(f"ERROR: Cannot connect to {host}")
         return 1
 
     # Amendment 3: Preflight check
@@ -161,18 +166,21 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
         reporter = Reporter()
         known_issues = profile.get("known_issues")
-        print(reporter.format(results, case_name, collected, total, known_issues=known_issues))
+        if not quiet:
+            print(reporter.format(results, case_name, collected, total, known_issues=known_issues))
 
         report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
         if save_json:
             filepath = reporter.save_json(results, case_name, host, collected, total, report_dir)
-            print(f"JSON report saved: {filepath}")
+            if not quiet:
+                print(f"JSON report saved: {filepath}")
 
         if save_html:
             from html_reporter import save_html as _save_html
             filepath = _save_html(results, case_name, host, collected, total, report_dir)
-            print(f"HTML report saved: {filepath}")
+            if not quiet:
+                print(f"HTML report saved: {filepath}")
 
         if save_history:
             from history import append_result
@@ -460,7 +468,8 @@ def _main_run(args) -> int:
         for i, case_name in enumerate(cases, 1):
             print(dim(f"\n[{i}/{len(cases)}] {case_name}"))
             ret = run_case(case_name, args.host, args.user, args.password,
-                           args.duration, args.json, args.html, args.history, args.webhook)
+                           args.duration, args.json, args.html, args.history,
+                           args.webhook, args.quiet)
             case_results[case_name] = "PASS" if ret == 0 else "FAIL"
             if ret != 0:
                 worst = ret
@@ -487,7 +496,8 @@ def _main_run(args) -> int:
         try:
             while True:
                 run_case(case, args.host, args.user, args.password,
-                         args.duration, args.json, args.html, True, args.webhook)
+                         args.duration, args.json, args.html, True, args.webhook,
+                         args.quiet)
                 # 매 실행 후 대시보드 자동 갱신
                 from history import save_dashboard
                 report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
@@ -499,7 +509,8 @@ def _main_run(args) -> int:
             return 0
 
     return run_case(args.case, args.host, args.user, args.password,
-                    args.duration, args.json, args.html, args.history, args.webhook)
+                    args.duration, args.json, args.html, args.history,
+                    args.webhook, args.quiet)
 
 
 if __name__ == "__main__":

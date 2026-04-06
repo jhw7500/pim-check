@@ -1,0 +1,8 @@
+.git
+.pytest_cache
+__pycache__
+reports/
+*.pyc
+.omc/
+docs/
+.bkit/
