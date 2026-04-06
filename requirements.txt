@@ -1,0 +1,2 @@
+pyyaml>=5.0
+paramiko>=2.0;platform_system=="Windows"

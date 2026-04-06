@@ -379,9 +379,11 @@ def main(argv=None) -> int:
         if not cases:
             print("No cases found.")
             return 1
+        from color import green, red, bold, dim
         case_results = {}
         worst = 0
-        for case_name in cases:
+        for i, case_name in enumerate(cases, 1):
+            print(dim(f"\n[{i}/{len(cases)}] {case_name}"))
             ret = run_case(case_name, args.host, args.user, args.password,
                            args.duration, args.json, args.html, args.history, args.webhook)
             case_results[case_name] = "PASS" if ret == 0 else "FAIL"
@@ -389,13 +391,16 @@ def main(argv=None) -> int:
                 worst = ret
 
         # 요약 테이블
-        print("\n=== Summary ===")
+        print(bold("\n=== Summary ==="))
         ok = sum(1 for v in case_results.values() if v == "PASS")
         total = len(case_results)
         for name, status in case_results.items():
-            marker = "[+]" if status == "PASS" else "[X]"
-            print(f"  {marker} {name}: {status}")
-        print(f"\nTotal: {ok}/{total} cases passed")
+            if status == "PASS":
+                print(f"  {green('[+]')} {name}: {green('PASS')}")
+            else:
+                print(f"  {red('[X]')} {name}: {red('FAIL')}")
+        color_fn = green if ok == total else red
+        print(f"\n{bold('Total:')} {color_fn(f'{ok}/{total}')} cases passed")
         return worst
 
     # --watch: 연속 모니터링

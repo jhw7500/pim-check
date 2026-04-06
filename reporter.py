@@ -49,16 +49,20 @@ class Reporter:
         summary += ")"
         samples_line = f"Samples: {samples_collected}/{samples_total}"
 
-        # Per-result lines
+        # Per-result lines (with color)
+        from color import green, red, yellow
+
         detail_lines = []
         for r in results:
             if r["passed"]:
-                line = f"[+] {r['name']}: PASS"
+                line = green(f"[+] {r['name']}: PASS")
             elif "known_issue" in r:
-                line = f"[!] {r['name']}: WARN (known: {r['known_issue']})"
+                line = yellow(f"[!] {r['name']}: WARN (known: {r['known_issue']})")
             else:
-                line = f"[X] {r['name']}: FAIL"
-            if r.get("reason", "OK") != "OK" and "known_issue" not in r:
+                line = red(f"[X] {r['name']}: FAIL")
+                if r.get("reason", "OK") != "OK":
+                    line += f" — {r['reason']}"
+            if r["passed"] and r.get("reason", "OK") != "OK":
                 line += f" — {r['reason']}"
             detail_lines.append(line)
 
