@@ -184,8 +184,16 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
         if webhook_url and exit_code != 0:
             from notifier import send_webhook
-            status = "FAIL"
-            send_webhook(webhook_url, results, case_name, host, status)
+            send_webhook(webhook_url, results, case_name, host, "FAIL")
+
+        # 이메일 알림 (user_config에 email 설정이 있을 때)
+        if exit_code != 0:
+            from user_config import load_user_config
+            cfg = load_user_config()
+            email_cfg = cfg.get("email")
+            if email_cfg and email_cfg.get("sender"):
+                from notifier_email import send_fail_email
+                send_fail_email(email_cfg, results, case_name, host)
 
         return exit_code
     finally:
