@@ -31,6 +31,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--html", action="store_true", help="결과를 HTML 파일로 저장")
     parser.add_argument("--history", action="store_true", help="결과를 히스토리에 추가")
     parser.add_argument("--dry-run", action="store_true", help="재부팅 없이 설정 차이만 확인")
+    parser.add_argument("--watch", type=int, default=None, metavar="INTERVAL",
+                        help="연속 모니터링 모드 (초 단위 간격, 예: --watch 300)")
     parser.add_argument("--parallel", action="store_true", help="다수 타겟 병렬 실행")
     parser.add_argument("--targets", type=str, default=None, help="병렬 타겟 목록 (쉼표 구분: 192.168.0.5,192.168.0.6)")
     parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
@@ -237,13 +239,40 @@ def main(argv=None) -> int:
         if not cases:
             print("No cases found.")
             return 1
+        case_results = {}
         worst = 0
         for case_name in cases:
             ret = run_case(case_name, args.host, args.user, args.password,
                            args.duration, args.json, args.html, args.history)
+            case_results[case_name] = "PASS" if ret == 0 else "FAIL"
             if ret != 0:
                 worst = ret
+
+        # 요약 테이블
+        print("\n=== Summary ===")
+        ok = sum(1 for v in case_results.values() if v == "PASS")
+        total = len(case_results)
+        for name, status in case_results.items():
+            marker = "[+]" if status == "PASS" else "[X]"
+            print(f"  {marker} {name}: {status}")
+        print(f"\nTotal: {ok}/{total} cases passed")
         return worst
+
+    # --watch: 연속 모니터링
+    if args.watch:
+        import time as _time
+        interval = args.watch
+        case = args.case
+        print(f"Watch mode: running every {interval}s (Ctrl+C to stop)")
+        try:
+            while True:
+                run_case(case, args.host, args.user, args.password,
+                         args.duration, args.json, args.html, args.history)
+                print(f"\n--- Next run in {interval}s ---\n")
+                _time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\nWatch mode stopped.")
+            return 0
 
     return run_case(args.case, args.host, args.user, args.password,
                     args.duration, args.json, args.html, args.history)
