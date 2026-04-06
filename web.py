@@ -212,6 +212,39 @@ def _build_dashboard_html() -> str:
         case_rows += f'<td><button onclick="runTest(\'{name}\')" class="btn btn-sm">Run</button></td></tr>\n'
 
     # 최근 10건
+    # 체크박스 목록 (카테고리별)
+    case_groups = {"normal": [], "fault": [], "verify": [], "config": [], "generated": [], "other": []}
+    for c in cases:
+        if c.startswith("gen_"):
+            case_groups["generated"].append(c)
+        elif c.startswith("fault_"):
+            case_groups["fault"].append(c)
+        elif c.startswith("verify_"):
+            case_groups["verify"].append(c)
+        elif c.startswith("config_") or c.startswith("board_"):
+            case_groups["config"].append(c)
+        elif c in ("720p_2ch", "720p_4ch", "fhd_4ch", "rtsp_off"):
+            case_groups["normal"].append(c)
+        else:
+            case_groups["other"].append(c)
+
+    group_labels = {"normal": "Normal", "fault": "Fault", "verify": "Verify", "config": "Config", "generated": "Auto-Generated", "other": "Other"}
+    checkbox_html = ""
+    for grp, label in group_labels.items():
+        items = case_groups[grp]
+        if not items:
+            continue
+        checkbox_html += f'<div style="margin-bottom:8px"><div style="font-size:11px;color:#64748b;text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:6px">{label} ({len(items)}) <label style="font-size:10px;cursor:pointer"><input type="checkbox" onchange="toggleGroup(this,\'{grp}\')" style="margin-right:2px">all</label></div>'
+        for c in items:
+            last = case_stats.get(c)
+            if last:
+                st = last["result"]
+                dot = "#22c55e" if st == "PASS" else "#f59e0b" if st == "WARN" else "#ef4444"
+            else:
+                dot = "#475569"
+            checkbox_html += f'<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;font-size:12px;cursor:pointer"><input type="checkbox" class="case-cb grp-{grp}" value="{c}"><span style="width:6px;height:6px;border-radius:50%;background:{dot};display:inline-block"></span>{c}</label>'
+        checkbox_html += '</div>'
+
     recent_rows = ""
     for e in reversed(history[-10:]):
         ts = e.get("timestamp", "")[:19].replace("T", " ")
@@ -380,6 +413,13 @@ def _build_dashboard_html() -> str:
       <button class="btn btn-sm" onclick="runTag('smoke')">smoke</button>
       <button class="btn btn-sm" onclick="runTag('camera')">camera</button>
       <button class="btn btn-sm" onclick="runTag('stress')">stress</button>
+      <span style="color:#475569">|</span>
+      <button class="btn" style="background:#f97316;color:#fff;font-size:12px;padding:4px 12px" onclick="runSelectedCases()">Run Selected</button>
+      <button class="btn btn-sm" onclick="selectAll(true)">Select All</button>
+      <button class="btn btn-sm" onclick="selectAll(false)">Clear</button>
+    </div>
+    <div style="margin-top:10px;max-height:200px;overflow-y:auto;padding:8px;background:#0f172a;border-radius:6px;border:1px solid #334155">
+      {checkbox_html}
     </div>
     <div id="status"></div>
   </div>
@@ -467,6 +507,31 @@ function runLive() {{
   es.addEventListener('done', e => {{ const d = JSON.parse(e.data); const c = d.status === 'PASS' ? '#22c55e' : d.status === 'WARN' ? '#fbbf24' : '#ef4444'; log.innerHTML += '<div style="color:' + c + ';font-weight:bold;margin-top:8px">' + d.message + '</div>'; es.close(); setTimeout(() => location.reload(), 3000); }});
   es.onerror = () => {{ log.innerHTML += '<div style="color:#ef4444">Connection lost</div>'; es.close(); }};
   setInterval(() => {{ log.scrollTop = log.scrollHeight; }}, 500);
+}}
+
+function getSelectedCases() {{
+  return Array.from(document.querySelectorAll('.case-cb:checked')).map(cb => cb.value);
+}}
+function runSelectedCases() {{
+  const cases = getSelectedCases();
+  if (cases.length === 0) {{ showStatus('No cases selected', '#fffbeb'); return; }}
+  const host = document.getElementById('host').value;
+  showStatus('<span class="spinner"></span> Running ' + cases.length + ' cases...');
+  fetch('/api/run-selected?host=' + host + '&cases=' + cases.join(','))
+    .then(r => r.json())
+    .then(data => {{
+      const ok = data.results.filter(r => r.status === 'PASS' || r.status === 'WARN').length;
+      const color = ok === data.count ? '#f0fdf4' : '#fef2f2';
+      showStatus(ok + '/' + data.count + ' cases OK', color);
+      setTimeout(() => location.reload(), 1500);
+    }})
+    .catch(e => showStatus('Error: ' + e, '#fef2f2'));
+}}
+function selectAll(checked) {{
+  document.querySelectorAll('.case-cb').forEach(cb => cb.checked = checked);
+}}
+function toggleGroup(master, grp) {{
+  document.querySelectorAll('.grp-' + grp).forEach(cb => cb.checked = master.checked);
 }}
 
 function runTag(tag) {{
@@ -706,6 +771,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             host = params.get("host", ["192.168.0.5"])[0]
             result = _run_test(case, host)
             self._respond(200, json.dumps(result), "application/json")
+
+        elif path == "/api/run-selected":
+            cases_str = params.get("cases", [""])[0]
+            host = params.get("host", ["192.168.0.5"])[0]
+            if not cases_str:
+                self._respond(400, json.dumps({"error": "cases required"}), "application/json")
+                return
+            case_list = [c.strip() for c in cases_str.split(",") if c.strip()]
+            results = []
+            for c in case_list:
+                r = _run_test(c, host)
+                results.append(r)
+            self._respond(200, json.dumps({
+                "count": len(case_list),
+                "results": results,
+            }), "application/json")
 
         elif path == "/api/auto/start":
             case = params.get("case", [None])[0]
