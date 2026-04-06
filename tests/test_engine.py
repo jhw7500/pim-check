@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ssh import SshConnectionError, SshTimeoutError
+
 
 PROFILE = {
     "monitor": {"duration_sec": 2, "interval_sec": 1},
@@ -136,3 +138,40 @@ class TestEngine:
         # 타겟 복귀 못 했으므로 0개 수집
         assert collected == 0
         assert results == []
+
+    @patch("engine.time.sleep")
+    def test_snapshot_retry_on_ssh_error_then_success(self, mock_sleep):
+        """개별 체크 SSH 에러 → 재시도 → 성공"""
+        from engine import Engine
+
+        call_count = [0]
+
+        def mock_run(cmd):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise SshConnectionError("first fail")
+            return None
+
+        self.ssh.run = mock_run
+        engine = Engine(self.ssh, self.profile)
+        results = engine.run_snapshot(retries=1)
+
+        # SSH 에러가 재시도로 복구되어 SSH_ERROR가 아닌 결과
+        assert any(not r["reason"].startswith("SSH_ERROR") for r in results)
+
+    @patch("engine.time.sleep")
+    def test_snapshot_retry_exhausted(self, mock_sleep):
+        """개별 체크 SSH 에러 → 재시도 소진 → SSH_ERROR 기록"""
+        from engine import Engine
+
+        self.ssh.run = MagicMock(side_effect=SshTimeoutError("timeout"))
+        engine = Engine(self.ssh, self.profile)
+        results = engine.run_snapshot(retries=1)
+
+        # SSH를 호출하는 체크만 SSH_ERROR 발생
+        ssh_error_results = [r for r in results if "SSH_ERROR" in r.get("reason", "")]
+        assert len(ssh_error_results) > 0
+        for r in ssh_error_results:
+            assert r["passed"] is False
+        # 재시도 sleep이 호출되었는지 확인
+        assert mock_sleep.call_count >= 1

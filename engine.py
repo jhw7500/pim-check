@@ -18,19 +18,32 @@ class Engine:
         self.profile = profile
         self.checks = list(ALL_CHECKS)
 
-    def run_snapshot(self) -> list:
-        """모든 체크를 한 번 실행하고 결과 목록을 반환한다."""
+    def run_snapshot(self, retries: int = 1) -> list:
+        """모든 체크를 한 번 실행하고 결과 목록을 반환한다.
+
+        Args:
+            retries: SSH 에러 발생 시 개별 체크 재시도 횟수 (기본 1)
+        """
         config = self.profile.get("checks", {})
         results = []
 
         for check in self.checks:
-            try:
-                data = check.collect(self.ssh, config)
-                passed, reason = check.validate(data, config)
-            except (SshTimeoutError, SshConnectionError) as exc:
-                data = {}
-                passed = False
-                reason = f"SSH_ERROR: {exc}"
+            data = {}
+            passed = False
+            reason = ""
+
+            for attempt in range(1 + retries):
+                try:
+                    data = check.collect(self.ssh, config)
+                    passed, reason = check.validate(data, config)
+                    break
+                except (SshTimeoutError, SshConnectionError) as exc:
+                    if attempt < retries:
+                        time.sleep(2)
+                        continue
+                    data = {}
+                    passed = False
+                    reason = f"SSH_ERROR: {exc}"
 
             results.append({
                 "name": check.name,
