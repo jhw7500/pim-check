@@ -178,7 +178,7 @@ def _build_dashboard_html() -> str:
         status = e["result"]
         color = "#22c55e" if status == "PASS" else "#f59e0b" if status == "WARN" else "#ef4444"
         ts = e.get("timestamp", "")[:19].replace("T", " ")
-        case_rows += f'<tr><td>{name}</td><td style="color:{color};font-weight:bold">{status}</td>'
+        case_rows += f'<tr><td><a href="/case/{name}" style="color:#3b82f6">{name}</a></td><td style="color:{color};font-weight:bold">{status}</td>'
         case_rows += f'<td>{e.get("passed",0)}/{e.get("total",0)}</td><td>{ts}</td>'
         case_rows += f'<td><button onclick="runTest(\'{name}\')" class="btn btn-sm">Run</button></td></tr>\n'
 
@@ -363,6 +363,100 @@ setTimeout(() => location.reload(), 30000);
 </html>"""
 
 
+def _build_case_detail_html(case_name: str) -> str:
+    """케이스 상세 페이지 HTML."""
+    history = read_history(REPORTS_DIR, case_filter=case_name)
+    total_runs = len(history)
+    pass_count = sum(1 for e in history if e["result"] == "PASS")
+    pass_rate = (pass_count / total_runs * 100) if total_runs else 0
+    pass_color = "#22c55e" if pass_rate >= 80 else "#f59e0b" if pass_rate >= 50 else "#ef4444"
+
+    # 체크별 최근 결과
+    check_rows = ""
+    if history:
+        last = history[-1]
+        for name, passed in last.get("checks", {}).items():
+            color = "#22c55e" if passed else "#ef4444"
+            icon = "&#10004;" if passed else "&#10008;"
+            check_rows += f'<tr><td style="color:{color};text-align:center">{icon}</td><td>{name}</td><td style="color:{color}">{"PASS" if passed else "FAIL"}</td></tr>\n'
+
+    # 이력 테이블
+    history_rows = ""
+    for e in reversed(history[-20:]):
+        ts = e.get("timestamp", "")[:19].replace("T", " ")
+        status = e["result"]
+        color = "#22c55e" if status == "PASS" else "#f59e0b" if status == "WARN" else "#ef4444"
+        history_rows += f'<tr><td>{ts}</td><td style="color:{color};font-weight:bold">{status}</td><td>{e.get("passed",0)}/{e.get("total",0)}</td><td>{e.get("host","")}</td></tr>\n'
+
+    # 추이 차트 (인라인 SVG)
+    chart_svg = ""
+    if len(history) >= 2:
+        w, h = 600, 120
+        points = []
+        n = min(len(history), 30)
+        recent = history[-n:]
+        for i, e in enumerate(recent):
+            x = int(i / (n - 1) * (w - 40)) + 20 if n > 1 else w // 2
+            rate = (e.get("passed", 0) / e.get("total", 1)) * 100
+            y = int(h - 20 - (rate / 100 * (h - 40)))
+            points.append((x, y, rate, e.get("timestamp", "")[:10]))
+
+        polyline = " ".join(f"{x},{y}" for x, y, _, _ in points)
+        dots = ""
+        for x, y, rate, ts in points:
+            color = "#22c55e" if rate >= 80 else "#f59e0b" if rate >= 50 else "#ef4444"
+            dots += f'<circle cx="{x}" cy="{y}" r="4" fill="{color}"><title>{ts}: {rate:.0f}%</title></circle>'
+
+        chart_svg = f"""<svg width="{w}" height="{h}" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px">
+  <polyline points="{polyline}" fill="none" stroke="#3b82f6" stroke-width="2"/>
+  <line x1="20" y1="{h-20}" x2="{w-20}" y2="{h-20}" stroke="#e5e7eb"/>
+  <text x="2" y="15" font-size="10" fill="#9ca3af">100%</text>
+  <text x="2" y="{h-10}" font-size="10" fill="#9ca3af">0%</text>
+  {dots}
+</svg>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>pim-check: {case_name}</title>
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ font-family:-apple-system,system-ui,sans-serif; background:#f9fafb; padding:24px; }}
+  .container {{ max-width:800px; margin:0 auto; }}
+  h1 {{ font-size:20px; margin-bottom:16px; }}
+  a {{ color:#3b82f6; text-decoration:none; }}
+  .stats {{ display:flex; gap:12px; margin-bottom:16px; }}
+  .stat {{ background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:14px; flex:1; text-align:center; }}
+  .stat-value {{ font-size:24px; font-weight:700; }}
+  .stat-label {{ font-size:12px; color:#6b7280; margin-top:4px; }}
+  .panel {{ background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:16px; }}
+  .panel h2 {{ font-size:15px; color:#374151; margin-bottom:10px; }}
+  table {{ width:100%; border-collapse:collapse; }}
+  th {{ background:#f3f4f6; text-align:left; padding:8px 12px; font-size:13px; color:#374151; border-bottom:1px solid #e5e7eb; }}
+  td {{ padding:8px 12px; border-bottom:1px solid #f3f4f6; font-size:14px; }}
+  .btn {{ padding:6px 14px; border:none; border-radius:6px; cursor:pointer; font-size:14px; background:#3b82f6; color:#fff; }}
+</style></head><body>
+<div class="container">
+  <h1><a href="/">&larr; Dashboard</a> / {case_name}</h1>
+  <div class="stats">
+    <div class="stat"><div class="stat-value">{total_runs}</div><div class="stat-label">Runs</div></div>
+    <div class="stat"><div class="stat-value" style="color:#22c55e">{pass_count}</div><div class="stat-label">Passed</div></div>
+    <div class="stat"><div class="stat-value" style="color:#ef4444">{total_runs - pass_count}</div><div class="stat-label">Failed</div></div>
+    <div class="stat"><div class="stat-value" style="color:{pass_color}">{pass_rate:.0f}%</div><div class="stat-label">Pass Rate</div></div>
+  </div>
+  {"<div class='panel'><h2>Pass Rate Trend</h2>" + chart_svg + "</div>" if chart_svg else ""}
+  <div class="panel">
+    <h2>Last Run — Checks</h2>
+    <table><thead><tr><th style="width:30px"></th><th>Check</th><th>Result</th></tr></thead>
+    <tbody>{check_rows}</tbody></table>
+  </div>
+  <div class="panel">
+    <h2>Run History (last 20)</h2>
+    <table><thead><tr><th>Time</th><th>Result</th><th>Checks</th><th>Host</th></tr></thead>
+    <tbody>{history_rows}</tbody></table>
+  </div>
+  <button class="btn" onclick="fetch('/api/run?case={case_name}&host=192.168.0.5').then(()=>location.reload())">Run Now</button>
+</div></body></html>"""
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     AUTH = None  # "user:pass" or None
 
@@ -475,6 +569,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "last": last,
                 "history": history[-10:],
             }), "application/json")
+
+        elif path.startswith("/case/"):
+            case = path[6:]  # /case/720p_2ch → 720p_2ch
+            html = _build_case_detail_html(case)
+            self._respond(200, html, "text/html")
 
         else:
             self._respond(404, "Not Found", "text/plain")
