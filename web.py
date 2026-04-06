@@ -397,7 +397,7 @@ def _build_case_detail_html(case_name: str) -> str:
         recent = history[-n:]
         for i, e in enumerate(recent):
             x = int(i / (n - 1) * (w - 40)) + 20 if n > 1 else w // 2
-            rate = (e.get("passed", 0) / e.get("total", 1)) * 100
+            rate = (e.get("passed", 0) / max(e.get("total", 1), 1)) * 100
             y = int(h - 20 - (rate / 100 * (h - 40)))
             points.append((x, y, rate, e.get("timestamp", "")[:10]))
 

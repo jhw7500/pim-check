@@ -93,5 +93,57 @@ class TestDashboardHandlerAPI(unittest.TestCase):
         self.assertEqual(code, 404)
 
 
+class TestCaseDetailHtml(unittest.TestCase):
+    def test_renders_with_no_history(self):
+        from web import _build_case_detail_html
+        html = _build_case_detail_html("nonexistent_case")
+        self.assertIn("nonexistent_case", html)
+        self.assertIn("<!DOCTYPE html>", html)
+        self.assertIn("0", html)  # 0 runs
+
+    def test_renders_with_history(self):
+        from web import _build_case_detail_html
+        # 기존 히스토리가 있는 케이스로 테스트
+        html = _build_case_detail_html("gen_ord_disk_on_srt_off")
+        self.assertIn("gen_ord_disk_on_srt_off", html)
+
+
+class TestBasicAuth(unittest.TestCase):
+    def test_no_auth_configured(self):
+        from web import DashboardHandler
+        handler = MagicMock(spec=DashboardHandler)
+        handler.AUTH = None
+        result = DashboardHandler._check_auth(handler)
+        self.assertTrue(result)
+
+    def test_auth_missing_header(self):
+        from web import DashboardHandler
+        handler = MagicMock(spec=DashboardHandler)
+        handler.AUTH = "admin:secret"
+        handler.headers = {}
+        result = DashboardHandler._check_auth(handler)
+        self.assertFalse(result)
+
+    def test_auth_correct(self):
+        import base64
+        from web import DashboardHandler
+        handler = MagicMock(spec=DashboardHandler)
+        handler.AUTH = "admin:secret"
+        encoded = base64.b64encode(b"admin:secret").decode()
+        handler.headers = {"Authorization": f"Basic {encoded}"}
+        result = DashboardHandler._check_auth(handler)
+        self.assertTrue(result)
+
+    def test_auth_wrong_password(self):
+        import base64
+        from web import DashboardHandler
+        handler = MagicMock(spec=DashboardHandler)
+        handler.AUTH = "admin:secret"
+        encoded = base64.b64encode(b"admin:wrong").decode()
+        handler.headers = {"Authorization": f"Basic {encoded}"}
+        result = DashboardHandler._check_auth(handler)
+        self.assertFalse(result)
+
+
 if __name__ == "__main__":
     unittest.main()
