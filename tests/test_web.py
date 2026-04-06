@@ -24,7 +24,8 @@ class TestBuildDashboardHtml(unittest.TestCase):
     def test_contains_controls(self):
         html = _build_dashboard_html()
         self.assertIn("Run Now", html)
-        self.assertIn("Auto Start", html)
+        self.assertIn("Auto Single", html)
+        self.assertIn("Auto Rotate", html)
         self.assertIn("runTag", html)
 
 

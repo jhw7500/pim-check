@@ -141,15 +141,44 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
 
 
 def _auto_runner():
-    """자동 실행 스레드."""
+    """자동 실행 스레드. single 또는 rotate 모드."""
     while _auto_state["running"]:
-        case = _auto_state["case"]
+        mode = _auto_state.get("mode", "single")
         host = _auto_state["host"]
-        try:
-            _run_test(case, host)
-        except Exception:
-            pass
         interval = _auto_state["interval"]
+
+        if mode == "rotate":
+            # 모든 케이스를 순회하면서 테스트
+            tag = _auto_state.get("tag")
+            cases = _list_cases()
+            if tag:
+                import yaml as _yaml
+                filtered = []
+                for c in cases:
+                    for subdir in ["cases", "generated"]:
+                        p = os.path.join(PROFILES_DIR, subdir, f"{c}.yaml")
+                        if os.path.exists(p):
+                            with open(p) as f:
+                                data = _yaml.safe_load(f) or {}
+                            if tag in data.get("tags", []):
+                                filtered.append(c)
+                            break
+                cases = filtered
+
+            for case in cases:
+                if not _auto_state["running"]:
+                    break
+                try:
+                    _run_test(case, host)
+                except Exception:
+                    pass
+        else:
+            # 단일 케이스 반복
+            try:
+                _run_test(_auto_state["case"], host)
+            except Exception:
+                pass
+
         for _ in range(interval):
             if not _auto_state["running"]:
                 break
@@ -193,8 +222,13 @@ def _build_dashboard_html() -> str:
         recent_rows += f'<td style="color:{color};font-weight:bold">{status}</td>'
         recent_rows += f'<td>{e.get("passed",0)}/{e.get("total",0)}</td></tr>\n'
 
-    auto_status = "Running" if _auto_state["running"] else "Stopped"
-    auto_color = "#22c55e" if _auto_state["running"] else "#6b7280"
+    auto_mode = _auto_state.get("mode", "single")
+    if _auto_state["running"]:
+        auto_status = f"Running ({auto_mode})"
+        auto_color = "#22c55e" if auto_mode == "single" else "#0891b2"
+    else:
+        auto_status = "Stopped"
+        auto_color = "#6b7280"
     pass_color = "#22c55e" if pass_rate >= 80 else "#f59e0b" if pass_rate >= 50 else "#ef4444"
 
     # 추가 통계
@@ -337,7 +371,8 @@ def _build_dashboard_html() -> str:
       <button class="btn btn-live" onclick="runLive()">Run Live</button>
       <span style="color:#475569">|</span>
       <input id="interval" type="number" value="300" min="30" style="width:70px"> sec
-      <button class="btn btn-success" onclick="startAuto()">Auto Start</button>
+      <button class="btn btn-success" onclick="startAuto('single')">Auto Single</button>
+      <button class="btn" style="background:#0891b2;color:#fff" onclick="startAuto('rotate')">Auto Rotate</button>
       <button class="btn btn-danger" onclick="stopAuto()">Stop</button>
     </div>
     <div class="controls" style="margin-top:8px">
@@ -395,13 +430,14 @@ function runSelected() {{
   runTest(caseName);
 }}
 
-function startAuto() {{
+function startAuto(mode) {{
   const caseName = document.getElementById('case').value;
   const host = document.getElementById('host').value;
   const interval = document.getElementById('interval').value;
-  fetch('/api/auto/start?case=' + caseName + '&host=' + host + '&interval=' + interval)
+  const label = mode === 'rotate' ? 'Rotate (all cases)' : 'Single (' + caseName + ')';
+  fetch('/api/auto/start?case=' + caseName + '&host=' + host + '&interval=' + interval + '&mode=' + mode)
     .then(r => r.json())
-    .then(() => {{ showStatus('Auto mode started (' + interval + 's interval)', '#f0fdf4'); setTimeout(() => location.reload(), 1000); }});
+    .then(() => {{ showStatus('Auto ' + label + ' started (' + interval + 's)', '#f0fdf4'); setTimeout(() => location.reload(), 1000); }});
 }}
 
 function stopAuto() {{
@@ -675,10 +711,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             case = params.get("case", [None])[0]
             host = params.get("host", ["192.168.0.5"])[0]
             interval = int(params.get("interval", ["300"])[0])
+            mode = params.get("mode", ["single"])[0]  # single or rotate
+            tag = params.get("tag", [None])[0]
             _auto_state["running"] = True
             _auto_state["case"] = case
             _auto_state["host"] = host
             _auto_state["interval"] = interval
+            _auto_state["mode"] = mode
+            _auto_state["tag"] = tag
             if _auto_state["thread"] is None or not _auto_state["thread"].is_alive():
                 t = threading.Thread(target=_auto_runner, daemon=True)
                 _auto_state["thread"] = t
