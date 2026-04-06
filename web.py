@@ -344,7 +344,29 @@ setTimeout(() => location.reload(), 30000);
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    AUTH = None  # "user:pass" or None
+
+    def _check_auth(self) -> bool:
+        if not self.AUTH:
+            return True
+        import base64
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Basic "):
+            return False
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            return decoded == self.AUTH
+        except Exception:
+            return False
+
     def do_GET(self):
+        if not self._check_auth():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="pim-check"')
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Unauthorized")
+            return
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
@@ -452,7 +474,12 @@ def main():
     parser = argparse.ArgumentParser(description="pim-check web dashboard")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--auth", type=str, default=None, metavar="USER:PASS",
+                        help="Basic Auth 활성화 (예: --auth admin:secret)")
     args = parser.parse_args()
+
+    if args.auth:
+        DashboardHandler.AUTH = args.auth
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
     server = HTTPServer((args.host, args.port), DashboardHandler)
