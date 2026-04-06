@@ -48,7 +48,10 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def list_cases(include_generated: bool = False, tag: str | None = None) -> list[str]:
-    """profiles/cases/*.yaml 글로브로 케이스 목록을 반환한다."""
+    """profiles/cases/*.yaml 글로브로 케이스 목록을 반환한다.
+
+    depends_on이 정의된 케이스는 의존 대상 뒤에 정렬된다.
+    """
     import yaml as _yaml
     pattern = os.path.join(PROFILES_DIR, "cases", "*.yaml")
     paths = glob.glob(pattern)
@@ -56,20 +59,47 @@ def list_cases(include_generated: bool = False, tag: str | None = None) -> list[
         gen_pattern = os.path.join(PROFILES_DIR, "generated", "*.yaml")
         paths.extend(glob.glob(gen_pattern))
 
-    names = sorted(os.path.splitext(os.path.basename(p))[0] for p in paths)
+    # 케이스 이름 → 경로 매핑
+    name_path = {}
+    for p in paths:
+        name = os.path.splitext(os.path.basename(p))[0]
+        name_path[name] = p
 
+    names = sorted(name_path.keys())
+
+    # 태그 필터
     if tag:
         filtered = []
         for name in names:
-            for p in paths:
-                if os.path.splitext(os.path.basename(p))[0] == name:
-                    with open(p) as f:
-                        data = _yaml.safe_load(f) or {}
-                    if tag in data.get("tags", []):
-                        filtered.append(name)
-                    break
-        return filtered
-    return names
+            with open(name_path[name]) as f:
+                data = _yaml.safe_load(f) or {}
+            if tag in data.get("tags", []):
+                filtered.append(name)
+        names = filtered
+
+    # 의존성 정렬 (토폴로지 정렬)
+    deps = {}
+    for name in names:
+        with open(name_path[name]) as f:
+            data = _yaml.safe_load(f) or {}
+        deps[name] = data.get("depends_on", [])
+
+    sorted_names = []
+    visited = set()
+
+    def _visit(n):
+        if n in visited:
+            return
+        visited.add(n)
+        for dep in deps.get(n, []):
+            if dep in deps:
+                _visit(dep)
+        sorted_names.append(n)
+
+    for n in names:
+        _visit(n)
+
+    return sorted_names
 
 
 def run_case(case_name, host, user, password, duration, save_json=False,
