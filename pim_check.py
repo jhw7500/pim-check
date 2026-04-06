@@ -31,6 +31,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--html", action="store_true", help="결과를 HTML 파일로 저장")
     parser.add_argument("--history", action="store_true", help="결과를 히스토리에 추가")
     parser.add_argument("--dry-run", action="store_true", help="재부팅 없이 설정 차이만 확인")
+    parser.add_argument("--parallel", action="store_true", help="다수 타겟 병렬 실행")
+    parser.add_argument("--targets", type=str, default=None, help="병렬 타겟 목록 (쉼표 구분: 192.168.0.5,192.168.0.6)")
     parser.add_argument("--history-report", action="store_true", help="히스토리 대시보드 HTML 생성")
     parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
     parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
@@ -170,6 +172,35 @@ def main(argv=None) -> int:
         yaml_output = learn_baseline(ssh, name=args.case)
         print(yaml_output)
         return 0
+
+    if args.parallel:
+        from parallel import run_parallel, format_parallel_results, load_targets
+        if args.targets:
+            hosts = [h.strip() for h in args.targets.split(",")]
+        else:
+            targets_path = os.path.join(PROFILES_DIR, "targets.yaml")
+            target_entries = load_targets(targets_path)
+            if not target_entries:
+                print("No targets defined. Use --targets or profiles/targets.yaml")
+                return 1
+            hosts = [t["host"] for t in target_entries]
+        results = run_parallel(
+            hosts, args.case,
+            user=args.user or "root",
+            password=args.password or "root",
+            duration=args.duration,
+        )
+        print(format_parallel_results(results))
+
+        if args.history:
+            from history import append_result
+            report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+            for r in results:
+                if r["results"]:
+                    append_result(r["results"], r["case"], r["host"], r["collected"], r["total"], report_dir)
+
+        all_ok = all(r["status"] in ("PASS", "WARN") for r in results)
+        return 0 if all_ok else 1
 
     if args.dry_run:
         from setup import SetupManager

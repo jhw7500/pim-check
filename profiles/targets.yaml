@@ -1,0 +1,9 @@
+# profiles/targets.yaml — 병렬 테스트 타겟 목록
+# python3 pim_check.py --parallel --case 720p_2ch
+targets:
+  - host: 192.168.0.5
+    user: root
+    password: root
+  # - host: 192.168.214.4
+  #   user: root
+  #   password: root
