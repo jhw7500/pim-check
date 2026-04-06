@@ -255,6 +255,12 @@ def _build_dashboard_html() -> str:
       <button class="btn btn-success" onclick="startAuto()">Auto Start</button>
       <button class="btn btn-danger" onclick="stopAuto()">Stop</button>
     </div>
+    <div class="controls" style="margin-top:8px">
+      <span style="color:#6b7280;font-size:13px">Tag:</span>
+      <button class="btn btn-sm" onclick="runTag('smoke')">Run Smoke</button>
+      <button class="btn btn-sm" onclick="runTag('camera')">Run Camera</button>
+      <button class="btn btn-sm" onclick="runTag('stress')">Run Stress</button>
+    </div>
     <div id="status"></div>
   </div>
 
@@ -316,6 +322,20 @@ function stopAuto() {{
     .then(() => {{ showStatus('Auto mode stopped', '#fffbeb'); setTimeout(() => location.reload(), 1000); }});
 }}
 
+function runTag(tag) {{
+  const host = document.getElementById('host').value;
+  showStatus('<span class="spinner"></span> Running all [' + tag + '] cases...');
+  fetch('/api/run-tag?tag=' + tag + '&host=' + host)
+    .then(r => r.json())
+    .then(data => {{
+      const passed = data.results.filter(r => r.status === 'PASS' || r.status === 'WARN').length;
+      const color = passed === data.count ? '#f0fdf4' : '#fef2f2';
+      showStatus('[' + tag + '] ' + passed + '/' + data.count + ' cases OK', color);
+      setTimeout(() => location.reload(), 1500);
+    }})
+    .catch(e => showStatus('Error: ' + e, '#fef2f2'));
+}}
+
 // 자동 새로고침 (30초)
 setTimeout(() => location.reload(), 30000);
 </script>
@@ -366,7 +386,53 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/history":
             history = read_history(REPORTS_DIR)
+            case_filter = params.get("case", [None])[0]
+            if case_filter:
+                history = [e for e in history if e.get("case") == case_filter]
             self._respond(200, json.dumps(history[-50:]), "application/json")
+
+        elif path == "/api/cases":
+            cases = _list_cases()
+            self._respond(200, json.dumps(cases), "application/json")
+
+        elif path == "/api/run-tag":
+            tag = params.get("tag", [None])[0]
+            host = params.get("host", ["192.168.0.5"])[0]
+            if not tag:
+                self._respond(400, json.dumps({"error": "tag required"}), "application/json")
+                return
+            import yaml as _yaml
+            cases = _list_cases()
+            tagged = []
+            for c in cases:
+                for subdir in ["cases", "generated"]:
+                    p = os.path.join(PROFILES_DIR, subdir, f"{c}.yaml")
+                    if os.path.exists(p):
+                        with open(p) as f:
+                            data = _yaml.safe_load(f) or {}
+                        if tag in data.get("tags", []):
+                            tagged.append(c)
+                        break
+            results = []
+            for c in tagged:
+                r = _run_test(c, host)
+                results.append(r)
+            self._respond(200, json.dumps({
+                "tag": tag,
+                "count": len(tagged),
+                "results": results,
+            }), "application/json")
+
+        elif path == "/api/case-detail":
+            case = params.get("case", [None])[0]
+            history = read_history(REPORTS_DIR, case_filter=case)
+            last = history[-1] if history else None
+            self._respond(200, json.dumps({
+                "case": case,
+                "runs": len(history),
+                "last": last,
+                "history": history[-10:],
+            }), "application/json")
 
         else:
             self._respond(404, "Not Found", "text/plain")
