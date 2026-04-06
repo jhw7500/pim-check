@@ -83,9 +83,10 @@ def run_case(case_name, host, user, password, duration, save_json=False,
     # Setup (Phase 4): apply edgeconf changes if defined
     setup_config = profile.get("setup")
     setup_mgr = SetupManager(ssh)
+    setup_changed = False
     if setup_config:
         try:
-            setup_mgr.run_setup(setup_config)
+            setup_changed = setup_mgr.run_setup(setup_config)
         except TimeoutError as e:
             print(f"ERROR: Setup failed - {e}")
             return 1
@@ -120,8 +121,8 @@ def run_case(case_name, host, user, password, duration, save_json=False,
         all_passed = all(r["passed"] for r in results)
         return 0 if all_passed else 1
     finally:
-        # Teardown: restore original config
-        if setup_config:
+        # Teardown: setup이 실제로 변경한 경우에만 복원
+        if setup_config and setup_changed:
             try:
                 setup_mgr.run_teardown(setup_config)
             except TimeoutError as e:

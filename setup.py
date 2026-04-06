@@ -104,25 +104,31 @@ class SetupManager:
                     return False
         return True
 
-    def run_setup(self, setup_config: dict) -> None:
-        """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다."""
+    def run_setup(self, setup_config: dict) -> bool:
+        """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
+
+        Returns:
+            True: 설정이 변경되었음 (teardown 필요)
+            False: 이미 일치하여 skip됨 (teardown 불필요)
+        """
         changes = setup_config.get("edgeconf_changes", {})
         if not changes:
-            return
+            return False
 
         if self.check_current(changes):
             print("Config already matches target — skipping setup/reboot")
-            return
+            return False
 
         print(f"Config differs — applying {len(changes)} changes...")
         if not self.backup():
             print("ERROR: Failed to backup edgeconf — aborting setup")
-            return
+            return False
         self.apply_changes(changes)
 
         if setup_config.get("reboot_after", False):
             stabilize_sec = setup_config.get("stabilize_sec", 30)
             self.reboot_and_wait(stabilize_sec=stabilize_sec)
+        return True
 
     def run_teardown(self, setup_config: dict) -> None:
         """edgeconf를 원래 설정으로 복원하고 필요시 재부팅한다."""
