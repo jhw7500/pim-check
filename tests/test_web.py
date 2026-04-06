@@ -25,7 +25,7 @@ class TestBuildDashboardHtml(unittest.TestCase):
         html = _build_dashboard_html()
         self.assertIn("Run Now", html)
         self.assertIn("Auto Start", html)
-        self.assertIn("Run Smoke", html)
+        self.assertIn("runTag", html)
 
 
 class TestListCases(unittest.TestCase):

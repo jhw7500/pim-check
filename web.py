@@ -197,6 +197,37 @@ def _build_dashboard_html() -> str:
     auto_color = "#22c55e" if _auto_state["running"] else "#6b7280"
     pass_color = "#22c55e" if pass_rate >= 80 else "#f59e0b" if pass_rate >= 50 else "#ef4444"
 
+    # 추가 통계
+    total_cases = len(cases)
+    last_run_ts = history[-1].get("timestamp", "")[:19].replace("T", " ") if history else "Never"
+    last_host = history[-1].get("host", "") if history else ""
+    warn_count = sum(1 for e in history if e["result"] == "WARN")
+
+    # 최근 실패 체크 상세
+    failed_detail = ""
+    if history:
+        last = history[-1]
+        for name, passed in last.get("checks", {}).items():
+            if not passed:
+                failed_detail += f'<span style="display:inline-block;background:#fef2f2;color:#dc2626;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px">{name}</span>'
+
+    # 추이 미니 차트 (최근 20건 SVG)
+    mini_chart = ""
+    if len(history) >= 2:
+        n = min(len(history), 20)
+        recent_h = history[-n:]
+        chart_w, chart_h = 200, 40
+        pts = []
+        for i, e in enumerate(recent_h):
+            x = int(i / (n - 1) * (chart_w - 4)) + 2 if n > 1 else chart_w // 2
+            r = (e.get("passed", 0) / max(e.get("total", 1), 1)) * 100
+            y = int(chart_h - 2 - (r / 100 * (chart_h - 4)))
+            color = "#22c55e" if e["result"] == "PASS" else "#f59e0b" if e["result"] == "WARN" else "#ef4444"
+            pts.append((x, y, color))
+        polyline = " ".join(f"{x},{y}" for x, y, _ in pts)
+        dots = "".join(f'<circle cx="{x}" cy="{y}" r="2.5" fill="{c}"/>' for x, y, c in pts)
+        mini_chart = f'<svg width="{chart_w}" height="{chart_h}" style="vertical-align:middle"><polyline points="{polyline}" fill="none" stroke="#94a3b8" stroke-width="1.5"/>{dots}</svg>'
+
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -204,57 +235,96 @@ def _build_dashboard_html() -> str:
 <title>pim-check Dashboard</title>
 <style>
   * {{ margin:0; padding:0; box-sizing:border-box; }}
-  body {{ font-family:-apple-system,system-ui,sans-serif; background:#f9fafb; padding:20px; }}
-  .container {{ max-width:960px; margin:0 auto; }}
-  h1 {{ font-size:22px; color:#111; margin-bottom:16px; display:flex; align-items:center; gap:12px; }}
-  .badge {{ font-size:12px; padding:3px 8px; border-radius:12px; color:#fff; }}
-  .stats {{ display:flex; gap:12px; margin-bottom:20px; }}
-  .stat {{ background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; flex:1; text-align:center; }}
-  .stat-value {{ font-size:28px; font-weight:700; }}
-  .stat-label {{ font-size:12px; color:#6b7280; margin-top:4px; }}
-  .panel {{ background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:16px; }}
-  .panel h2 {{ font-size:15px; color:#374151; margin-bottom:12px; }}
+  body {{ font-family:-apple-system,'Segoe UI',system-ui,sans-serif; background:#0f172a; color:#e2e8f0; }}
+  .header {{ background:linear-gradient(135deg,#1e3a5f 0%,#0f172a 100%); padding:24px 32px; border-bottom:1px solid #1e293b; }}
+  .header-top {{ display:flex; justify-content:space-between; align-items:center; max-width:1100px; margin:0 auto; }}
+  .header h1 {{ font-size:20px; color:#f1f5f9; font-weight:600; display:flex; align-items:center; gap:10px; }}
+  .header .meta {{ font-size:12px; color:#64748b; margin-top:6px; }}
+  .badge {{ font-size:11px; padding:3px 10px; border-radius:12px; color:#fff; font-weight:500; }}
+  .container {{ max-width:1100px; margin:0 auto; padding:20px 32px; }}
+  .grid {{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:20px; }}
+  .stat {{ background:#1e293b; border:1px solid #334155; border-radius:10px; padding:16px; text-align:center; }}
+  .stat-value {{ font-size:26px; font-weight:700; }}
+  .stat-label {{ font-size:11px; color:#64748b; margin-top:4px; text-transform:uppercase; letter-spacing:0.5px; }}
+  .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }}
+  .panel {{ background:#1e293b; border:1px solid #334155; border-radius:10px; padding:16px; margin-bottom:16px; }}
+  .panel h2 {{ font-size:13px; color:#94a3b8; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; }}
   .controls {{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
-  select, input {{ padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; }}
-  .btn {{ padding:6px 14px; border:none; border-radius:6px; cursor:pointer; font-size:14px; font-weight:500; }}
+  select, input {{ padding:7px 12px; border:1px solid #334155; border-radius:6px; font-size:13px; background:#0f172a; color:#e2e8f0; }}
+  select:focus, input:focus {{ outline:none; border-color:#3b82f6; }}
+  .btn {{ padding:7px 16px; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; transition:all .15s; }}
   .btn-primary {{ background:#3b82f6; color:#fff; }}
-  .btn-primary:hover {{ background:#2563eb; }}
+  .btn-primary:hover {{ background:#2563eb; transform:translateY(-1px); }}
+  .btn-live {{ background:#8b5cf6; color:#fff; }}
+  .btn-live:hover {{ background:#7c3aed; }}
   .btn-danger {{ background:#ef4444; color:#fff; }}
+  .btn-danger:hover {{ background:#dc2626; }}
   .btn-success {{ background:#22c55e; color:#fff; }}
-  .btn-sm {{ padding:4px 10px; font-size:12px; background:#f3f4f6; border:1px solid #d1d5db; }}
-  .btn-sm:hover {{ background:#e5e7eb; }}
-  table {{ width:100%; border-collapse:collapse; }}
-  th {{ background:#f3f4f6; text-align:left; padding:8px 12px; font-size:13px; color:#374151; border-bottom:1px solid #e5e7eb; }}
-  td {{ padding:8px 12px; border-bottom:1px solid #f3f4f6; font-size:14px; }}
-  #status {{ padding:8px 12px; border-radius:6px; margin-top:12px; display:none; }}
-  .spinner {{ display:inline-block; width:14px; height:14px; border:2px solid #ccc; border-top-color:#3b82f6; border-radius:50%; animation:spin .6s linear infinite; }}
+  .btn-success:hover {{ background:#16a34a; }}
+  .btn-sm {{ padding:4px 10px; font-size:11px; background:#334155; border:1px solid #475569; color:#cbd5e1; border-radius:4px; }}
+  .btn-sm:hover {{ background:#475569; }}
+  table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+  th {{ text-align:left; padding:8px 12px; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid #334155; }}
+  td {{ padding:8px 12px; border-bottom:1px solid #1e293b; font-size:13px; }}
+  tr:hover td {{ background:#0f172a; }}
+  a {{ color:#60a5fa; text-decoration:none; }}
+  a:hover {{ text-decoration:underline; }}
+  #status {{ padding:10px 14px; border-radius:8px; margin-top:12px; display:none; font-size:13px; }}
+  .spinner {{ display:inline-block; width:14px; height:14px; border:2px solid #475569; border-top-color:#3b82f6; border-radius:50%; animation:spin .6s linear infinite; }}
   @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
-  .theme-toggle {{ position:fixed; top:16px; right:16px; cursor:pointer; font-size:20px;
-    background:none; border:none; padding:4px 8px; border-radius:6px; }}
-  .theme-toggle:hover {{ background:#e5e7eb; }}
-  body.dark {{ background:#111827; color:#e5e7eb; }}
-  body.dark .panel, body.dark .stat {{ background:#1f2937; border-color:#374151; }}
-  body.dark h1 {{ color:#f9fafb; }}
-  body.dark h2 {{ color:#d1d5db; }}
-  body.dark th {{ background:#374151; color:#d1d5db; border-color:#4b5563; }}
-  body.dark td {{ border-color:#374151; }}
-  body.dark select, body.dark input {{ background:#374151; color:#e5e7eb; border-color:#4b5563; }}
-  body.dark .btn-sm {{ background:#374151; border-color:#4b5563; color:#e5e7eb; }}
-  body.dark .btn-sm:hover {{ background:#4b5563; }}
-  body.dark .theme-toggle:hover {{ background:#374151; }}
+  .theme-toggle {{ position:fixed; top:16px; right:16px; cursor:pointer; font-size:18px;
+    background:#1e293b; border:1px solid #334155; padding:6px 10px; border-radius:8px; color:#94a3b8; }}
+  .theme-toggle:hover {{ background:#334155; color:#e2e8f0; }}
+  .tag-label {{ display:inline-block; background:#334155; color:#94a3b8; padding:1px 6px; border-radius:3px; font-size:11px; margin-left:4px; }}
+  .alert-bar {{ background:#7f1d1d; border:1px solid #991b1b; border-radius:8px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:#fca5a5; display:flex; align-items:center; gap:8px; }}
+  .alert-bar.ok {{ background:#052e16; border-color:#166534; color:#86efac; }}
+
+  /* Light mode */
+  body.light {{ background:#f8fafc; color:#1e293b; }}
+  body.light .header {{ background:linear-gradient(135deg,#dbeafe 0%,#f8fafc 100%); border-color:#e2e8f0; }}
+  body.light .header h1 {{ color:#1e293b; }}
+  body.light .header .meta {{ color:#64748b; }}
+  body.light .stat, body.light .panel {{ background:#fff; border-color:#e2e8f0; }}
+  body.light th {{ color:#64748b; border-color:#e2e8f0; }}
+  body.light td {{ border-color:#f1f5f9; }}
+  body.light tr:hover td {{ background:#f8fafc; }}
+  body.light select, body.light input {{ background:#fff; color:#1e293b; border-color:#d1d5db; }}
+  body.light .btn-sm {{ background:#f1f5f9; border-color:#d1d5db; color:#475569; }}
+  body.light .btn-sm:hover {{ background:#e2e8f0; }}
+  body.light .theme-toggle {{ background:#fff; border-color:#d1d5db; color:#64748b; }}
+  body.light .stat-label {{ color:#64748b; }}
+  body.light a {{ color:#2563eb; }}
+  body.light .alert-bar {{ background:#fef2f2; border-color:#fecaca; color:#991b1b; }}
+  body.light .alert-bar.ok {{ background:#f0fdf4; border-color:#bbf7d0; color:#166534; }}
 </style>
 </head>
 <body>
-<button class="theme-toggle" onclick="toggleTheme()">🌓</button>
-<div class="container">
-  <h1>pim-check Dashboard
-    <span class="badge" style="background:{auto_color}">{auto_status}</span>
-  </h1>
+<button class="theme-toggle" onclick="toggleTheme()">&#9681;</button>
 
-  <div class="stats">
+<div class="header">
+  <div class="header-top">
+    <div>
+      <h1>pim-check
+        <span class="badge" style="background:{auto_color}">{auto_status}</span>
+        <span style="font-size:12px;color:#64748b;font-weight:400">v2.0.0</span>
+      </h1>
+      <div class="meta">iMX8MP QA Automation &middot; Last: {last_run_ts} &middot; Host: {last_host or 'N/A'} &middot; {total_cases} cases available</div>
+    </div>
+    <div style="text-align:right">
+      {mini_chart}
+      <div style="font-size:11px;color:#64748b;margin-top:4px">Pass rate trend (last 20)</div>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  {"<div class='alert-bar'><strong>FAIL</strong> Last run failed &middot; " + failed_detail + "</div>" if history and history[-1]["result"] not in ("PASS","WARN") else "<div class='alert-bar ok'><strong>OK</strong> System healthy</div>" if history else ""}
+
+  <div class="grid">
     <div class="stat"><div class="stat-value">{total_runs}</div><div class="stat-label">Total Runs</div></div>
     <div class="stat"><div class="stat-value" style="color:#22c55e">{total_pass}</div><div class="stat-label">Passed</div></div>
-    <div class="stat"><div class="stat-value" style="color:#ef4444">{total_runs - total_pass}</div><div class="stat-label">Failed</div></div>
+    <div class="stat"><div class="stat-value" style="color:#f59e0b">{warn_count}</div><div class="stat-label">Warnings</div></div>
+    <div class="stat"><div class="stat-value" style="color:#ef4444">{total_runs - total_pass - warn_count}</div><div class="stat-label">Failed</div></div>
     <div class="stat"><div class="stat-value" style="color:{pass_color}">{pass_rate:.0f}%</div><div class="stat-label">Pass Rate</div></div>
   </div>
 
@@ -262,37 +332,39 @@ def _build_dashboard_html() -> str:
     <h2>Run Test</h2>
     <div class="controls">
       <select id="case">{case_options}</select>
-      <input id="host" type="text" value="192.168.0.5" placeholder="Target IP" style="width:140px">
+      <input id="host" type="text" value="{last_host or '192.168.0.5'}" placeholder="Target IP" style="width:140px">
       <button class="btn btn-primary" onclick="runSelected()">Run Now</button>
-      <button class="btn" style="background:#8b5cf6;color:#fff" onclick="runLive()">Run Live</button>
-      <span style="color:#9ca3af">|</span>
+      <button class="btn btn-live" onclick="runLive()">Run Live</button>
+      <span style="color:#475569">|</span>
       <input id="interval" type="number" value="300" min="30" style="width:70px"> sec
       <button class="btn btn-success" onclick="startAuto()">Auto Start</button>
       <button class="btn btn-danger" onclick="stopAuto()">Stop</button>
     </div>
     <div class="controls" style="margin-top:8px">
-      <span style="color:#6b7280;font-size:13px">Tag:</span>
-      <button class="btn btn-sm" onclick="runTag('smoke')">Run Smoke</button>
-      <button class="btn btn-sm" onclick="runTag('camera')">Run Camera</button>
-      <button class="btn btn-sm" onclick="runTag('stress')">Run Stress</button>
+      <span style="color:#64748b;font-size:12px">Tags:</span>
+      <button class="btn btn-sm" onclick="runTag('smoke')">smoke</button>
+      <button class="btn btn-sm" onclick="runTag('camera')">camera</button>
+      <button class="btn btn-sm" onclick="runTag('stress')">stress</button>
     </div>
     <div id="status"></div>
   </div>
 
-  <div class="panel">
-    <h2>Case Summary</h2>
-    <table>
-      <thead><tr><th>Case</th><th>Last</th><th>Checks</th><th>Time</th><th></th></tr></thead>
-      <tbody>{case_rows}</tbody>
-    </table>
-  </div>
+  <div class="two-col">
+    <div class="panel">
+      <h2>Case Summary ({len(case_stats)} cases)</h2>
+      <table>
+        <thead><tr><th>Case</th><th>Status</th><th>Checks</th><th>Last Run</th><th></th></tr></thead>
+        <tbody>{case_rows}</tbody>
+      </table>
+    </div>
 
-  <div class="panel">
-    <h2>Recent Runs</h2>
-    <table>
-      <thead><tr><th>Time</th><th>Case</th><th>Result</th><th>Checks</th></tr></thead>
-      <tbody id="recent">{recent_rows}</tbody>
-    </table>
+    <div class="panel">
+      <h2>Recent Runs</h2>
+      <table>
+        <thead><tr><th>Time</th><th>Case</th><th>Result</th><th>Checks</th></tr></thead>
+        <tbody id="recent">{recent_rows}</tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -376,10 +448,10 @@ function runTag(tag) {{
 }}
 
 function toggleTheme() {{
-  document.body.classList.toggle('dark');
-  localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+  document.body.classList.toggle('light');
+  localStorage.setItem('theme', document.body.classList.contains('light') ? 'light' : 'dark');
 }}
-if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
+if (localStorage.getItem('theme') === 'light') document.body.classList.add('light');
 
 // 자동 새로고침 (30초)
 setTimeout(() => location.reload(), 30000);
