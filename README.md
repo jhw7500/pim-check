@@ -37,8 +37,26 @@ python3 pim_check.py --case 720p_2ch --duration 60
 # JSON 리포트 저장
 python3 pim_check.py --case 720p_2ch --json
 
+# HTML 리포트 저장
+python3 pim_check.py --case 720p_2ch --html
+
+# 결과를 히스토리에 누적
+python3 pim_check.py --case 720p_2ch --history
+
+# 히스토리 대시보드 생성
+python3 pim_check.py --history-report
+
 # 현재 타겟 상태 기반 베이스라인 자동 생성
 python3 pim_check.py --learn
+
+# 스키마 기반 테스트 케이스 자동 생성
+python3 pim_check.py --generate
+
+# 자동 생성된 케이스 포함하여 전체 실행
+python3 pim_check.py --all --include-generated
+
+# 조합: 전체 실행 + HTML + 히스토리
+python3 pim_check.py --all --include-generated --html --history
 ```
 
 ## 케이스 종류
@@ -59,6 +77,10 @@ SD/저장소, 카메라, 프로세스, RTC/시간, 시스템, 네트워크, I2C 
 
 ### Board/Config 체크 (읽기 전용)
 Board 하드웨어, edgeconf 카메라/네트워크, ORD/VCM, 설정 무결성 등 6개 config 케이스
+
+### 자동 생성 케이스
+`--generate`로 `profiles/schema.yaml` 기반 자동 생성. 해상도x채널xFPS 조합 (edgeconf) + ORD/VCM 설정 조합.
+수동 케이스와 중복되는 조합은 자동으로 건너뜀.
 
 ## 케이스 추가
 
