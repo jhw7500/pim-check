@@ -154,6 +154,28 @@ targets:
     password: root
 ```
 
+## 추가 기능
+
+```bash
+# 태그 필터 (케이스 YAML에 tags: [smoke, stress] 정의)
+python3 pim_check.py --all --tag smoke
+
+# CSV 내보내기
+python3 pim_check.py --export-csv
+
+# 두 타겟 간 edgeconf 설정 비교
+python3 pim_check.py --diff-targets 192.168.0.5,192.168.0.6
+
+# FAIL 시 Slack/Webhook 알림
+python3 pim_check.py --case 720p_2ch --webhook https://hooks.slack.com/...
+
+# 연속 모니터링 (5분 간격, 대시보드 자동 갱신)
+python3 pim_check.py --watch 300 --case 720p_2ch
+
+# 스키마 유효성 검증
+python3 pim_check.py --validate-schema
+```
+
 ## 테스트
 
 ```bash
