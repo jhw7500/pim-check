@@ -920,10 +920,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             pass
 
     def _respond(self, code: int, body: str, content_type: str):
-        self.send_response(code)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(body.encode("utf-8"))
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+            pass
 
     def log_message(self, format, *args):
         # 간결한 로그
