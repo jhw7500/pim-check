@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # 웹 대시보드 (항상 실행)
   dashboard:
