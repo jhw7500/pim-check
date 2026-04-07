@@ -415,6 +415,8 @@ def _build_dashboard_html() -> str:
       <button class="btn btn-sm" onclick="runTag('stress')">stress</button>
       <span style="color:#475569">|</span>
       <button class="btn" style="background:#f97316;color:#fff;font-size:12px;padding:4px 12px" onclick="runSelectedCases()">Run Selected</button>
+      <button class="btn" style="background:#8b5cf6;color:#fff;font-size:12px;padding:4px 12px" onclick="runLiveSelected()">Live Selected</button>
+      <button class="btn" style="background:#0891b2;color:#fff;font-size:12px;padding:4px 12px" onclick="startAutoSelected()">Auto Selected</button>
       <button class="btn btn-sm" onclick="selectAll(true)">Select All</button>
       <button class="btn btn-sm" onclick="selectAll(false)">Clear</button>
     </div>
@@ -468,6 +470,48 @@ function runTest(caseName) {{
 function runSelected() {{
   const caseName = document.getElementById('case').value;
   runTest(caseName);
+}}
+
+function runLiveSelected() {{
+  const cases = getSelectedCases();
+  if (cases.length === 0) {{ showStatus('No cases selected', '#fffbeb'); return; }}
+  const host = document.getElementById('host').value;
+  let log = document.getElementById('livelog');
+  if (!log) {{
+    log = document.createElement('div');
+    log.id = 'livelog';
+    log.style.cssText = 'margin-top:12px;background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;max-height:400px;overflow-y:auto';
+    document.getElementById('status').parentNode.appendChild(log);
+  }}
+  log.style.display = 'block';
+  log.innerHTML = '<div style="color:#60a5fa">Running ' + cases.length + ' cases sequentially...</div>';
+  let idx = 0;
+  function runNext() {{
+    if (idx >= cases.length) {{
+      log.innerHTML += '<div style="color:#22c55e;font-weight:bold;margin-top:8px">All ' + cases.length + ' cases complete</div>';
+      setTimeout(() => location.reload(), 2000);
+      return;
+    }}
+    const c = cases[idx];
+    log.innerHTML += '<div style="color:#60a5fa;margin-top:6px">--- ' + c + ' ---</div>';
+    const es = new EventSource('/api/stream?case=' + c + '&host=' + host);
+    es.addEventListener('check_result', e => {{ const d = JSON.parse(e.data); const col = d.passed ? '#22c55e' : d.known_issue ? '#fbbf24' : '#ef4444'; log.innerHTML += '<div style="color:' + col + '">  ' + (d.passed?'PASS':'FAIL') + ' ' + d.check + ' (' + d.duration_ms + 'ms)</div>'; log.scrollTop = log.scrollHeight; }});
+    es.addEventListener('done', e => {{ const d = JSON.parse(e.data); const col = d.status === 'PASS' ? '#22c55e' : '#ef4444'; log.innerHTML += '<div style="color:' + col + '">  Result: ' + d.status + ' (' + d.passed + '/' + d.total + ')</div>'; es.close(); idx++; runNext(); }});
+    es.addEventListener('error', e => {{ try {{ const d = JSON.parse(e.data); log.innerHTML += '<div style="color:#ef4444">  ERROR: ' + d.message + '</div>'; }} catch(ex) {{}} }});
+    es.onerror = () => {{ es.close(); idx++; runNext(); }};
+  }}
+  runNext();
+}}
+
+function startAutoSelected() {{
+  const cases = getSelectedCases();
+  if (cases.length === 0) {{ showStatus('No cases selected', '#fffbeb'); return; }}
+  const host = document.getElementById('host').value;
+  const interval = document.getElementById('interval').value;
+  showStatus('<span class="spinner"></span> Auto rotating ' + cases.length + ' selected cases...');
+  fetch('/api/auto/start?case=' + cases[0] + '&host=' + host + '&interval=' + interval + '&mode=rotate&cases=' + cases.join(','))
+    .then(r => r.json())
+    .then(() => {{ showStatus('Auto rotate started (' + cases.length + ' cases, ' + interval + 's)', '#f0fdf4'); setTimeout(() => location.reload(), 1000); }});
 }}
 
 function startAuto(mode) {{
@@ -946,15 +990,25 @@ def main():
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
     server = HTTPServer((args.host, args.port), DashboardHandler)
+    server.timeout = 1  # Windows Ctrl+C 대응
     print(f"pim-check dashboard: http://{args.host}:{args.port}")
     print("Ctrl+C to stop")
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
+    import signal
+    def _shutdown(sig, frame):
         print("\nShutting down.")
         _auto_state["running"] = False
         server.server_close()
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    try:
+        while True:
+            server.handle_request()
+    except KeyboardInterrupt:
+        _shutdown(None, None)
 
 
 if __name__ == "__main__":
