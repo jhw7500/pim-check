@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 python:3.11-slim
+FROM python:3.11-slim
 
 LABEL maintainer="pim-check" \
       description="iMX8MP QA Automation Tool" \
