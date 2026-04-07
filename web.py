@@ -234,7 +234,7 @@ def _build_dashboard_html() -> str:
         items = case_groups[grp]
         if not items:
             continue
-        checkbox_html += f'<div style="margin-bottom:8px"><div style="font-size:11px;color:#64748b;text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:6px">{label} ({len(items)}) <label style="font-size:10px;cursor:pointer"><input type="checkbox" onchange="toggleGroup(this,\'{grp}\')" style="margin-right:2px">all</label></div>'
+        checkbox_html += f'<div style="margin-bottom:8px"><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:6px">{label} ({len(items)}) <label style="font-size:10px;cursor:pointer;color:#cbd5e1"><input type="checkbox" onchange="toggleGroup(this,\'{grp}\')" style="margin-right:2px">all</label></div>'
         for c in items:
             last = case_stats.get(c)
             if last:
@@ -242,7 +242,7 @@ def _build_dashboard_html() -> str:
                 dot = "#22c55e" if st == "PASS" else "#f59e0b" if st == "WARN" else "#ef4444"
             else:
                 dot = "#475569"
-            checkbox_html += f'<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;font-size:12px;cursor:pointer"><input type="checkbox" class="case-cb grp-{grp}" value="{c}"><span style="width:6px;height:6px;border-radius:50%;background:{dot};display:inline-block"></span>{c}</label>'
+            checkbox_html += f'<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;font-size:12px;cursor:pointer;color:#e2e8f0"><input type="checkbox" class="case-cb grp-{grp}" value="{c}"><span style="width:6px;height:6px;border-radius:50%;background:{dot};display:inline-block"></span>{c}</label>'
         checkbox_html += '</div>'
 
     recent_rows = ""
