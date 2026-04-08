@@ -18,6 +18,7 @@ import threading
 import time
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
 from history import read_history, save_dashboard, append_result
@@ -802,6 +803,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"Unauthorized")
             return
+        try:
+            self._route_request()
+        except Exception as e:
+            try:
+                self._respond(500, json.dumps({"error": str(e)}), "application/json")
+            except Exception:
+                pass
+
+    def _route_request(self):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
@@ -989,8 +999,10 @@ def main():
         DashboardHandler.AUTH = args.auth
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    server = HTTPServer((args.host, args.port), DashboardHandler)
-    server.timeout = 1  # Windows Ctrl+C 대응
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedHTTPServer((args.host, args.port), DashboardHandler)
     print(f"pim-check dashboard: http://{args.host}:{args.port}")
     print("Ctrl+C to stop")
 
@@ -998,15 +1010,13 @@ def main():
     def _shutdown(sig, frame):
         print("\nShutting down.")
         _auto_state["running"] = False
-        server.server_close()
-        os._exit(0)
+        server.shutdown()
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        while True:
-            server.handle_request()
+        server.serve_forever()
     except KeyboardInterrupt:
         _shutdown(None, None)
 

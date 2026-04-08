@@ -59,7 +59,7 @@ class TestDashboardHandlerAPI(unittest.TestCase):
 
         handler._respond = fake_respond
 
-        DashboardHandler.do_GET(handler)
+        DashboardHandler._route_request(handler)
 
         body = wfile.getvalue().decode("utf-8")
         return (getattr(handler, "_status_code", 0), body)
@@ -108,7 +108,7 @@ class TestRunSelectedAPI(unittest.TestCase):
             wfile.write(body.encode("utf-8"))
 
         handler._respond = fake_respond
-        DashboardHandler.do_GET(handler)
+        DashboardHandler._route_request(handler)
         body = wfile.getvalue().decode("utf-8")
         return (getattr(handler, "_status_code", 0), body)
 
