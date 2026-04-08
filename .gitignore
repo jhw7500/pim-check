@@ -7,3 +7,10 @@ reports/
 *.egg-info/
 dist/
 build/
+
+# Tool directories
+.bkit/
+.omc/
+.serena/
+.vscode/
+.context/
