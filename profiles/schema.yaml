@@ -118,8 +118,8 @@ expectations:
       # ord_vcm 조합은 CPU 무관
   thermal:
     warn_temp_c:
-      # 720p는 thermal 체크 생략 (기존 수동 케이스에도 없음)
-      "fhd+*": 82
+      # shutdown=95°C 기준, warn=88°C
+      "fhd+*": 88
   cam_state:
     dir: /tmp/cam_state
     expected_state: healthy

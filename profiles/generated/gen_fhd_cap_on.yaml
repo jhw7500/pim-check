@@ -10,7 +10,7 @@ setup:
   stabilize_sec: 30
 checks:
   thermal:
-    warn_temp_c: 82
+    warn_temp_c: 88
   cam_state:
     dir: /tmp/cam_state
     expected_state: healthy

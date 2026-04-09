@@ -39,8 +39,8 @@ checks:
     gst_range: [0, 100]
 
   thermal:
-    max_temp_c: 85
-    warn_temp_c: 80
+    max_temp_c: 93
+    warn_temp_c: 88
 
   jq:
     max_forks_per_sample: 2
