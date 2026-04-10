@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 from ssh import SshClient, SshTimeoutError, SshConnectionError
 

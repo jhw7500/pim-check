@@ -4,12 +4,9 @@ tests/test_config.py - config.py 단위 테스트
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import shutil
 import unittest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import deep_merge, load_profile
 

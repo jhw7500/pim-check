@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-import sys
-import os
 import unittest
-from unittest.mock import patch, MagicMock
-
-# 상위 디렉토리를 sys.path에 추가
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from unittest.mock import patch
 
 import pim_check
 

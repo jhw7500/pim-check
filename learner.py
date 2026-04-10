@@ -3,7 +3,6 @@ learner.py - 타겟 현재 상태를 수집하여 YAML 케이스 템플릿 생�
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 
@@ -57,7 +56,8 @@ def learn_baseline(ssh, name: str | None = None) -> str:
         temp_c = int(temp_raw) / 1000 if temp_raw else 0
         warn_temp = min(85, int(temp_c) + 5)
         max_temp = min(90, int(temp_c) + 10)
-    except ValueError:
+    except (ValueError, TypeError):
+        temp_c = 0
         warn_temp, max_temp = 80, 85
 
     # === 프로세스 목록 ===
@@ -91,7 +91,7 @@ def learn_baseline(ssh, name: str | None = None) -> str:
 
     lines.append("  cpu:")
     lines.append(f"    gst_range: [{gst_min}, {gst_max}]")
-    lines.append(f"    bg_check_max_pct: 3.0")
+    lines.append("    bg_check_max_pct: 3.0")
     lines.append("")
 
     lines.append("  cam_state:")

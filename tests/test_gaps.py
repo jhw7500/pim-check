@@ -7,9 +7,6 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from config import load_profile
 from engine import Engine
 from checks.custom import CustomCommandCheck
@@ -178,7 +175,7 @@ class TestFullCaseFlow(unittest.TestCase):
 
         ssh_inst.run.side_effect = smart_mock
 
-        ret = pim_check.run_case("fhd_4ch", "192.168.0.5", None, None, 0)
+        pim_check.run_case("fhd_4ch", "192.168.0.5", None, None, 0)
         calls = [str(c) for c in ssh_inst.run.call_args_list]
         self.assertTrue(any("cp " in c and "edgeconf" in c for c in calls))
 

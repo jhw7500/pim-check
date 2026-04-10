@@ -11,7 +11,6 @@ from unittest.mock import MagicMock
 from config import load_profile
 from checks.custom import CustomCommandCheck
 from checks.process import ProcessCheck
-from checks.cam_state import CamStateCheck
 
 PROFILES_DIR = os.path.join(os.path.dirname(__file__), "..", "profiles")
 

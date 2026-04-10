@@ -2,12 +2,8 @@ from __future__ import annotations
 """
 tests/test_setup.py - SetupManager 단위 테스트
 """
-import sys
-import os
 import unittest
-from unittest.mock import patch, MagicMock, call
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from unittest.mock import patch, MagicMock
 
 from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP
 

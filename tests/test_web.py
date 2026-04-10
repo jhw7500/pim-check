@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from io import BytesIO
-from http.server import HTTPServer
 
 from web import DashboardHandler, _build_dashboard_html, _list_cases
 

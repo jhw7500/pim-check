@@ -1,13 +1,9 @@
 """
 tests/test_ssh.py - SshClient 단위 테스트
 """
-import sys
-import os
 import unittest
 from unittest.mock import patch, MagicMock
 import subprocess
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ssh import SshClient, SshTimeoutError, SshConnectionError
 

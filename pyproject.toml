@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 windows = ["paramiko>=2.0"]
 all = ["paramiko>=2.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
 
 [project.scripts]
 pim-check = "pim_check:main"
@@ -22,3 +23,35 @@ pim-check-web = "web:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "unit: 단위 테스트",
+    "integration: 통합 테스트 (여러 모듈 연동)",
+    "simulation: 장애 시뮬레이션 테스트",
+]
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "runner_loop.py",
+    "web.py",
+    "pim_check.py",
+    "color.py",
+    "stream.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "if __name__",
+    "pragma: no cover",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501", "E402"]

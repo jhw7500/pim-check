@@ -7,7 +7,6 @@ runner_loop.py — Docker 컨테이너용 정기 실행 루프
 from __future__ import annotations
 
 import os
-import sys
 import time
 
 from pim_check import run_case, list_cases

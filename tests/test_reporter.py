@@ -3,11 +3,7 @@ tests/test_reporter.py - reporter.py 단위 테스트
 """
 from __future__ import annotations
 
-import os
-import sys
 import unittest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from reporter import Reporter
 

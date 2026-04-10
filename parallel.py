@@ -13,7 +13,6 @@ import yaml
 
 from config import load_profile, deep_merge
 from engine import Engine
-from reporter import Reporter
 from setup import SetupManager
 from ssh import SshClient
 

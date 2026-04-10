@@ -10,7 +10,7 @@ from config import load_profile
 from engine import Engine
 from reporter import Reporter
 from setup import SetupManager
-from ssh import SshClient, SshConnectionError
+from ssh import SshClient
 
 PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
 

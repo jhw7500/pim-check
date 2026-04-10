@@ -66,7 +66,7 @@ class Engine:
                            poll_interval: int = DEFAULT_SHUTDOWN_POLL,
                            stabilize_sec: int = 30) -> bool:
         """타겟 복귀를 대기한다. 복귀하면 True, 타임아웃이면 False."""
-        print(f"Target unreachable — possible thermal shutdown")
+        print("Target unreachable — possible thermal shutdown")
         print(f"Waiting up to {timeout}s for recovery (polling every {poll_interval}s)...")
 
         elapsed = 0

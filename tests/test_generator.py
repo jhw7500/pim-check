@@ -12,7 +12,6 @@ from generator import (
     build_case,
     generate_combinations,
     generate_cases,
-    load_schema,
     resolve_rule,
 )
 

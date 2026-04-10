@@ -24,7 +24,6 @@ from urllib.parse import urlparse, parse_qs
 from history import read_history, save_dashboard, append_result
 from config import load_profile
 from engine import Engine
-from reporter import Reporter
 from setup import SetupManager
 from ssh import SshClient
 
