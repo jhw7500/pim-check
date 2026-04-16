@@ -58,7 +58,7 @@ def _list_cases(include_generated: bool = True) -> list[str]:
 
 
 def _run_test(case_name: str | None, host: str, user: str = "root",
-              password: str = "root") -> dict:
+              password: str = "root", duration: int | None = None) -> dict:
     """테스트를 실행하고 결과 dict를 반환한다."""
     _run_state["active"] = True
     _run_state["case"] = case_name
@@ -69,6 +69,8 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
         profile["target"]["host"] = host
         profile["target"]["user"] = user
         profile["target"]["password"] = password
+        if duration is not None:
+            profile["monitor"]["duration_sec"] = duration
 
         h = profile["target"].get("host", host)
         ssh = SshClient(h, user, password)
@@ -822,19 +824,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/run":
             case = params.get("case", [None])[0]
             host = params.get("host", ["192.168.0.5"])[0]
-            result = _run_test(case, host)
+            duration = params.get("duration", [None])[0]
+            duration_int = int(duration) if duration is not None else None
+            result = _run_test(case, host, duration=duration_int)
             self._respond(200, json.dumps(result), "application/json")
 
         elif path == "/api/run-selected":
             cases_str = params.get("cases", [""])[0]
             host = params.get("host", ["192.168.0.5"])[0]
+            duration = params.get("duration", [None])[0]
+            duration_int = int(duration) if duration is not None else None
             if not cases_str:
                 self._respond(400, json.dumps({"error": "cases required"}), "application/json")
                 return
             case_list = [c.strip() for c in cases_str.split(",") if c.strip()]
             results = []
             for c in case_list:
-                r = _run_test(c, host)
+                r = _run_test(c, host, duration=duration_int)
                 results.append(r)
             self._respond(200, json.dumps({
                 "count": len(case_list),
