@@ -77,11 +77,14 @@ def build_case(combo: tuple, schema: dict, no_reboot: bool = False) -> tuple[dic
     combo_key_parts = []
     expects = {}
 
+    verify_commands = []
     for _axis_name, axis_combo in combo:
         edgeconf_changes.update(axis_combo["values"])
         combo_key_parts.append(axis_combo["name"])
         if "expect" in axis_combo:
             expects.update(axis_combo["expect"])
+        if "verify" in axis_combo:
+            verify_commands.extend(axis_combo["verify"])
 
     combo_key = "+".join(combo_key_parts)
     name_parts = [c["name"] for _, c in combo]
@@ -131,6 +134,8 @@ def build_case(combo: tuple, schema: dict, no_reboot: bool = False) -> tuple[dic
         # no_reboot 케이스는 edgeconf_changes 대신 custom_commands로 검증
         case["monitor"] = {"duration_sec": 0}
         case["checks"]["custom_commands"] = _build_config_checks(edgeconf_changes)
+        if verify_commands:
+            case["checks"]["custom_commands"].extend(verify_commands)
     else:
         case = {
             "name": f"[auto] {'_'.join(name_parts)}",
@@ -142,6 +147,10 @@ def build_case(combo: tuple, schema: dict, no_reboot: bool = False) -> tuple[dic
             },
             "checks": checks,
         }
+        if verify_commands:
+            if "custom_commands" not in case["checks"]:
+                case["checks"]["custom_commands"] = []
+            case["checks"]["custom_commands"].extend(verify_commands)
 
     return case, "_".join(name_parts)
 
