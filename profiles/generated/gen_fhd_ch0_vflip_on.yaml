@@ -16,11 +16,12 @@ checks:
     expected_state: healthy
     max_streak: 0
   custom_commands:
-  - name: edgeconf vflip 반영 확인
+  - name: edgeconf vflip_ch0 반영
     command: jq -r '.VHL_CAM.i2c2.ch0.vflip' /root/shared_v/edgeconf_pim.json
     expected: 'true'
-    on_fail: edgeconf vflip 미반영
-  - name: ISP ROTATION 레지스터 확인 (ch0, bit1=vflip)
-    command: i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '
+    on_fail: edgeconf vflip_ch0 미반영
+  - name: ch0 ROTATION 레지스터 확인 (vflip on, bit1)
+    command: (i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null || i2ctransfer
+      -f -y 2 w2@0x3c 0x10 0x0c r2 2>/dev/null) | tr -d ' '
     expected: 0x000x02
-    on_fail: ISP ROTATION 레지스터에 vflip on 미반영
+    on_fail: ch0 ISP ROTATION 레지스터에 vflip on 미반영

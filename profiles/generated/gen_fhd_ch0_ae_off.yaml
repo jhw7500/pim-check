@@ -16,11 +16,12 @@ checks:
     expected_state: healthy
     max_streak: 0
   custom_commands:
-  - name: edgeconf AE 반영 확인
+  - name: edgeconf ae_ch0 반영
     command: jq -r '.VHL_CAM.i2c2.ch0.ae_on' /root/shared_v/edgeconf_pim.json
     expected: 'false'
-    on_fail: edgeconf AE 미반영
-  - name: ISP AE_CTRL 레지스터 확인 (MANUAL=0x0290)
-    command: i2ctransfer -f -y 2 w2@0x11 0x50 0x02 r2 2>/dev/null | tr -d ' '
+    on_fail: edgeconf ae_ch0 미반영
+  - name: ch0 AE_CTRL 레지스터 확인 (MANUAL)
+    command: (i2ctransfer -f -y 2 w2@0x11 0x50 0x02 r2 2>/dev/null || i2ctransfer
+      -f -y 2 w2@0x3c 0x50 0x02 r2 2>/dev/null) | tr -d ' '
     expected: 0x020x90
-    on_fail: ISP AE_CTRL 레지스터에 MANUAL 미반영
+    on_fail: ch0 ISP AE_CTRL 레지스터에 MANUAL 미반영

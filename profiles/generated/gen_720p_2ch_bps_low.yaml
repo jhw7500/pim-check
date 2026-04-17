@@ -20,3 +20,12 @@ checks:
   recording:
     expected_channels: 2
     session_progress: 2/2
+  custom_commands:
+  - name: edgeconf bps high 반영
+    command: jq -r '.VHL_CAM.i2c2.ch0.bps[0]' /root/shared_v/edgeconf_pim.json
+    expected: '1024'
+    on_fail: edgeconf bps high 미반영
+  - name: edgeconf bps low 반영
+    command: jq -r '.VHL_CAM.i2c2.ch0.bps[1]' /root/shared_v/edgeconf_pim.json
+    expected: '512'
+    on_fail: edgeconf bps low 미반영
