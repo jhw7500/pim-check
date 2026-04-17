@@ -50,6 +50,7 @@ sources:
             values:
               ".VHL_CAM.fps": 30
 
+      # hflip은 ROTATION 레지스터(0x100c) bit0
       hflip:
         keys:
           ".VHL_CAM.i2c2.ch0.hflip": [true, false]
@@ -57,9 +58,19 @@ sources:
           - name: "hflip_off"
             values:
               ".VHL_CAM.i2c2.ch0.hflip": false
+            verify:
+              - name: "ISP ROTATION 레지스터 확인 (hflip off)"
+                command: "i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '"
+                expected: "0x000x00"
+                on_fail: "ISP ROTATION 레지스터에 hflip off 미반영"
           - name: "hflip_on"
             values:
               ".VHL_CAM.i2c2.ch0.hflip": true
+            verify:
+              - name: "ISP ROTATION 레지스터 확인 (hflip on, bit0)"
+                command: "i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '"
+                expected: "0x000x01"
+                on_fail: "ISP ROTATION 레지스터에 hflip on 미반영"
 
       capture:
         keys:
@@ -136,6 +147,9 @@ sources:
             values:
               ".VHL_CAM.i2c2.ch0.bps": [4096, 2048]
 
+      # vflip/hflip은 AP1302 ROTATION 레지스터(0x100c)로 병합 저장
+      # bit0=hflip, bit1=vflip → 0x0000=없음, 0x0001=hflip, 0x0002=vflip, 0x0003=양쪽
+      # ch0은 i2c-2 bus, dual mode일 때 주소 0x11
       vflip_ch0:
         keys:
           ".VHL_CAM.i2c2.ch0.vflip": [true, false]
@@ -144,19 +158,28 @@ sources:
             values:
               ".VHL_CAM.i2c2.ch0.vflip": false
             verify:
-              - name: "vflip 설정 반영 확인"
+              - name: "edgeconf vflip 반영 확인"
                 command: "jq -r '.VHL_CAM.i2c2.ch0.vflip' /root/shared_v/edgeconf_pim.json"
                 expected: "false"
-                on_fail: "vflip 설정 미반영"
+                on_fail: "edgeconf vflip 미반영"
+              - name: "ISP ROTATION 레지스터 확인 (ch0)"
+                command: "i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '"
+                expected: "0x000x00"
+                on_fail: "ISP ROTATION 레지스터에 vflip off 미반영"
           - name: "vflip_on"
             values:
               ".VHL_CAM.i2c2.ch0.vflip": true
             verify:
-              - name: "vflip 설정 반영 확인"
+              - name: "edgeconf vflip 반영 확인"
                 command: "jq -r '.VHL_CAM.i2c2.ch0.vflip' /root/shared_v/edgeconf_pim.json"
                 expected: "true"
-                on_fail: "vflip 설정 미반영"
+                on_fail: "edgeconf vflip 미반영"
+              - name: "ISP ROTATION 레지스터 확인 (ch0, bit1=vflip)"
+                command: "i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '"
+                expected: "0x000x02"
+                on_fail: "ISP ROTATION 레지스터에 vflip on 미반영"
 
+      # AE_CTRL 레지스터 (0x5002): AUTO=0x0299, MANUAL=0x0290
       ae_ch0:
         keys:
           ".VHL_CAM.i2c2.ch0.ae_on": [true, false]
@@ -165,18 +188,26 @@ sources:
             values:
               ".VHL_CAM.i2c2.ch0.ae_on": true
             verify:
-              - name: "AE 설정 반영 확인"
+              - name: "edgeconf AE 반영 확인"
                 command: "jq -r '.VHL_CAM.i2c2.ch0.ae_on' /root/shared_v/edgeconf_pim.json"
                 expected: "true"
-                on_fail: "AE 설정 미반영"
+                on_fail: "edgeconf AE 미반영"
+              - name: "ISP AE_CTRL 레지스터 확인 (AUTO=0x0299)"
+                command: "i2ctransfer -f -y 2 w2@0x11 0x50 0x02 r2 2>/dev/null | tr -d ' '"
+                expected: "0x020x99"
+                on_fail: "ISP AE_CTRL 레지스터에 AUTO 미반영"
           - name: "ae_off"
             values:
               ".VHL_CAM.i2c2.ch0.ae_on": false
             verify:
-              - name: "AE 설정 반영 확인"
+              - name: "edgeconf AE 반영 확인"
                 command: "jq -r '.VHL_CAM.i2c2.ch0.ae_on' /root/shared_v/edgeconf_pim.json"
                 expected: "false"
-                on_fail: "AE 설정 미반영"
+                on_fail: "edgeconf AE 미반영"
+              - name: "ISP AE_CTRL 레지스터 확인 (MANUAL=0x0290)"
+                command: "i2ctransfer -f -y 2 w2@0x11 0x50 0x02 r2 2>/dev/null | tr -d ' '"
+                expected: "0x020x90"
+                on_fail: "ISP AE_CTRL 레지스터에 MANUAL 미반영"
 
       channel_combo:
         keys:

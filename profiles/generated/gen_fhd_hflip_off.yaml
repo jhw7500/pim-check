@@ -15,3 +15,8 @@ checks:
     dir: /tmp/cam_state
     expected_state: healthy
     max_streak: 0
+  custom_commands:
+  - name: ISP ROTATION 레지스터 확인 (hflip off)
+    command: i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '
+    expected: 0x000x00
+    on_fail: ISP ROTATION 레지스터에 hflip off 미반영
