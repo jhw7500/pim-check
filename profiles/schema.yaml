@@ -437,6 +437,132 @@ sources:
                 expected: "0x020x90"
                 on_fail: "ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영"
 
+      # AWB_CTRL 레지스터 (0x5100): auto=0x115f, off=0x1150
+      # horizon=0x1151, a=0x1152, cwf=0x1153, d50=0x1154, d65=0x1155, d75=0x1156, temp=0x1157, measure=0x1158
+      awb_ch0:
+        keys:
+          ".VHL_CAM.i2c2.ch0.awb": ["auto", "off"]
+        combinations:
+          - name: "awb_auto"
+            values:
+              ".VHL_CAM.i2c2.ch0.enable": true
+              ".VHL_CAM.i2c2.ch0.awb": "auto"
+            verify:
+              - name: "edgeconf awb_ch0 반영"
+                command: "jq -r '.VHL_CAM.i2c2.ch0.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "auto"
+                on_fail: "edgeconf awb_ch0 미반영"
+              - name: "ch0 AWB_CTRL 레지스터 확인 (AUTO)"
+                command: "(i2ctransfer -f -y 2 w2@0x11 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 2 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x5f"
+                on_fail: "ch0 ISP AWB_CTRL 레지스터에 AUTO 미반영"
+          - name: "awb_off"
+            values:
+              ".VHL_CAM.i2c2.ch0.enable": true
+              ".VHL_CAM.i2c2.ch0.awb": "off"
+            verify:
+              - name: "edgeconf awb_ch0 반영"
+                command: "jq -r '.VHL_CAM.i2c2.ch0.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "off"
+                on_fail: "edgeconf awb_ch0 미반영"
+              - name: "ch0 AWB_CTRL 레지스터 확인 (OFF)"
+                command: "(i2ctransfer -f -y 2 w2@0x11 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 2 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x50"
+                on_fail: "ch0 ISP AWB_CTRL 레지스터에 OFF 미반영"
+
+      awb_ch1:
+        keys:
+          ".VHL_CAM.i2c2.ch1.awb": ["auto", "off"]
+        combinations:
+          - name: "awb_auto"
+            values:
+              ".VHL_CAM.i2c2.ch1.enable": true
+              ".VHL_CAM.i2c2.ch1.awb": "auto"
+            verify:
+              - name: "edgeconf awb_ch1 반영"
+                command: "jq -r '.VHL_CAM.i2c2.ch1.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "auto"
+                on_fail: "edgeconf awb_ch1 미반영"
+              - name: "ch1 AWB_CTRL 레지스터 확인 (AUTO)"
+                command: "(i2ctransfer -f -y 2 w2@0x12 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 2 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x5f"
+                on_fail: "ch1 ISP AWB_CTRL 레지스터에 AUTO 미반영"
+          - name: "awb_off"
+            values:
+              ".VHL_CAM.i2c2.ch1.enable": true
+              ".VHL_CAM.i2c2.ch1.awb": "off"
+            verify:
+              - name: "edgeconf awb_ch1 반영"
+                command: "jq -r '.VHL_CAM.i2c2.ch1.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "off"
+                on_fail: "edgeconf awb_ch1 미반영"
+              - name: "ch1 AWB_CTRL 레지스터 확인 (OFF)"
+                command: "(i2ctransfer -f -y 2 w2@0x12 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 2 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x50"
+                on_fail: "ch1 ISP AWB_CTRL 레지스터에 OFF 미반영"
+
+      awb_ch2:
+        keys:
+          ".VHL_CAM.i2c1.ch2.awb": ["auto", "off"]
+        combinations:
+          - name: "awb_auto"
+            values:
+              ".VHL_CAM.i2c1.ch2.enable": true
+              ".VHL_CAM.i2c1.ch2.awb": "auto"
+            verify:
+              - name: "edgeconf awb_ch2 반영"
+                command: "jq -r '.VHL_CAM.i2c1.ch2.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "auto"
+                on_fail: "edgeconf awb_ch2 미반영"
+              - name: "ch2 AWB_CTRL 레지스터 확인 (AUTO)"
+                command: "(i2ctransfer -f -y 1 w2@0x11 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x5f"
+                on_fail: "ch2 ISP AWB_CTRL 레지스터에 AUTO 미반영"
+          - name: "awb_off"
+            values:
+              ".VHL_CAM.i2c1.ch2.enable": true
+              ".VHL_CAM.i2c1.ch2.awb": "off"
+            verify:
+              - name: "edgeconf awb_ch2 반영"
+                command: "jq -r '.VHL_CAM.i2c1.ch2.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "off"
+                on_fail: "edgeconf awb_ch2 미반영"
+              - name: "ch2 AWB_CTRL 레지스터 확인 (OFF)"
+                command: "(i2ctransfer -f -y 1 w2@0x11 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x50"
+                on_fail: "ch2 ISP AWB_CTRL 레지스터에 OFF 미반영"
+
+      awb_ch3:
+        keys:
+          ".VHL_CAM.i2c1.ch3.awb": ["auto", "off"]
+        combinations:
+          - name: "awb_auto"
+            values:
+              ".VHL_CAM.i2c1.ch3.enable": true
+              ".VHL_CAM.i2c1.ch3.awb": "auto"
+            verify:
+              - name: "edgeconf awb_ch3 반영"
+                command: "jq -r '.VHL_CAM.i2c1.ch3.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "auto"
+                on_fail: "edgeconf awb_ch3 미반영"
+              - name: "ch3 AWB_CTRL 레지스터 확인 (AUTO)"
+                command: "(i2ctransfer -f -y 1 w2@0x12 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x5f"
+                on_fail: "ch3 ISP AWB_CTRL 레지스터에 AUTO 미반영"
+          - name: "awb_off"
+            values:
+              ".VHL_CAM.i2c1.ch3.enable": true
+              ".VHL_CAM.i2c1.ch3.awb": "off"
+            verify:
+              - name: "edgeconf awb_ch3 반영"
+                command: "jq -r '.VHL_CAM.i2c1.ch3.awb' /root/shared_v/edgeconf_pim.json"
+                expected: "off"
+                on_fail: "edgeconf awb_ch3 미반영"
+              - name: "ch3 AWB_CTRL 레지스터 확인 (OFF)"
+                command: "(i2ctransfer -f -y 1 w2@0x12 0x51 0x00 r2 2>/dev/null || i2ctransfer -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '"
+                expected: "0x110x50"
+                on_fail: "ch3 ISP AWB_CTRL 레지스터에 OFF 미반영"
+
       channel_combo:
         keys:
           ".VHL_CAM.i2c2.ch0.enable": [true, false]
@@ -684,6 +810,30 @@ generation:
       cross: [resolution, ae_ch3]
       output_dir: profiles/generated
       filename_pattern: "gen_{resolution}_ch3_{ae_ch3}.yaml"
+
+    - name: awb_variants_ch0
+      source: edgeconf
+      cross: [resolution, awb_ch0]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_ch0_{awb_ch0}.yaml"
+
+    - name: awb_variants_ch1
+      source: edgeconf
+      cross: [resolution, awb_ch1]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_ch1_{awb_ch1}.yaml"
+
+    - name: awb_variants_ch2
+      source: edgeconf
+      cross: [resolution, awb_ch2]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_ch2_{awb_ch2}.yaml"
+
+    - name: awb_variants_ch3
+      source: edgeconf
+      cross: [resolution, awb_ch3]
+      output_dir: profiles/generated
+      filename_pattern: "gen_{resolution}_ch3_{awb_ch3}.yaml"
 
     - name: channel_combo
       source: edgeconf
