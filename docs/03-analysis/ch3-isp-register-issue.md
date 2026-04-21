@@ -1,8 +1,9 @@
 # CH3 단독 활성화 시 ISP 레지스터 반영 누락 이슈
 
 **발견일**: 2026-04-20
+**해결일**: 2026-04-21
 **영향 케이스**: 4건 (gen_720p_ch3_vflip_on, gen_720p_ch3_ae_off, gen_fhd_ch3_vflip_on, gen_fhd_ch3_ae_off)
-**상태**: 드라이버/gstApp 측 이슈 추정 — 추가 조사 필요
+**상태**: ✅ **RESOLVED** — 드라이버/gstApp 수정으로 해결 (Resolution 섹션 참조)
 
 ---
 
@@ -168,7 +169,7 @@ i2ctransfer -f -y 1 w2@0x3c 0x10 0x0c r2
 
 ---
 
-## 영향도
+## 영향도 (수정 전)
 
 | 시나리오 | 영향 |
 |----------|------|
@@ -176,6 +177,55 @@ i2ctransfer -f -y 1 w2@0x3c 0x10 0x0c r2
 | ch3 단독 운영 | **vflip/ae 설정 사용 불가** |
 | ch2+ch3 조합 | 미검증 (추정: 정상) |
 | 4ch 모두 활성 | 미검증 (추정: 정상) |
+
+---
+
+## Resolution (2026-04-21)
+
+### 수정 내용
+드라이버(`max9296.c`) 및 gstApp 코드 레벨 수정. 추가로 **AWB 설정(awb_ctrl 레지스터 0x5100)** 도입.
+
+### 검증 방법
+`run_comprehensive_verify.py` — **96 시나리오** 완전 검증:
+- **Phase 2 (Quad mode)**: 4채널 모두 활성 + 각 채널의 4가지 설정(vflip/hflip/ae/awb) 개별 토글 × 2해상도 = 32 tests
+- **Phase 3 (Dual mode)**: 4 dual 조합 × 2채널 × 4설정 × 2해상도 = 64 tests
+  - `samebus_i2c2` (ch0+ch1), `samebus_i2c1` (ch2+ch3): dual mode 0x11/0x12
+  - `crossbus_lo` (ch0+ch2), `crossbus_hi` (ch1+ch3): 각 버스 single mode 0x3c
+
+### 결과
+**96/96 PASS (100%)** — 총 2시간 15분 실행
+
+| 영역 | PASS |
+|------|------|
+| Phase 2 Quad | 32/32 |
+| Phase 3 samebus_i2c2 | 16/16 |
+| Phase 3 samebus_i2c1 | 16/16 |
+| Phase 3 crossbus_lo | 16/16 |
+| Phase 3 crossbus_hi | 16/16 |
+
+**채널별**: ch0/ch1/ch2/ch3 각 24/24 — 모든 채널이 모든 모드에서 정상 동작  
+**설정별**: vflip/hflip/ae_on/awb 각 24/24 — 모든 설정이 정확히 ISP 반영
+
+### 검증된 신규 기능 (AWB)
+| awb 값 | AWB_CTRL (0x5100) |
+|--------|--------------------|
+| auto | 0x115f |
+| off | 0x1150 |
+| horizon | 0x1151 |
+| a | 0x1152 |
+| cwf | 0x1153 |
+| d50 | 0x1154 |
+| d65 | 0x1155 |
+| d75 | 0x1156 |
+| temp | 0x1157 |
+| measure | 0x1158 |
+
+테스트에서는 `auto ↔ off` 전환(0x115f / 0x1150)만 검증 — 확장 필요 시 schema에 AWB 모드 축 추가 권장.
+
+### 관련 산출물
+- 실행 스크립트: `/home/jhw/ai/opencode/projects/pim-check/run_comprehensive_verify.py`
+- 결과 데이터: `/home/jhw/ai/opencode/projects/pim-check/comprehensive_results.json`
+- 실행 로그: `/home/jhw/ai/opencode/projects/pim-check/comprehensive.log`
 
 ---
 

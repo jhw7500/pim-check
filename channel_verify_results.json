@@ -1,0 +1,2602 @@
+[
+  {
+    "case": "gen_720p_ch0_vflip_off",
+    "started": "2026-04-17T12:20:35.690250",
+    "rc": 0,
+    "elapsed_sec": 260.3,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:23:16) — Case: gen_720p_ch0_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (19193ms)",
+      "[+] cam_state: PASS (2299ms)",
+      "[+] legacy_files: PASS (949ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (655ms)",
+      "[+] jq_forks: PASS (447ms)",
+      "[+] logs: PASS (355ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (354ms)",
+      "[+] custom_commands: PASS (1024ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch0_vflip_off_20260417_122316.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:23:16.137571",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch0_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch0_vflip_on",
+    "started": "2026-04-17T12:24:55.998058",
+    "rc": 0,
+    "elapsed_sec": 43.3,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:25:39) — Case: gen_720p_ch0_vflip_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (19249ms)",
+      "[+] cam_state: PASS (6642ms)",
+      "[+] legacy_files: PASS (1606ms)",
+      "[+] thermal: PASS (726ms)",
+      "[+] jq_forks: PASS (428ms)",
+      "[+] logs: PASS (450ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (326ms)",
+      "[+] custom_commands: PASS (1408ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch0_vflip_on_20260417_122539.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:25:39.281743",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch0_vflip_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch1_vflip_off",
+    "started": "2026-04-17T12:25:39.288888",
+    "rc": 0,
+    "elapsed_sec": 17.4,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:25:56) — Case: gen_720p_ch1_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (5111ms)",
+      "[+] cam_state: PASS (2265ms)",
+      "[+] legacy_files: PASS (993ms)",
+      "[+] thermal: PASS (972ms)",
+      "[+] jq_forks: PASS (803ms)",
+      "[+] logs: PASS (810ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (645ms)",
+      "[+] custom_commands: PASS (2058ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch1_vflip_off_20260417_122556.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:25:56.673331",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch1_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch1_vflip_on",
+    "started": "2026-04-17T12:25:56.685983",
+    "rc": 0,
+    "elapsed_sec": 262.8,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:28:39) — Case: gen_720p_ch1_vflip_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (23492ms)",
+      "[+] cam_state: PASS (8229ms)",
+      "[+] legacy_files: PASS (2689ms)",
+      "[+] thermal: PASS (1977ms)",
+      "[+] jq_forks: PASS (1666ms)",
+      "[+] logs: PASS (1718ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1126ms)",
+      "[+] custom_commands: PASS (2313ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch1_vflip_on_20260417_122839.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:28:39.449637",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch1_vflip_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch2_vflip_off",
+    "started": "2026-04-17T12:30:19.455187",
+    "rc": 0,
+    "elapsed_sec": 53.7,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:31:13) — Case: gen_720p_ch2_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (20887ms)",
+      "[+] cam_state: PASS (9827ms)",
+      "[+] legacy_files: PASS (4283ms)",
+      "[+] thermal: PASS (2170ms)",
+      "[+] jq_forks: PASS (1227ms)",
+      "[+] logs: PASS (2619ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1451ms)",
+      "[+] custom_commands: PASS (2376ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch2_vflip_off_20260417_123113.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:31:13.195037",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch2_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch2_vflip_on",
+    "started": "2026-04-17T12:31:13.203728",
+    "rc": 1,
+    "elapsed_sec": 268.6,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:34:01) — Case: gen_720p_ch2_vflip_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (21235ms)",
+      "[+] cam_state: PASS (8803ms)",
+      "[+] legacy_files: PASS (3542ms)",
+      "[+] thermal: PASS (1811ms)",
+      "[+] jq_forks: PASS (1152ms)",
+      "[+] logs: PASS (1693ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1051ms)",
+      "[X] custom_commands: FAIL — ch2 ROTATION 레지스터 확인 (vflip on, bit1): ch2 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00) (2555ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch2_vflip_on_20260417_123401.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:34:01.263314",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch2_vflip_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch2 ROTATION 레지스터 확인 (vflip on, bit1): ch2 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch3_vflip_off",
+    "started": "2026-04-17T12:35:41.811844",
+    "rc": 0,
+    "elapsed_sec": 16.1,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:35:57) — Case: gen_720p_ch3_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (4528ms)",
+      "[+] cam_state: PASS (2236ms)",
+      "[+] legacy_files: PASS (961ms)",
+      "[+] thermal: PASS (701ms)",
+      "[+] jq_forks: PASS (448ms)",
+      "[+] logs: PASS (355ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (352ms)",
+      "[+] custom_commands: PASS (1026ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch3_vflip_off_20260417_123557.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:35:57.899332",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch3_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch3_vflip_on",
+    "started": "2026-04-17T12:35:57.908515",
+    "rc": 1,
+    "elapsed_sec": 257.8,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:38:36) — Case: gen_720p_ch3_vflip_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (13655ms)",
+      "[+] cam_state: PASS (13811ms)",
+      "[+] legacy_files: PASS (3286ms)",
+      "[+] thermal: PASS (2888ms)",
+      "[+] jq_forks: PASS (1270ms)",
+      "[+] logs: PASS (1144ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1329ms)",
+      "[X] custom_commands: FAIL — ch3 ROTATION 레지스터 확인 (vflip on, bit1): ch3 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00) (3429ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch3_vflip_on_20260417_123836.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:38:36.539096",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch3_vflip_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 ROTATION 레지스터 확인 (vflip on, bit1): ch3 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch0_ae_on",
+    "started": "2026-04-17T12:40:15.697681",
+    "rc": 0,
+    "elapsed_sec": 21.0,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:40:36) — Case: gen_720p_ch0_ae_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (6417ms)",
+      "[+] cam_state: PASS (2304ms)",
+      "[+] legacy_files: PASS (960ms)",
+      "[+] thermal: PASS (642ms)",
+      "[+] jq_forks: PASS (457ms)",
+      "[+] logs: PASS (367ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (334ms)",
+      "[+] custom_commands: PASS (1239ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch0_ae_on_20260417_124036.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:40:36.733536",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch0_ae_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch0_ae_off",
+    "started": "2026-04-17T12:40:36.747948",
+    "rc": 0,
+    "elapsed_sec": 258.7,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:43:15) — Case: gen_720p_ch0_ae_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (13636ms)",
+      "[+] cam_state: PASS (10266ms)",
+      "[+] legacy_files: PASS (3673ms)",
+      "[+] thermal: PASS (2590ms)",
+      "[+] jq_forks: PASS (1185ms)",
+      "[+] logs: PASS (779ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (778ms)",
+      "[+] custom_commands: PASS (2742ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch0_ae_off_20260417_124315.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:43:15.430978",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch0_ae_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch1_ae_on",
+    "started": "2026-04-17T12:44:55.496087",
+    "rc": 0,
+    "elapsed_sec": 41.7,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:45:37) — Case: gen_720p_ch1_ae_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (21741ms)",
+      "[+] cam_state: PASS (7035ms)",
+      "[+] legacy_files: PASS (1029ms)",
+      "[+] thermal: PASS (630ms)",
+      "[+] jq_forks: PASS (467ms)",
+      "[+] logs: PASS (368ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (346ms)",
+      "[+] custom_commands: PASS (1014ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch1_ae_on_20260417_124537.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:45:37.215794",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch1_ae_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch1_ae_off",
+    "started": "2026-04-17T12:45:37.228032",
+    "rc": 0,
+    "elapsed_sec": 247.9,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:48:07) — Case: gen_720p_ch1_ae_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (22951ms)",
+      "[+] cam_state: PASS (7736ms)",
+      "[+] legacy_files: PASS (2502ms)",
+      "[+] thermal: PASS (1699ms)",
+      "[+] jq_forks: PASS (472ms)",
+      "[+] logs: PASS (385ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (376ms)",
+      "[+] custom_commands: PASS (1153ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch1_ae_off_20260417_124807.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:48:07.982574",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch1_ae_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch2_ae_on",
+    "started": "2026-04-17T12:49:45.089451",
+    "rc": 1,
+    "elapsed_sec": 55.2,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:50:40) — Case: gen_720p_ch2_ae_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (23957ms)",
+      "[+] cam_state: PASS (8938ms)",
+      "[+] legacy_files: PASS (3432ms)",
+      "[+] thermal: PASS (2998ms)",
+      "[+] jq_forks: PASS (886ms)",
+      "[+] logs: PASS (1375ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1210ms)",
+      "[X] custom_commands: FAIL — ch2 AE_CTRL 레지스터 확인 (AUTO): ch2 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac) (2405ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch2_ae_on_20260417_125040.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:50:40.307983",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch2_ae_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch2 AE_CTRL 레지스터 확인 (AUTO): ch2 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch2_ae_off",
+    "started": "2026-04-17T12:50:40.331675",
+    "rc": 1,
+    "elapsed_sec": 259.3,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:53:22) — Case: gen_720p_ch2_ae_off ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (19839ms)",
+      "[+] cam_state: PASS (4788ms)",
+      "[+] legacy_files: PASS (1344ms)",
+      "[+] thermal: PASS (687ms)",
+      "[+] jq_forks: PASS (462ms)",
+      "[+] logs: PASS (357ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (344ms)",
+      "[X] custom_commands: FAIL — ch2 AE_CTRL 레지스터 확인 (MANUAL): ch2 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac) (1028ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch2_ae_off_20260417_125322.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:53:22.154458",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch2_ae_off",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch2 AE_CTRL 레지스터 확인 (MANUAL): ch2 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch3_ae_on",
+    "started": "2026-04-17T12:54:59.662271",
+    "rc": 1,
+    "elapsed_sec": 42.1,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Connecting to 192.168.0.5...",
+      "Config already matches target — skipping setup/reboot",
+      "=== pim-check Report (2026-04-17 12:55:41) — Case: gen_720p_ch3_ae_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (21405ms)",
+      "[+] cam_state: PASS (5911ms)",
+      "[+] legacy_files: PASS (984ms)",
+      "[+] thermal: PASS (646ms)",
+      "[+] jq_forks: PASS (451ms)",
+      "[+] logs: PASS (366ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (367ms)",
+      "[X] custom_commands: FAIL — ch3 AE_CTRL 레지스터 확인 (AUTO): ch3 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac) (1022ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch3_ae_on_20260417_125541.json"
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:55:41.750528",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch3_ae_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 AE_CTRL 레지스터 확인 (AUTO): ch3 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch3_ae_off",
+    "started": "2026-04-17T12:55:41.770320",
+    "rc": 1,
+    "elapsed_sec": 264.5,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 12:58:23) — Case: gen_720p_ch3_ae_off ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (24225ms)",
+      "[+] cam_state: PASS (8304ms)",
+      "[+] legacy_files: PASS (3992ms)",
+      "[+] thermal: PASS (2949ms)",
+      "[+] jq_forks: PASS (1001ms)",
+      "[+] logs: PASS (2216ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (2150ms)",
+      "[X] custom_commands: FAIL — ch3 AE_CTRL 레지스터 확인 (MANUAL): ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac) (2761ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_720p_ch3_ae_off_20260417_125823.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T12:58:23.212795",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch3_ae_off",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 AE_CTRL 레지스터 확인 (MANUAL): ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch0_vflip_off",
+    "started": "2026-04-17T13:00:06.295738",
+    "rc": 0,
+    "elapsed_sec": 384.7,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:04:52) — Case: gen_fhd_ch0_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (19487ms)",
+      "[+] cam_state: PASS (8808ms)",
+      "[+] legacy_files: PASS (3326ms)",
+      "[+] thermal: PASS (883ms)",
+      "[+] jq_forks: PASS (479ms)",
+      "[+] logs: PASS (403ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (359ms)",
+      "[+] custom_commands: PASS (1370ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch0_vflip_off_20260417_130452.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:04:52.561322",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch0_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch0_vflip_on",
+    "started": "2026-04-17T13:06:31.036410",
+    "rc": 0,
+    "elapsed_sec": 248.0,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:09:00) — Case: gen_fhd_ch0_vflip_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (21439ms)",
+      "[+] cam_state: PASS (5200ms)",
+      "[+] legacy_files: PASS (1028ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (693ms)",
+      "[+] jq_forks: PASS (493ms)",
+      "[+] logs: PASS (373ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (397ms)",
+      "[+] custom_commands: PASS (1044ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch0_vflip_on_20260417_130900.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:09:00.054904",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch0_vflip_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch1_vflip_off",
+    "started": "2026-04-17T13:10:39.042388",
+    "rc": 0,
+    "elapsed_sec": 271.5,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:13:26) — Case: gen_fhd_ch1_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (24803ms)",
+      "[+] cam_state: PASS (8957ms)",
+      "[+] legacy_files: PASS (1639ms)",
+      "[+] thermal: PASS (671ms)",
+      "[+] jq_forks: PASS (486ms)",
+      "[+] logs: PASS (385ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (386ms)",
+      "[+] custom_commands: PASS (1073ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch1_vflip_off_20260417_131326.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:13:26.935770",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch1_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch1_vflip_on",
+    "started": "2026-04-17T13:15:10.587053",
+    "rc": 1,
+    "elapsed_sec": 375.8,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "=== pim-check Report (2026-04-17 13:18:35) — Case: gen_fhd_ch1_vflip_on ===",
+      "",
+      "Result: FAIL (6/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[X] process: FAIL — SSH_ERROR: Command timed out after 10s: pgrep -x gstApp (29048ms)",
+      "[+] cam_state: PASS (8720ms)",
+      "[+] legacy_files: PASS (6334ms)",
+      "[X] thermal: FAIL — SSH_ERROR: Command timed out after 10s: cat /sys/devices/virtual/thermal/thermal_zone0/temp (10012ms)",
+      "[+] jq_forks: PASS (7642ms)",
+      "[+] logs: PASS (816ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1437ms)",
+      "[+] custom_commands: PASS (3997ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch1_vflip_on_20260417_131835.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "  waiting... (60/600s)",
+      "Target back online (after 120s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:18:35.951723",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch1_vflip_on",
+      "result": "FAIL",
+      "passed": 6,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": false,
+          "reason": "SSH_ERROR: Command timed out after 10s: pgrep -x gstApp"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": false,
+          "reason": "SSH_ERROR: Command timed out after 10s: cat /sys/devices/virtual/thermal/thermal_zone0/temp"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch2_vflip_off",
+    "started": "2026-04-17T13:21:26.353715",
+    "rc": 0,
+    "elapsed_sec": 287.7,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:24:33) — Case: gen_fhd_ch2_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (28410ms)",
+      "[+] cam_state: PASS (12667ms)",
+      "[+] legacy_files: PASS (4755ms)",
+      "[+] thermal: PASS (3173ms)",
+      "[+] jq_forks: PASS (2008ms)",
+      "[+] logs: PASS (3790ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (3557ms)",
+      "[+] custom_commands: PASS (4178ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch2_vflip_off_20260417_132433.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:24:33.480017",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch2_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch2_vflip_on",
+    "started": "2026-04-17T13:26:14.023372",
+    "rc": 1,
+    "elapsed_sec": 279.0,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:29:04) — Case: gen_fhd_ch2_vflip_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (25159ms)",
+      "[+] cam_state: PASS (9713ms)",
+      "[+] legacy_files: PASS (3144ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (2602ms)",
+      "[+] jq_forks: PASS (1951ms)",
+      "[+] logs: PASS (918ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1642ms)",
+      "[X] custom_commands: FAIL — ch2 ROTATION 레지스터 확인 (vflip on, bit1): ch2 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00) (2570ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch2_vflip_on_20260417_132904.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:29:04.485636",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch2_vflip_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch2 ROTATION 레지스터 확인 (vflip on, bit1): ch2 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch3_vflip_off",
+    "started": "2026-04-17T13:30:53.011973",
+    "rc": 0,
+    "elapsed_sec": 295.8,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:34:08) — Case: gen_fhd_ch3_vflip_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (31960ms)",
+      "[+] cam_state: PASS (13546ms)",
+      "[+] legacy_files: PASS (5344ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (6989ms)",
+      "[+] jq_forks: PASS (1152ms)",
+      "[+] logs: PASS (1434ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1573ms)",
+      "[+] custom_commands: PASS (4768ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch3_vflip_off_20260417_133408.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:34:08.084824",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch3_vflip_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch3_vflip_on",
+    "started": "2026-04-17T13:35:48.787931",
+    "rc": 1,
+    "elapsed_sec": 485.0,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (19167ms)",
+      "[+] cam_state: PASS (15428ms)",
+      "[+] legacy_files: PASS (6013ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (2888ms)",
+      "[+] jq_forks: PASS (2501ms)",
+      "[+] logs: PASS (1739ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (2244ms)",
+      "[X] custom_commands: FAIL — ch3 ROTATION 레지스터 확인 (vflip on, bit1): ch3 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00) (5023ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch3_vflip_on_20260417_133959.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "  waiting... (60/600s)",
+      "  waiting... (120/600s)",
+      "Target back online (after 180s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:39:59.728416",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch3_vflip_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 ROTATION 레지스터 확인 (vflip on, bit1): ch3 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch0_ae_on",
+    "started": "2026-04-17T13:43:53.802000",
+    "rc": 0,
+    "elapsed_sec": 353.5,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:48:01) — Case: gen_fhd_ch0_ae_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (36207ms)",
+      "[+] cam_state: PASS (45905ms)",
+      "[+] legacy_files: PASS (15436ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (4464ms)",
+      "[+] jq_forks: PASS (1592ms)",
+      "[+] logs: PASS (830ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1152ms)",
+      "[+] custom_commands: PASS (1846ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch0_ae_on_20260417_134801.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:48:01.583383",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch0_ae_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch0_ae_off",
+    "started": "2026-04-17T13:49:47.268834",
+    "rc": 0,
+    "elapsed_sec": 266.5,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 13:52:33) — Case: gen_fhd_ch0_ae_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (19737ms)",
+      "[+] cam_state: PASS (2637ms)",
+      "[+] legacy_files: PASS (1039ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (891ms)",
+      "[+] jq_forks: PASS (471ms)",
+      "[+] logs: PASS (375ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (372ms)",
+      "[+] custom_commands: PASS (1283ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch0_ae_off_20260417_135233.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T13:52:33.409290",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch0_ae_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch1_ae_on",
+    "started": "2026-04-17T13:54:13.733162",
+    "rc": 0,
+    "elapsed_sec": 525.6,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 14:01:16) — Case: gen_fhd_ch1_ae_on ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (27732ms)",
+      "[+] cam_state: PASS (20020ms)",
+      "[+] legacy_files: PASS (25491ms)",
+      "[+] thermal: PASS (7940ms)",
+      "[+] jq_forks: PASS (3988ms)",
+      "[+] logs: PASS (1241ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (2346ms)",
+      "[+] custom_commands: PASS (4089ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch1_ae_on_20260417_140116.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T14:01:16.257785",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch1_ae_on",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch1_ae_off",
+    "started": "2026-04-17T14:02:59.309943",
+    "rc": 0,
+    "elapsed_sec": 259.0,
+    "passed": "PASS",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 14:05:38) — Case: gen_fhd_ch1_ae_off ===",
+      "",
+      "Result: PASS (8/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (17094ms)",
+      "[+] cam_state: PASS (2368ms)",
+      "[+] legacy_files: PASS (985ms)",
+      "[+] thermal: PASS (690ms)",
+      "[+] jq_forks: PASS (456ms)",
+      "[+] logs: PASS (368ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (379ms)",
+      "[+] custom_commands: PASS (1062ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch1_ae_off_20260417_140538.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T14:05:38.002726",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch1_ae_off",
+      "result": "PASS",
+      "passed": 8,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": true,
+          "reason": "OK"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch2_ae_on",
+    "started": "2026-04-17T14:07:18.267546",
+    "rc": 1,
+    "elapsed_sec": 280.1,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 14:10:13) — Case: gen_fhd_ch2_ae_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (23303ms)",
+      "[+] cam_state: PASS (11984ms)",
+      "[+] legacy_files: PASS (4083ms)",
+      "[+] thermal: PASS (2481ms)",
+      "[+] jq_forks: PASS (2441ms)",
+      "[+] logs: PASS (1330ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1191ms)",
+      "[X] custom_commands: FAIL — ch2 AE_CTRL 레지스터 확인 (AUTO): ch2 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac) (2752ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch2_ae_on_20260417_141013.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T14:10:13.917064",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch2_ae_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch2 AE_CTRL 레지스터 확인 (AUTO): ch2 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch2_ae_off",
+    "started": "2026-04-17T14:11:58.377241",
+    "rc": 1,
+    "elapsed_sec": 261.0,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 14:14:41) — Case: gen_fhd_ch2_ae_off ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (23792ms)",
+      "[+] cam_state: PASS (2509ms)",
+      "[+] legacy_files: PASS (992ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (664ms)",
+      "[+] jq_forks: PASS (465ms)",
+      "[+] logs: PASS (366ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (347ms)",
+      "[X] custom_commands: FAIL — ch2 AE_CTRL 레지스터 확인 (MANUAL): ch2 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac) (1036ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch2_ae_off_20260417_141441.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T14:14:41.462920",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch2_ae_off",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch2 AE_CTRL 레지스터 확인 (MANUAL): ch2 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch3_ae_on",
+    "started": "2026-04-17T14:16:19.405768",
+    "rc": 1,
+    "elapsed_sec": 275.7,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 14:19:13) — Case: gen_fhd_ch3_ae_on ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (20668ms)",
+      "[+] cam_state: PASS (10498ms)",
+      "[+] legacy_files: PASS (4607ms)",
+      "[+] thermal: PASS — WARN: Temperature 89.0 > warn 88 (2123ms)",
+      "[+] jq_forks: PASS (2513ms)",
+      "[+] logs: PASS (2857ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (1976ms)",
+      "[X] custom_commands: FAIL — ch3 AE_CTRL 레지스터 확인 (AUTO): ch3 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac) (2683ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch3_ae_on_20260417_141913.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T14:19:13.760049",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch3_ae_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "WARN: Temperature 89.0 > warn 88"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 AE_CTRL 레지스터 확인 (AUTO): ch3 ISP AE_CTRL 레지스터에 AUTO 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch3_ae_off",
+    "started": "2026-04-17T14:20:55.085046",
+    "rc": 1,
+    "elapsed_sec": 285.2,
+    "passed": "FAIL",
+    "stdout_tail": [
+      "Stabilizing for 30s...",
+      "=== pim-check Report (2026-04-17 14:24:00) — Case: gen_fhd_ch3_ae_off ===",
+      "",
+      "Result: FAIL (7/8 checks passed)",
+      "Samples: 1/1",
+      "",
+      "[+] process: PASS (22583ms)",
+      "[+] cam_state: PASS (13966ms)",
+      "[+] legacy_files: PASS (4739ms)",
+      "[+] thermal: PASS (3017ms)",
+      "[+] jq_forks: PASS (1523ms)",
+      "[+] logs: PASS (1534ms)",
+      "[+] recording: PASS — Skipped (no expected value configured) (5020ms)",
+      "[X] custom_commands: FAIL — ch3 AE_CTRL 레지스터 확인 (MANUAL): ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac) (8522ms)",
+      "",
+      "JSON report saved: /home/jhw/ai/opencode/projects/pim-check/reports/gen_fhd_ch3_ae_off_20260417_142400.json",
+      "Sending reboot...",
+      "  waiting... (0/600s)",
+      "Target back online (after 60s)",
+      "Stabilizing for 20s..."
+    ],
+    "stderr_tail": [],
+    "report": {
+      "timestamp": "2026-04-17T14:24:00.260886",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch3_ae_off",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 AE_CTRL 레지스터 확인 (MANUAL): ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x000xac)"
+        }
+      ]
+    }
+  }
+]

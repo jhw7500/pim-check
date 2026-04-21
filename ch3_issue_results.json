@@ -1,0 +1,230 @@
+[
+  {
+    "case": "gen_fhd_ch3_ae_off",
+    "passed": "FAIL",
+    "elapsed_sec": 249.9,
+    "report": {
+      "timestamp": "2026-04-20T17:24:13.762564",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch3_ae_off",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 AE_CTRL 레지스터 확인 (MANUAL): ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x020x99)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_fhd_ch3_vflip_on",
+    "passed": "FAIL",
+    "elapsed_sec": 218.6,
+    "report": {
+      "timestamp": "2026-04-20T17:27:48.742144",
+      "host": "192.168.0.5",
+      "case": "gen_fhd_ch3_vflip_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 ROTATION 레지스터 확인 (vflip on, bit1): ch3 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch3_ae_off",
+    "passed": "FAIL",
+    "elapsed_sec": 290.7,
+    "report": {
+      "timestamp": "2026-04-20T17:32:39.389187",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch3_ae_off",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 AE_CTRL 레지스터 확인 (MANUAL): ch3 ISP AE_CTRL 레지스터에 MANUAL 미반영 (got: 0x020x99)"
+        }
+      ]
+    }
+  },
+  {
+    "case": "gen_720p_ch3_vflip_on",
+    "passed": "FAIL",
+    "elapsed_sec": 23.2,
+    "report": {
+      "timestamp": "2026-04-20T14:02:37.282984",
+      "host": "192.168.0.5",
+      "case": "gen_720p_ch3_vflip_on",
+      "result": "FAIL",
+      "passed": 7,
+      "total": 8,
+      "samples_collected": 1,
+      "samples_total": 1,
+      "checks": [
+        {
+          "name": "process",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "cam_state",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "legacy_files",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "thermal",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "jq_forks",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "logs",
+          "passed": true,
+          "reason": "OK"
+        },
+        {
+          "name": "recording",
+          "passed": true,
+          "reason": "Skipped (no expected value configured)"
+        },
+        {
+          "name": "custom_commands",
+          "passed": false,
+          "reason": "ch3 ROTATION 레지스터 확인 (vflip on, bit1): ch3 ISP ROTATION 레지스터에 vflip on 미반영 (got: 0x000x00)"
+        }
+      ]
+    }
+  }
+]
