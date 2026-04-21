@@ -1,0 +1,50 @@
+[
+  {
+    "channel": 0,
+    "bps": 1024,
+    "expected_bps": 1024000,
+    "actual_bps": 1016652,
+    "actual_kbps": 1016.7,
+    "diff_pct": -0.7,
+    "tolerance_pct": 10,
+    "video": "/dev/shm/recordings/VD3001_20260421_070100-ch0.mp4",
+    "result": "PASS",
+    "elapsed": 68.3
+  },
+  {
+    "channel": 0,
+    "bps": 2048,
+    "expected_bps": 2048000,
+    "actual_bps": 2051973,
+    "actual_kbps": 2052.0,
+    "diff_pct": 0.2,
+    "tolerance_pct": 10,
+    "video": "/dev/shm/recordings/VD3001_20260421_070200-ch0.mp4",
+    "result": "PASS",
+    "elapsed": 55.2
+  },
+  {
+    "channel": 0,
+    "bps": 4096,
+    "expected_bps": 4096000,
+    "actual_bps": 4110620,
+    "actual_kbps": 4110.6,
+    "diff_pct": 0.4,
+    "tolerance_pct": 10,
+    "video": "/dev/shm/recordings/VD3001_20260421_070300-ch0.mp4",
+    "result": "PASS",
+    "elapsed": 65.0
+  },
+  {
+    "channel": 0,
+    "bps": 8192,
+    "expected_bps": 8192000,
+    "actual_bps": 8155158,
+    "actual_kbps": 8155.2,
+    "diff_pct": -0.4,
+    "tolerance_pct": 10,
+    "video": "/dev/shm/recordings/VD3001_20260421_070400-ch0.mp4",
+    "result": "PASS",
+    "elapsed": 53.7
+  }
+]

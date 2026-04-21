@@ -1,0 +1,36 @@
+BPS integrated run — 2026-04-21T16:28:35.427092
+Target scenarios: 6
+
+[1/6] 16:28:35 smart_4ch_all_720p_B (ISP:15 BPS:4)...
+   → PASS (292.3s) [19/19]
+     ✓ ch0_bps: 1011.1kbps (diff -1.3%)
+     ✓ ch1_bps: 2033.4kbps (diff -0.7%)
+     ✓ ch2_bps: 4141.6kbps (diff 1.1%)
+     ✓ ch3_bps: 8112.5kbps (diff -1.0%)
+[2/6] 16:33:27 smart_4ch_all_fhd_B (ISP:15 BPS:4)...
+   → EXCEPTION_TIMEOUT (171.0s) [0/0]
+[3/6] 16:36:18 smart_3ch_013_720p_B (ISP:12 BPS:3)...
+   → PASS (189.0s) [15/15]
+     ✓ ch0_bps: 1024.5kbps (diff 0.0%)
+     ✓ ch1_bps: 4098.6kbps (diff 0.1%)
+     ✓ ch3_bps: 8175.1kbps (diff -0.2%)
+[4/6] 16:39:27 smart_3ch_013_fhd_B (ISP:12 BPS:3)...
+   → PASS (176.2s) [15/15]
+     ✓ ch0_bps: 1030.8kbps (diff 0.7%)
+     ✓ ch1_bps: 4075.5kbps (diff -0.5%)
+     ✓ ch3_bps: 8106.2kbps (diff -1.0%)
+[5/6] 16:42:23 smart_3ch_123_720p_B (ISP:12 BPS:3)...
+   → PASS (119.7s) [15/15]
+     ✓ ch1_bps: 8180.6kbps (diff -0.1%)
+     ✓ ch2_bps: 2055.8kbps (diff 0.4%)
+     ✓ ch3_bps: 4092.1kbps (diff -0.1%)
+[6/6] 16:44:23 smart_3ch_123_fhd_B (ISP:12 BPS:3)...
+   → PASS (122.7s) [15/15]
+     ✓ ch1_bps: 8163.9kbps (diff -0.3%)
+     ✓ ch2_bps: 2051.8kbps (diff 0.2%)
+     ✓ ch3_bps: 4097.6kbps (diff 0.0%)
+
+============================================================
+PASS: 5/6
+Total: 17m 50s
+============================================================

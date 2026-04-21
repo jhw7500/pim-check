@@ -1,0 +1,258 @@
+[
+  {
+    "name": "smart_2ch_23_720p_B",
+    "combo": "2ch_23",
+    "res": "720p",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 78.1,
+    "checks": [
+      {
+        "label": "ch2_rotation",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x03",
+        "actual": "0x000x03",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch2_awb_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_gain",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x030x00",
+        "actual": "0x030x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x110x57",
+        "actual": "0x110x57",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x000x610xa8",
+        "actual": "0x000x000x610xa8",
+        "passed": true
+      }
+    ],
+    "n_pass": 8,
+    "n_total": 8
+  },
+  {
+    "name": "smart_2ch_23_fhd_B",
+    "combo": "2ch_23",
+    "res": "fhd",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 221.4,
+    "checks": [
+      {
+        "label": "ch2_rotation",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x03",
+        "actual": "0x000x03",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch2_awb_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_gain",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x030x00",
+        "actual": "0x030x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x110x57",
+        "actual": "0x110x57",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x000x610xa8",
+        "actual": "0x000x000x610xa8",
+        "passed": true
+      }
+    ],
+    "n_pass": 8,
+    "n_total": 8
+  },
+  {
+    "name": "smart_1ch_3_720p_B",
+    "combo": "1ch_3",
+    "res": "720p",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 74.1,
+    "checks": [
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x03",
+        "actual": "0x000x03",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_gain",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x080x00",
+        "actual": "0x080x00",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x000x0b0xb8",
+        "actual": "0x000x000x0b0xb8",
+        "passed": true
+      }
+    ],
+    "n_pass": 5,
+    "n_total": 5
+  },
+  {
+    "name": "smart_1ch_3_fhd_B",
+    "combo": "1ch_3",
+    "res": "fhd",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 71.6,
+    "checks": [
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x03",
+        "actual": "0x000x03",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_gain",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x080x00",
+        "actual": "0x080x00",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x000x0b0xb8",
+        "actual": "0x000x000x0b0xb8",
+        "passed": true
+      }
+    ],
+    "n_pass": 5,
+    "n_total": 5
+  }
+]

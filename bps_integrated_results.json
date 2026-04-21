@@ -1,0 +1,700 @@
+[
+  {
+    "name": "smart_4ch_all_720p_B",
+    "combo": "4ch_all",
+    "res": "720p",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 292.3,
+    "checks": [
+      {
+        "label": "ch0_rotation",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x000x02",
+        "actual": "0x000x02",
+        "passed": true
+      },
+      {
+        "label": "ch0_ae_ctrl",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch0_awb_ctrl",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch1_rotation",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x000x01",
+        "actual": "0x000x01",
+        "passed": true
+      },
+      {
+        "label": "ch1_ae_ctrl",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch1_awb_ctrl",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch2_rotation",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch2_awb_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_gain",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x020x00",
+        "actual": "0x020x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x110x55",
+        "actual": "0x110x55",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x000x3a0x98",
+        "actual": "0x000x000x3a0x98",
+        "passed": true
+      },
+      {
+        "label": "bus2_exp_time",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x000x000x130x88",
+        "actual": "0x000x000x130x88",
+        "passed": true
+      },
+      {
+        "label": "ch0_bps",
+        "expected": "1024kbps",
+        "actual": "1011.1kbps",
+        "diff_pct": -1.3,
+        "video": "/dev/shm/recordings/VD3001_20260421_073200-ch0.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch1_bps",
+        "expected": "2048kbps",
+        "actual": "2033.4kbps",
+        "diff_pct": -0.7,
+        "video": "/dev/shm/recordings/VD3001_20260421_073200-ch1.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch2_bps",
+        "expected": "4096kbps",
+        "actual": "4141.6kbps",
+        "diff_pct": 1.1,
+        "video": "/dev/shm/recordings/VD3001_20260421_073200-ch2.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch3_bps",
+        "expected": "8192kbps",
+        "actual": "8112.5kbps",
+        "diff_pct": -1.0,
+        "video": "/dev/shm/recordings/VD3001_20260421_073200-ch3.mp4",
+        "passed": true
+      }
+    ],
+    "n_pass": 19,
+    "n_total": 19
+  },
+  {
+    "name": "smart_4ch_all_fhd_B",
+    "result": "EXCEPTION_TIMEOUT",
+    "error": "Command '['sshpass', '-p', 'root', 'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', 'root@192.168.0.5', \"find /dev/shm/recordings -name '*-ch0.mp4' -printf '%T@ %p\\\\n' 2>/dev/null | ",
+    "elapsed": 171.0
+  },
+  {
+    "name": "smart_3ch_013_720p_B",
+    "combo": "3ch_013",
+    "res": "720p",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 189.0,
+    "checks": [
+      {
+        "label": "ch0_rotation",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x000x02",
+        "actual": "0x000x02",
+        "passed": true
+      },
+      {
+        "label": "ch0_ae_ctrl",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch0_awb_ctrl",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x110x53",
+        "actual": "0x110x53",
+        "passed": true
+      },
+      {
+        "label": "ch1_rotation",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x000x01",
+        "actual": "0x000x01",
+        "passed": true
+      },
+      {
+        "label": "ch1_ae_ctrl",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch1_awb_ctrl",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_gain",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x40",
+        "actual": "0x000x40",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x000x270x10",
+        "actual": "0x000x000x270x10",
+        "passed": true
+      },
+      {
+        "label": "bus2_exp_time",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x000x000x270x10",
+        "actual": "0x000x000x270x10",
+        "passed": true
+      },
+      {
+        "label": "ch0_bps",
+        "expected": "1024kbps",
+        "actual": "1024.5kbps",
+        "diff_pct": 0.0,
+        "video": "/dev/shm/recordings/VD3001_20260421_073800-ch0.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch1_bps",
+        "expected": "4096kbps",
+        "actual": "4098.6kbps",
+        "diff_pct": 0.1,
+        "video": "/dev/shm/recordings/VD3001_20260421_073800-ch1.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch3_bps",
+        "expected": "8192kbps",
+        "actual": "8175.1kbps",
+        "diff_pct": -0.2,
+        "video": "/dev/shm/recordings/VD3001_20260421_073800-ch3.mp4",
+        "passed": true
+      }
+    ],
+    "n_pass": 15,
+    "n_total": 15
+  },
+  {
+    "name": "smart_3ch_013_fhd_B",
+    "combo": "3ch_013",
+    "res": "fhd",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 176.2,
+    "checks": [
+      {
+        "label": "ch0_rotation",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x000x02",
+        "actual": "0x000x02",
+        "passed": true
+      },
+      {
+        "label": "ch0_ae_ctrl",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch0_awb_ctrl",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x110x53",
+        "actual": "0x110x53",
+        "passed": true
+      },
+      {
+        "label": "ch1_rotation",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x000x01",
+        "actual": "0x000x01",
+        "passed": true
+      },
+      {
+        "label": "ch1_ae_ctrl",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch1_awb_ctrl",
+        "bus": 2,
+        "addr": "0x12",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_gain",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x40",
+        "actual": "0x000x40",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x3c",
+        "expected": "0x000x000x270x10",
+        "actual": "0x000x000x270x10",
+        "passed": true
+      },
+      {
+        "label": "bus2_exp_time",
+        "bus": 2,
+        "addr": "0x11",
+        "expected": "0x000x000x270x10",
+        "actual": "0x000x000x270x10",
+        "passed": true
+      },
+      {
+        "label": "ch0_bps",
+        "expected": "1024kbps",
+        "actual": "1030.8kbps",
+        "diff_pct": 0.7,
+        "video": "/dev/shm/recordings/VD3001_20260421_074100-ch0.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch1_bps",
+        "expected": "4096kbps",
+        "actual": "4075.5kbps",
+        "diff_pct": -0.5,
+        "video": "/dev/shm/recordings/VD3001_20260421_074100-ch1.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch3_bps",
+        "expected": "8192kbps",
+        "actual": "8106.2kbps",
+        "diff_pct": -1.0,
+        "video": "/dev/shm/recordings/VD3001_20260421_074100-ch3.mp4",
+        "passed": true
+      }
+    ],
+    "n_pass": 15,
+    "n_total": 15
+  },
+  {
+    "name": "smart_3ch_123_720p_B",
+    "combo": "3ch_123",
+    "res": "720p",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 119.7,
+    "checks": [
+      {
+        "label": "ch1_rotation",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x000x03",
+        "actual": "0x000x03",
+        "passed": true
+      },
+      {
+        "label": "ch1_ae_ctrl",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch1_awb_ctrl",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch2_rotation",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch2_awb_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x110x54",
+        "actual": "0x110x54",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_gain",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x040x00",
+        "actual": "0x040x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x000x02",
+        "actual": "0x000x02",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x110x52",
+        "actual": "0x110x52",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x000x4e0x20",
+        "actual": "0x000x000x4e0x20",
+        "passed": true
+      },
+      {
+        "label": "bus2_exp_time",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x000x000x270x10",
+        "actual": "0x000x000x270x10",
+        "passed": true
+      },
+      {
+        "label": "ch1_bps",
+        "expected": "8192kbps",
+        "actual": "8180.6kbps",
+        "diff_pct": -0.1,
+        "video": "/dev/shm/recordings/VD3001_20260421_074300-ch1.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch2_bps",
+        "expected": "2048kbps",
+        "actual": "2055.8kbps",
+        "diff_pct": 0.4,
+        "video": "/dev/shm/recordings/VD3001_20260421_074300-ch2.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch3_bps",
+        "expected": "4096kbps",
+        "actual": "4092.1kbps",
+        "diff_pct": -0.1,
+        "video": "/dev/shm/recordings/VD3001_20260421_074300-ch3.mp4",
+        "passed": true
+      }
+    ],
+    "n_pass": 15,
+    "n_total": 15
+  },
+  {
+    "name": "smart_3ch_123_fhd_B",
+    "combo": "3ch_123",
+    "res": "fhd",
+    "test_type": "B",
+    "result": "PASS",
+    "elapsed": 122.7,
+    "checks": [
+      {
+        "label": "ch1_rotation",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x000x03",
+        "actual": "0x000x03",
+        "passed": true
+      },
+      {
+        "label": "ch1_ae_ctrl",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch1_awb_ctrl",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x110x5f",
+        "actual": "0x110x5f",
+        "passed": true
+      },
+      {
+        "label": "ch2_rotation",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x00",
+        "actual": "0x000x00",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x020x90",
+        "actual": "0x020x90",
+        "passed": true
+      },
+      {
+        "label": "ch2_awb_ctrl",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x110x54",
+        "actual": "0x110x54",
+        "passed": true
+      },
+      {
+        "label": "ch2_ae_gain",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x040x00",
+        "actual": "0x040x00",
+        "passed": true
+      },
+      {
+        "label": "ch3_rotation",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x000x02",
+        "actual": "0x000x02",
+        "passed": true
+      },
+      {
+        "label": "ch3_ae_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x020x99",
+        "actual": "0x020x99",
+        "passed": true
+      },
+      {
+        "label": "ch3_awb_ctrl",
+        "bus": 1,
+        "addr": "0x12",
+        "expected": "0x110x52",
+        "actual": "0x110x52",
+        "passed": true
+      },
+      {
+        "label": "bus1_exp_time",
+        "bus": 1,
+        "addr": "0x11",
+        "expected": "0x000x000x4e0x20",
+        "actual": "0x000x000x4e0x20",
+        "passed": true
+      },
+      {
+        "label": "bus2_exp_time",
+        "bus": 2,
+        "addr": "0x3c",
+        "expected": "0x000x000x270x10",
+        "actual": "0x000x000x270x10",
+        "passed": true
+      },
+      {
+        "label": "ch1_bps",
+        "expected": "8192kbps",
+        "actual": "8163.9kbps",
+        "diff_pct": -0.3,
+        "video": "/dev/shm/recordings/VD3001_20260421_074500-ch1.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch2_bps",
+        "expected": "2048kbps",
+        "actual": "2051.8kbps",
+        "diff_pct": 0.2,
+        "video": "/dev/shm/recordings/VD3001_20260421_074500-ch2.mp4",
+        "passed": true
+      },
+      {
+        "label": "ch3_bps",
+        "expected": "4096kbps",
+        "actual": "4097.6kbps",
+        "diff_pct": 0.0,
+        "video": "/dev/shm/recordings/VD3001_20260421_074500-ch3.mp4",
+        "passed": true
+      }
+    ],
+    "n_pass": 15,
+    "n_total": 15
+  }
+]
