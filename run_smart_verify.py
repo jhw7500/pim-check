@@ -50,8 +50,10 @@ CH_DEFAULT = {
     "ae_gain": 256, "awb": "auto", "bps": [2048, 2048],
 }
 BUS_DEFAULT = {"exp_time": 10000}
-RECORDING_WAIT = 75   # recording_time(1min) + buffer for bps 검증
+# 글로벌 기본값 (/opt/pim/config/edgeconf_pim_base.json)
+GLOBAL_DEFAULT = {"fps": 15, "recording_time": 1, "muxer": "mp4"}
 BPS_TOLERANCE_PCT = 10
+DURATION_TOLERANCE_SEC = 5   # recording_time 검증 허용 오차
 
 # AWB 모드 → 레지스터 raw 16bit (i2ctransfer 출력 그대로)
 # 참고: measure(0x1158)는 AP1302 firmware가 1회 측정 후 MODE를 0x0(off)으로 자동 복귀시킴
@@ -113,6 +115,7 @@ COMBOS = [
             3: {"ae_on": False, "ae_gain": 64, "bps": [8192, 8192]},
         },
         "bus_exp": {},
+        "global": {"fps": 30},
     }),
     ("3ch_123", [1, 2, 3], {
         "channels": {
@@ -121,6 +124,7 @@ COMBOS = [
             3: {"vflip": True, "awb": "a", "bps": [4096, 4096]},
         },
         "bus_exp": {1: 20000},
+        "global": {"recording_time": 2},
     }),
     ("2ch_01", [0, 1], {
         "channels": {
@@ -128,6 +132,7 @@ COMBOS = [
             1: {"hflip": True, "awb": "horizon"},
         },
         "bus_exp": {},
+        "global": {"fps": 30},
     }),
     ("2ch_23", [2, 3], {
         "channels": {
@@ -135,6 +140,7 @@ COMBOS = [
             3: {"awb": "temp"},
         },
         "bus_exp": {1: 25000},
+        "global": {"muxer": "ts"},
     }),
     ("2ch_02", [0, 2], {
         "channels": {
@@ -149,6 +155,7 @@ COMBOS = [
             2: {"vflip": True, "hflip": True, "awb": "a"},
         },
         "bus_exp": {},
+        "global": {"recording_time": 5},
     }),
     ("1ch_0", [0], {
         "channels": {
@@ -163,6 +170,7 @@ COMBOS = [
                 "ae_gain": 2048, "awb": "auto"},
         },
         "bus_exp": {1: 3000},
+        "global": {"fps": 60},
     }),
 ]
 
@@ -187,6 +195,17 @@ def bus_effective_exp(bus, combo_pattern, test_type):
     if test_type == "B":
         return combo_pattern.get("bus_exp", {}).get(bus, BUS_DEFAULT["exp_time"])
     return BUS_DEFAULT["exp_time"]
+
+
+def global_effective(combo_pattern, test_type, res):
+    """글로벌 설정(fps/recording_time/muxer) 반환.
+    B + 720p일 때만 combo의 global override 적용. fhd는 default 유지.
+    """
+    settings = dict(GLOBAL_DEFAULT)
+    if test_type == "B" and res == "720p":
+        overrides = combo_pattern.get("global", {})
+        settings.update(overrides)
+    return settings
 
 
 def ssh(cmd, timeout=15):
@@ -267,8 +286,13 @@ def channel_bus_addr(combo_channels, ch):
 def build_changes(combo_channels, combo_pattern, res, test_type):
     """시나리오의 전체 edgeconf changes 생성 (jq 단일 체인)."""
     w, h = RES_MAP[res]
-    changes = [(".VHL_CAM.cam_width", w), (".VHL_CAM.cam_height", h),
-               (".VHL_CAM.recording_time", 1)]  # bps 검증용 녹화시간
+    glob = global_effective(combo_pattern, test_type, res)
+    changes = [
+        (".VHL_CAM.cam_width", w), (".VHL_CAM.cam_height", h),
+        (".VHL_CAM.fps", glob["fps"]),
+        (".VHL_CAM.recording_time", glob["recording_time"]),
+        (".VHL_CAM.muxer", glob["muxer"]),
+    ]
     # enable 상태
     for ch in range(4):
         changes.append((f"{CH_PATH[ch]}.enable", ch in combo_channels))
@@ -295,13 +319,15 @@ def build_changes(combo_channels, combo_pattern, res, test_type):
     return changes
 
 
-def build_checks(combo_channels, combo_pattern, test_type):
-    """ISP 체크 + bps(ffprobe) 체크 분리 반환.
+def build_checks(combo_channels, combo_pattern, res, test_type):
+    """ISP 체크 + bps/global (ffprobe) 체크 분리 반환.
     isp_checks: (label, bus, addr, reg_hi, reg_lo, rbytes, expected_hex)
-    bps_checks: (label, channel, expected_kbps) — 첫번째 bps(recording) 검증
+    bps_checks: (label, channel, expected_kbps)
+    global_checks: (label, kind, expected) — kind: fps/duration/muxer
     """
     isp_checks = []
     bps_checks = []
+    global_checks = []
     # per-channel checks
     for ch in combo_channels:
         ba = channel_bus_addr(combo_channels, ch)
@@ -339,14 +365,27 @@ def build_checks(combo_channels, combo_pattern, test_type):
         _, addr = ba
         isp_checks.append((f"bus{bus}_exp_time", bus, addr, 0x50, 0x0c, 4,
                            exp_to_hex(exp)))
-    return isp_checks, bps_checks
+    # global 체크 — 720p B에서 override 있을 때만 (fhd 스킵 = 기본값 유지)
+    if test_type == "B" and res == "720p":
+        overrides = combo_pattern.get("global", {})
+        if "fps" in overrides:
+            global_checks.append(("global_fps", "fps", overrides["fps"]))
+        if "recording_time" in overrides:
+            global_checks.append(("global_duration", "duration",
+                                   overrides["recording_time"] * 60))
+        if "muxer" in overrides:
+            global_checks.append(("global_muxer", "muxer", overrides["muxer"]))
+    return isp_checks, bps_checks, global_checks
 
 
-def find_latest_video(channel, since_ts):
-    """since_ts 이후 생성된 해당 채널 mp4 경로 반환 (녹화 완료 대기)."""
-    deadline = time.monotonic() + RECORDING_WAIT
+def find_latest_video(channel, since_ts, ext="mp4", wait_timeout=75):
+    """since_ts 이후 생성된 해당 채널 영상 파일 경로 반환 (녹화 완료 대기).
+    wait_timeout: 최대 대기 시간(초). recording_time 길이에 맞춰 호출측에서 계산.
+    ext: 확장자 (mp4, ts)
+    """
+    deadline = time.monotonic() + wait_timeout
     while time.monotonic() < deadline:
-        cmd = (f"find /dev/shm/recordings -name '*-ch{channel}.mp4' "
+        cmd = (f"find /dev/shm/recordings -name '*-ch{channel}.{ext}' "
                f"-printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-")
         rc, out, _ = ssh(cmd, timeout=10)
         if rc == 0 and out.strip():
@@ -373,17 +412,51 @@ def probe_bitrate(filepath):
         return None
 
 
+def probe_fps(filepath):
+    """ffprobe로 video stream r_frame_rate 반환 (정수 fps)."""
+    cmd = (f"ffprobe -v error -select_streams v:0 "
+           f"-show_entries stream=r_frame_rate -of csv=p=0 '{filepath}' 2>/dev/null")
+    rc, out, _ = ssh(cmd, timeout=15)
+    if rc != 0 or not out.strip():
+        return None
+    s = out.strip()
+    if "/" in s:
+        try:
+            num, den = s.split("/")
+            return int(num) // max(int(den), 1)
+        except (ValueError, ZeroDivisionError):
+            return None
+    try:
+        return int(float(s))
+    except ValueError:
+        return None
+
+
+def probe_duration(filepath):
+    """ffprobe로 format.duration (초, float) 반환."""
+    cmd = (f"ffprobe -v error "
+           f"-show_entries format=duration -of csv=p=0 '{filepath}' 2>/dev/null")
+    rc, out, _ = ssh(cmd, timeout=15)
+    if rc != 0 or not out.strip():
+        return None
+    try:
+        return float(out.strip())
+    except ValueError:
+        return None
+
+
 def generate_scenarios():
     scenarios = []
     for combo_name, combo_channels, combo_pattern in COMBOS:
         for res in RES_MAP:
             for test_type in ("A", "B"):
                 changes = build_changes(combo_channels, combo_pattern, res, test_type)
-                isp_checks, bps_checks = build_checks(combo_channels, combo_pattern, test_type)
-                # bps 검증은 720p(HD)로만 수행 — fhd에서는 bps 변경 및 검증 모두 skip
+                isp_checks, bps_checks, global_checks = build_checks(
+                    combo_channels, combo_pattern, res, test_type)
+                glob = global_effective(combo_pattern, test_type, res)
+                # bps 검증은 720p(HD)로만 수행 — fhd에서는 bps 변경/검증 모두 skip
                 if res != "720p" and bps_checks:
                     bps_checks = []
-                    # bps 변경분을 default로 리셋
                     changes = [c for c in changes if not c[0].endswith(".bps")]
                     for ch in range(4):
                         changes.append((f"{CH_PATH[ch]}.bps", list(CH_DEFAULT["bps"])))
@@ -396,6 +469,8 @@ def generate_scenarios():
                     "changes": changes,
                     "checks": isp_checks,
                     "bps_checks": bps_checks,
+                    "global_checks": global_checks,
+                    "global_settings": glob,  # 녹화 대기/검증용 effective 값
                 })
     return scenarios
 
@@ -429,13 +504,21 @@ def run_scenario(scen):
                                    "passed": passed})
             if not passed:
                 all_pass = False
-        # bps 체크: 있으면 녹화 완료 대기 후 ffprobe 실행
+        # 파일 기반 체크 (bps + global): recording_time 기반 동적 대기
         bps_checks = scen.get("bps_checks", [])
-        if bps_checks:
+        global_checks = scen.get("global_checks", [])
+        glob = scen.get("global_settings", dict(GLOBAL_DEFAULT))
+        needs_video = bool(bps_checks or global_checks)
+        if needs_video:
+            rec_sec = glob.get("recording_time", 1) * 60
+            wait_timeout = rec_sec + 20   # recording_time 분 + 20s 버퍼
+            ext = glob.get("muxer", "mp4")
             rc, since_str, _ = ssh("date +%s", timeout=5)
             since_ts = int(since_str) if since_str.strip().isdigit() else int(time.time())
+
+            # bps 체크 (채널별 영상 파일 필요)
             for label, ch, expected_kbps in bps_checks:
-                video = find_latest_video(ch, since_ts)
+                video = find_latest_video(ch, since_ts, ext=ext, wait_timeout=wait_timeout)
                 if not video:
                     check_results.append({"label": label, "expected": f"{expected_kbps}kbps",
                                           "actual": "(no video)", "passed": False})
@@ -458,6 +541,56 @@ def run_scenario(scen):
                 })
                 if not passed:
                     all_pass = False
+
+            # global 체크 (fps/duration/muxer) — 첫 활성 채널의 파일로 검증
+            if global_checks and scen["channels"]:
+                ref_ch = scen["channels"][0]
+                ref_video = find_latest_video(ref_ch, since_ts, ext=ext,
+                                              wait_timeout=max(30, wait_timeout // 2))
+                for label, kind, expected in global_checks:
+                    if kind == "muxer":
+                        # 파일 확장자로 판단
+                        expected_ext = expected
+                        actual_ext = ref_video.rsplit(".", 1)[-1] if ref_video else ""
+                        passed = actual_ext == expected_ext
+                        check_results.append({
+                            "label": label, "expected": f"{expected_ext}",
+                            "actual": actual_ext or "(no video)",
+                            "video": ref_video, "passed": passed,
+                        })
+                        if not passed:
+                            all_pass = False
+                    elif kind == "fps":
+                        if not ref_video:
+                            check_results.append({"label": label, "expected": f"{expected}fps",
+                                                  "actual": "(no video)", "passed": False})
+                            all_pass = False
+                            continue
+                        actual_fps = probe_fps(ref_video)
+                        passed = actual_fps == expected
+                        check_results.append({
+                            "label": label, "expected": f"{expected}fps",
+                            "actual": f"{actual_fps}fps" if actual_fps is not None else "(probe fail)",
+                            "video": ref_video, "passed": passed,
+                        })
+                        if not passed:
+                            all_pass = False
+                    elif kind == "duration":
+                        if not ref_video:
+                            check_results.append({"label": label, "expected": f"{expected}s",
+                                                  "actual": "(no video)", "passed": False})
+                            all_pass = False
+                            continue
+                        actual_dur = probe_duration(ref_video)
+                        passed = (actual_dur is not None and
+                                  abs(actual_dur - expected) <= DURATION_TOLERANCE_SEC)
+                        check_results.append({
+                            "label": label, "expected": f"{expected}s",
+                            "actual": f"{round(actual_dur,1)}s" if actual_dur is not None else "(probe fail)",
+                            "video": ref_video, "passed": passed,
+                        })
+                        if not passed:
+                            all_pass = False
         return {
             "name": scen["name"], "combo": scen["combo"], "res": scen["res"],
             "test_type": scen["test_type"],
