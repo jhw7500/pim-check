@@ -209,12 +209,15 @@ def global_effective(combo_pattern, test_type, res):
 
 
 def ssh(cmd, timeout=15):
-    r = subprocess.run(
-        ["sshpass", "-p", "root", "ssh", "-o", "StrictHostKeyChecking=no",
-         "-o", "ConnectTimeout=5", f"root@{TARGET}", cmd],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    try:
+        r = subprocess.run(
+            ["sshpass", "-p", "root", "ssh", "-o", "StrictHostKeyChecking=no",
+             "-o", "ConnectTimeout=5", f"root@{TARGET}", cmd],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "", "timeout"
 
 
 def wait_ssh(timeout=REBOOT_WAIT):
@@ -492,12 +495,11 @@ def run_scenario(scen):
         check_results = []
         all_pass = True
         for label, bus, addr, rh, rl, rb, expected in scen["checks"]:
+            # 의도한 주소에서 값이 일치해야만 PASS.
+            # 이전 fallback(`0x3c` 재시도)은 실제 동작 모드 혼동을 은폐해 false PASS 유발
+            # (docs/03-analysis/verification-audit-2026-04-22.md FINDING #11).
             actual = read_reg(bus, addr, rh, rl, rb)
-            if actual != expected and addr != 0x3c:
-                fb = read_reg(bus, 0x3c, rh, rl, rb)
-                if fb == expected:
-                    actual = f"{actual}→fallback0x3c={fb}"
-            passed = expected in (actual or "").split("→")[-1]
+            passed = (actual == expected)
             check_results.append({"label": label, "bus": bus,
                                    "addr": f"0x{addr:02x}",
                                    "expected": expected, "actual": actual,
@@ -546,7 +548,7 @@ def run_scenario(scen):
             if global_checks and scen["channels"]:
                 ref_ch = scen["channels"][0]
                 ref_video = find_latest_video(ref_ch, since_ts, ext=ext,
-                                              wait_timeout=max(30, wait_timeout // 2))
+                                              wait_timeout=wait_timeout)
                 for label, kind, expected in global_checks:
                     if kind == "muxer":
                         # 파일 확장자로 판단

@@ -5,6 +5,9 @@ setup:
   edgeconf_changes:
     .VHL_CAM.cam_width: 1280
     .VHL_CAM.cam_height: 720
+    .VHL_CAM.i2c2.ch0.enable: false
+    .VHL_CAM.i2c2.ch1.enable: false
+    .VHL_CAM.i2c1.ch2.enable: false
     .VHL_CAM.i2c1.ch3.enable: true
     .VHL_CAM.i2c1.ch3.awb: auto
   reboot_after: true
@@ -20,7 +23,6 @@ checks:
     expected: auto
     on_fail: edgeconf awb_ch3 미반영
   - name: ch3 AWB_CTRL 레지스터 확인 (AUTO)
-    command: (i2ctransfer -f -y 1 w2@0x12 0x51 0x00 r2 2>/dev/null || i2ctransfer
-      -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null) | tr -d ' '
+    command: i2ctransfer -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null | tr -d ' '
     expected: 0x110x5f
     on_fail: ch3 ISP AWB_CTRL 레지스터에 AUTO 미반영

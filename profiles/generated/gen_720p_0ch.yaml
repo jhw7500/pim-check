@@ -16,3 +16,14 @@ checks:
     dir: /tmp/cam_state
     expected_state: healthy
     max_streak: 0
+  custom_commands:
+  - name: i2c-2 AP1302 미응답 (0ch)
+    command: i2cdetect -y 2 2>/dev/null | awk 'NR>1 {for(i=2;i<=NF;i++) if ($i=="11"
+      || $i=="12") print $i}' | sort -u | tr '\n' ',' | sed 's/,$//'
+    expected: ''
+    on_fail: 0ch인데 i2c-2에서 AP1302 주소 응답
+  - name: i2c-1 AP1302 미응답 (0ch)
+    command: i2cdetect -y 1 2>/dev/null | awk 'NR>1 {for(i=2;i<=NF;i++) if ($i=="11"
+      || $i=="12") print $i}' | sort -u | tr '\n' ',' | sed 's/,$//'
+    expected: ''
+    on_fail: 0ch인데 i2c-1에서 AP1302 주소 응답

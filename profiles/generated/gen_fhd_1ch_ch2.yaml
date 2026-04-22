@@ -21,3 +21,14 @@ checks:
   recording:
     expected_channels: 1
     session_progress: 1/1
+  custom_commands:
+  - name: i2c-2 AP1302 미응답 (1ch_ch2)
+    command: i2cdetect -y 2 2>/dev/null | awk 'NR>1 {for(i=2;i<=NF;i++) if ($i=="11"
+      || $i=="12") print $i}' | sort -u | tr '\n' ',' | sed 's/,$//'
+    expected: ''
+    on_fail: 1ch_ch2인데 i2c-2에 AP1302 응답
+  - name: i2c-1 single mode 확인 (ch2 only → 3c)
+    command: i2cdetect -y 1 2>/dev/null | awk 'NR>1 {for(i=2;i<=NF;i++) if ($i=="11"
+      || $i=="12") print $i}' | sort -u | tr '\n' ',' | sed 's/,$//'
+    expected: ''
+    on_fail: 1ch_ch2 기대 single인데 0x11 또는 0x12가 응답함

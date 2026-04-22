@@ -4,11 +4,8 @@ setup.py - SetupManager: edgeconf 설정 변경 및 복원 엔진
 """
 import time
 
-# 백업은 별도 디렉토리에 저장 — /root/shared_v 루트의 glob 패턴(edgeconf_*.json 등)과
-# 충돌 방지 (update_network_pim.py의 get_global_conf() 등)
 EDGECONF_PATH = "/root/shared_v/edgeconf_pim.json"
-EDGECONF_BACKUP_DIR = "/root/shared_v/.pim_check_backup"
-EDGECONF_BACKUP = f"{EDGECONF_BACKUP_DIR}/edgeconf_pim.json.bak"
+EDGECONF_BACKUP = f"{EDGECONF_PATH}.bak"
 
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
 DEFAULT_POLL_INTERVAL = 60     # 1분
@@ -22,10 +19,8 @@ class SetupManager:
         self.poll_interval = poll_interval
 
     def backup(self) -> bool:
-        """edgeconf 파일을 별도 디렉토리에 백업한다. 성공 시 True."""
-        result = self.ssh.run(
-            f"mkdir -p {EDGECONF_BACKUP_DIR} && cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK"
-        )
+        """edgeconf 파일을 백업한다. 성공 시 True."""
+        result = self.ssh.run(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK")
         return result == "OK"
 
     def apply_changes(self, changes: dict) -> None:

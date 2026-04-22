@@ -5,6 +5,9 @@ setup:
   edgeconf_changes:
     .VHL_CAM.cam_width: 1280
     .VHL_CAM.cam_height: 720
+    .VHL_CAM.i2c2.ch0.enable: false
+    .VHL_CAM.i2c2.ch1.enable: false
+    .VHL_CAM.i2c1.ch3.enable: false
     .VHL_CAM.i2c1.ch2.enable: true
     .VHL_CAM.i2c1.ch2.ae_on: true
   reboot_after: true
@@ -20,7 +23,6 @@ checks:
     expected: 'true'
     on_fail: edgeconf ae_ch2 미반영
   - name: ch2 AE_CTRL 레지스터 확인 (AUTO)
-    command: (i2ctransfer -f -y 1 w2@0x11 0x50 0x02 r2 2>/dev/null || i2ctransfer
-      -f -y 1 w2@0x3c 0x50 0x02 r2 2>/dev/null) | tr -d ' '
+    command: i2ctransfer -f -y 1 w2@0x3c 0x50 0x02 r2 2>/dev/null | tr -d ' '
     expected: 0x020x99
     on_fail: ch2 ISP AE_CTRL 레지스터에 AUTO 미반영

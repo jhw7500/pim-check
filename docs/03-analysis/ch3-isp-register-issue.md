@@ -1,15 +1,22 @@
-# CH3 단독 활성화 시 ISP 레지스터 반영 누락 이슈
+# 내부 ch1 슬롯(edgeconf ch1/ch3) 단독 활성화 시 ISP 레지스터 반영 누락 이슈
 
 **발견일**: 2026-04-20
-**해결일**: 2026-04-21
-**영향 케이스**: 4건 (gen_720p_ch3_vflip_on, gen_720p_ch3_ae_off, gen_fhd_ch3_vflip_on, gen_fhd_ch3_ae_off)
-**상태**: ✅ **RESOLVED** — 드라이버/gstApp 수정으로 해결 (Resolution 섹션 참조)
+**잠정 Resolution**: 2026-04-21 (드라이버/gstApp 수정으로 96/96 PASS 선언)
+**재현 확인일**: 2026-04-22 (검증 프로그램 결함 발견 → ch1 단독도 동일 버그로 확정)
+**영향 범위**: **내부 ch1 슬롯에 매핑되는 edgeconf ch1 + ch3의 단독 활성 케이스 전체**
+**상태**: ⚠️ **SCOPE EXPANDED** — 이슈 범위가 "ch3 단독"에서 "ch1/ch3 단독 (내부 ch1 슬롯)"으로 확장. 2026-04-21 Resolution은 검증 결함(아래 §"검증 프로그램 결함"로 인한 false PASS였음이 2026-04-22 실측으로 재확인됨. 드라이버 재수정은 **현재 진행 중**이며 새 검증 스키마(2026-04-22 정정)로 재검증 예정.
+
+> **2026-04-22 주요 정정**
+> - 이전 "ch1 단독 PASS" 기록은 검증 프로파일이 다른 채널을 명시 disable하지 않아 실제로는 **dual 모드로 동작**했기에 나온 false PASS였음.
+> - 검증 커맨드의 `dual 주소 || single 주소` fallback이 실제 동작 모드 확인 없이 어느 쪽이든 응답하면 통과시켜 single-mode 버그를 수년간 은폐.
+> - 이슈 범위: **"ch3 단독"이 아니라 "내부 ch1 슬롯 = edgeconf ch1 + ch3 단독 모드"**.
+> - 상세: §"검증 프로그램 결함 (2026-04-22 발견)" 섹션.
 
 ---
 
 ## 요약
 
-`ch3`만 단독 활성화 (ch2는 비활성)한 상태에서 `edgeconf_pim.json`의 `vflip=true` 또는 `ae_on=false` 설정이 AP1302 ISP 레지스터에 **반영되지 않음**. ch0/ch1/ch2 단독 또는 조합은 정상 동작.
+AP1302 ISP의 MAX9296 드라이버(`max9296.c`)가 **내부 ch1 슬롯에 할당된 채널**(버스 i2c-2에서는 edgeconf `ch1`, 버스 i2c-1에서는 edgeconf `ch3`)을 **단독 활성화**(해당 슬롯만 enable, 같은 버스의 짝 채널은 disable)한 상태에서, `edgeconf_pim.json`의 `vflip`/`hflip`/`ae_on`/`awb` 설정이 AP1302 ISP 레지스터에 **반영되지 않음**. 내부 ch0 슬롯에 할당된 채널(edgeconf `ch0`, `ch2`) 단독은 정상 동작.
 
 ---
 
@@ -87,18 +94,29 @@ i2ctransfer -f -y 1 w2@0x3c 0x50 0x02 r2 2>/dev/null
 
 ---
 
-## 대조 실험 결과 (정상 케이스)
+## 대조 실험 결과 (2026-04-22 정정)
+
+### 2026-04-22 실측 (정정된 검증 프로파일 적용)
 
 | 조합 | bus | 주소 | 설정 반영 | 결과 |
 |------|-----|------|----------|------|
-| ch0 단독 활성 + vflip_on | i2c-2 | 0x3c (single) | YES | PASS |
-| ch0+ch1 dual + vflip_on | i2c-2 | 0x11/0x12 | YES | PASS |
-| ch1 단독 활성 + vflip_on | i2c-2 | 0x3c (single) | YES | PASS |
-| ch2 단독 활성 + vflip_on | i2c-1 | 0x3c (single) | YES | PASS |
-| **ch3 단독 활성 + vflip_on** | **i2c-1** | **0x3c (single)** | **NO** | **FAIL** |
-| ch2+ch3 dual + vflip_on | i2c-1 | 0x11/0x12 | (미검증 — 이번 테스트는 ch3 단독) | — |
+| ch0 단독 활성 + 설정 변경 | i2c-2 | 0x3c (single) | YES | PASS |
+| **ch1 단독 활성 + hflip_on** | **i2c-2** | **0x3c (single)** | **NO** | **FAIL** |
+| ch2 단독 활성 + 설정 변경 | i2c-1 | 0x3c (single) | YES | PASS |
+| **ch3 단독 활성 + vflip_on/ae_off** | **i2c-1** | **0x3c (single)** | **NO** | **FAIL** |
+| 모든 dual/quad 조합 | i2c-{1,2} | 0x11/0x12 | YES | PASS |
 
-**핵심 패턴**: ch3만 활성, ch2는 비활성 상태에서만 실패.
+**핵심 패턴**: **내부 ch1 슬롯에 매핑된 채널**(i2c-2=edgeconf ch1, i2c-1=edgeconf ch3)이 단독 활성일 때 0x3c 쓰기 경로에서 설정이 누락됨.
+
+### 2026-04-17/20 기록 (False PASS 정정)
+
+기존 대조표의 "ch1 단독 활성 + vflip_on = PASS" 행은 **검증 결함으로 인한 false PASS**였음.
+
+| 원본 기록 | 실제 상태 | 원인 |
+|-----------|-----------|------|
+| ch1 단독 vflip_on PASS | 실은 ch0+ch1 dual에서 실행됨 | 프로파일이 `ch0.enable=false`를 명시하지 않아 베이스 edgeconf의 ch0 enable 상태가 유지됨 |
+| ch1 단독 검증 통과 | 사실 ISP 0x12(dual) 주소로 읽음 | 검증 커맨드 `0x12 || 0x3c` fallback이 dual 주소에 먼저 응답하면 single 확인 건너뜀 |
+| ch3 단독만 실패 | 실은 ch1 단독도 같은 버그 | ch3 케이스만 베이스 edgeconf에서 ch2가 disable 상태였기에 single mode로 진입 |
 
 ---
 
@@ -126,18 +144,21 @@ if (dual) {
 }
 ```
 
-i2c-1의 드라이버 인스턴스 관점:
-- 내부 ch0 = edgeconf ch2
-- 내부 ch1 = edgeconf ch3
+드라이버 인스턴스 관점 (버스별 내부 매핑):
 
-ch3 단독 활성 시 single mode로 진입하여 0x3c에 쓰기 수행. **그런데 쓰여지는 값이 내부 ch0(edgeconf ch2)의 값인지, 내부 ch1(edgeconf ch3)의 값인지가 불분명**.
+| 버스 | 내부 ch0 슬롯 | 내부 ch1 슬롯 |
+|------|--------------|--------------|
+| i2c-2 | edgeconf `ch0` | edgeconf `ch1` |
+| i2c-1 | edgeconf `ch2` | edgeconf `ch3` |
 
-추정 시나리오:
-1. 드라이버가 `ctrl_cache.ch0` (edgeconf ch2의 설정 = vflip=false/ae_on=true)를 0x3c에 씀
-2. ch3의 `ctrl_cache.ch1`은 **0x3c에 쓰지 않거나 먼저 쓴 후 ch0 값으로 덮어씀**
-3. 결과: ISP는 ch2의 기본값으로 설정됨 (ROTATION=0x0000, AE_CTRL=0x0299)
+**내부 ch1 슬롯** 단독 활성 시 single mode로 진입하여 0x3c에 쓰기를 시도하지만, 드라이버가 **내부 ch0 슬롯의 ctrl_cache** (disable 상태)만 0x3c에 쓰고 **내부 ch1 슬롯의 ctrl_cache**는 쓰지 않거나 ch0 값으로 덮어씀.
 
-ch2 단독 케이스는 정상 동작하는 이유는 `ctrl_cache.ch0`이 edgeconf ch2의 설정을 정확히 반영하기 때문.
+추정 시나리오 (2026-04-22 확인):
+1. 드라이버가 `ctrl_cache.ch0` (disable 상태 채널의 설정 = vflip=false/ae_on=true/hflip=false)를 0x3c에 씀
+2. 실제 동작해야 하는 내부 ch1 슬롯의 `ctrl_cache.ch1`은 **0x3c에 쓰지 않거나 먼저 쓴 후 ch0 값으로 덮어씀**
+3. 결과: ISP는 disable된 ch0 슬롯의 기본값으로 설정됨 (ROTATION=0x0000, AE_CTRL=0x0299, AWB_CTRL=0x115f)
+
+내부 ch0 슬롯(edgeconf ch0/ch2) 단독 케이스는 정상 동작 — `ctrl_cache.ch0`이 해당 채널 설정을 정확히 반영해 0x3c에 쓰기 때문.
 
 ---
 
@@ -169,23 +190,26 @@ i2ctransfer -f -y 1 w2@0x3c 0x10 0x0c r2
 
 ---
 
-## 영향도 (수정 전)
+## 영향도 (수정 전, 2026-04-22 정정)
 
 | 시나리오 | 영향 |
 |----------|------|
-| ch0, ch1, ch2 활용 | 영향 없음 |
-| ch3 단독 운영 | **vflip/ae 설정 사용 불가** |
-| ch2+ch3 조합 | 미검증 (추정: 정상) |
-| 4ch 모두 활성 | 미검증 (추정: 정상) |
+| 내부 ch0 슬롯 단독 (edgeconf ch0, ch2) | 영향 없음 |
+| **내부 ch1 슬롯 단독 (edgeconf ch1, ch3)** | **vflip/hflip/ae/awb 설정 사용 불가** |
+| dual/quad (2~4채널 활성) | 영향 없음 (0x11/0x12 경로로 쓰기 성공) |
+
+2026-04-22 실측 (드라이버 롤백 상태): ch1 단독 hflip_on, ROTATION 기대 `0x0001` → 실측 `0x0000`. ch3 단독도 동일 패턴 (2026-04-20 기록 참조).
 
 ---
 
-## Resolution (2026-04-21)
+## Resolution (2026-04-21) — ⚠️ 재검증 필요
 
-### 수정 내용
+> **2026-04-22 주석**: 이 Resolution은 아래 §"검증 프로그램 결함"에 서술된 **동일 결함 프로파일**로 검증됐음. 즉 96/96 PASS 중 ch0/ch2를 제외한 **내부 ch1 슬롯 단독 케이스**(ch1/ch3 단독)는 실제로는 dual 모드로 동작했을 가능성이 높아 **재검증 필요**. 2026-04-22 실측에서 ch1 단독은 여전히 FAIL로 재현됨 (단, 2026-04-22 실측은 드라이버를 이전 버전으로 **롤백한 상태**에서 이뤄졌으므로 최신 드라이버에 대한 재검증은 아래 "정정된 검증 프로파일" 적용 후 재실행해야 함).
+
+### 수정 내용 (2026-04-21)
 드라이버(`max9296.c`) 및 gstApp 코드 레벨 수정. 추가로 **AWB 설정(awb_ctrl 레지스터 0x5100)** 도입.
 
-### 검증 방법
+### 검증 방법 (⚠️ 결함 있는 방법 — 2026-04-22 이전 프로파일)
 `run_comprehensive_verify.py` — **96 시나리오** 완전 검증:
 - **Phase 2 (Quad mode)**: 4채널 모두 활성 + 각 채널의 4가지 설정(vflip/hflip/ae/awb) 개별 토글 × 2해상도 = 32 tests
 - **Phase 3 (Dual mode)**: 4 dual 조합 × 2채널 × 4설정 × 2해상도 = 64 tests
@@ -229,11 +253,72 @@ i2ctransfer -f -y 1 w2@0x3c 0x10 0x0c r2
 
 ---
 
-## 권장 조치
+## 검증 프로그램 결함 (2026-04-22 발견)
 
-1. **gstApp 또는 드라이버 측 조사**: i2c-1 bus에서 ch3 단독 활성 시 `ctrl_cache.ch1` (내부 매핑)의 레지스터 쓰기 경로 확인
-2. **임시 우회**: ch3 사용이 필요한 경우 ch2도 함께 활성화 (dual mode)
-3. **QA 커버리지 유지**: 해결 전까지 `gen_{res}_ch3_vflip_on`, `gen_{res}_ch3_ae_off` 4건은 **알려진 실패**로 `known_issues` 분류 권장
+### 요지
+이 문서의 2026-04-17 ~ 2026-04-21 결과(특히 "ch1 단독 PASS"와 96/96 PASS)는 **검증 프로파일/커맨드 결함**으로 인한 **false PASS**. 드라이버 버그는 실제로는 **ch3 뿐만 아니라 ch1 단독도 동일하게 존재**했음.
+
+### 결함 상세
+
+**결함 A: 프로파일이 "단독 모드"를 강제하지 않음**
+
+기존 `gen_*_ch{N}_*.yaml` 프로파일은 대상 채널의 `enable: true`와 해당 속성만 세팅하고, **다른 3채널의 enable 상태는 베이스 edgeconf에 맡겼음**.
+
+```yaml
+# 잘못된 기존 프로파일 (gen_720p_ch1_vflip_on.yaml)
+edgeconf_changes:
+  .VHL_CAM.i2c2.ch1.enable: true     # 이것만 건드림
+  .VHL_CAM.i2c2.ch1.vflip: true
+  # ch0, ch2, ch3의 enable 상태는 미지정 — 베이스 값 유지
+```
+
+→ 베이스 edgeconf에서 ch0이 enable이면 실제로는 **ch0+ch1 dual 모드**로 실행되어 single-mode 코드 경로를 우회함.
+
+**결함 B: 검증 커맨드의 dual/single 주소 fallback**
+
+```yaml
+# 잘못된 검증 커맨드
+command: "(i2ctransfer -f -y 2 w2@0x12 0x10 0x0c r2 2>/dev/null || \
+           i2ctransfer -f -y 2 w2@0x3c 0x10 0x0c r2 2>/dev/null) | tr -d ' '"
+```
+
+→ dual 주소 0x12가 응답하면 single 0x3c는 확인도 안 함. **실제 동작 모드와 상관없이 아무 주소나 맞으면 통과**. single-mode 전용 버그를 원천적으로 검출 불가능.
+
+**결함 C: 동작 모드 진입 자체를 검증 안 함**
+
+i2c 스캔이나 주소 응답성으로 "현재 타겟이 의도한 single/dual 모드인지" 확인하는 단계가 없음. 드라이버 동작과 프로파일 의도 사이의 불일치를 놓침.
+
+### 정정 (2026-04-22)
+
+`profiles/schema.yaml`에 다음 변경 적용 (`tools/fix_schema_single_mode.py`로 일괄 적용):
+
+1. **per-channel 축(`vflip_ch{N}`, `hflip`, `ae_ch{N}`, `awb_ch{N}`)의 `values` 블록에 대상 외 3채널 `enable: false` 명시 추가** → single 모드 강제
+2. **검증 커맨드에서 dual 주소 fallback 제거** → `0x3c`만 읽음. single 모드 진입 실패 시 자연스럽게 FAIL
+
+정정 후 프로파일 재생성: `python3 -c "from generator import generate_cases; generate_cases('profiles')"` — 110개 프로파일 재생성.
+
+### 교훈
+
+- "단독 모드 테스트"는 **다른 채널의 state도 모두 명시**해야 한다. 테스트 케이스가 기본값/베이스 상태에 의존하면 환경 변동에 깨지고 버그를 가린다.
+- 주소 fallback은 편의를 위한 것이지만 **모드 식별**을 흐려 검증 결과를 쓸모없게 만들 수 있다. 의도한 모드를 검증에 명시하라.
+- 테스트 결과가 "100% PASS"로 나올 때 **테스트 방법론 자체에 결함이 없는지** 교차 검증이 필요하다.
+
+### 영향 받은 과거 산출물 (신뢰도 낮음 → 재검증 필요)
+
+- `channel_verify_results.json` (2026-04-17, 32 cases) — ch1 단독 PASS 8건, ch2 단독 FAIL 6건 등 모두 결함 프로파일 기반
+- `channel_retry_results.json` (2026-04-20, 13 cases) — 재시도 결과 역시 동일 결함 프로파일
+- `comprehensive_results.json` (2026-04-21, 96 cases, Resolution 근거) — 동일 결함 프로파일로 돌아 단독 모드 실측이 실제 dual 실측이었을 가능성 높음
+- 본 문서(`ch3-isp-register-issue.md`) 원본 — ch3만 문제라고 주장 → 실제로는 ch1/ch3 공통
+
+---
+
+## 권장 조치 (2026-04-22 갱신)
+
+1. **드라이버 재수정 및 재검증**: `max9296.c`의 `write_per_channel`에서 **내부 ch1 슬롯**(버스와 무관하게 적용)의 single mode 0x3c 쓰기 경로를 확인. i2c-2(edgeconf ch1 단독)와 i2c-1(edgeconf ch3 단독) 양쪽 모두 동일 버그.
+2. **정정된 검증 프로파일로 재검증**: 2026-04-22 스키마로 재생성한 프로파일을 `run_comprehensive_verify.py`로 재실행. 특히 `gen_*_ch1_*`와 `gen_*_ch3_*` 단독 케이스가 PASS하는지 확인 후에야 Resolution 선언.
+3. **임시 우회**: 내부 ch1 슬롯(edgeconf ch1, ch3) 단독 사용이 필요한 경우 같은 버스의 짝 채널(각각 ch0, ch2)도 함께 활성화해 dual 모드로 동작시키기.
+4. **QA 커버리지 유지**: 해결 전까지 `gen_{res}_ch1_*`(8건) + `gen_{res}_ch3_*`(8건) 단독 케이스는 **알려진 실패**로 `known_issues` 분류 권장.
+5. **검증 메서드 회귀 방지**: 향후 새 axis 추가 시 프로파일 generator가 대상 채널의 **단독 여부**를 명시적으로 요구하도록 schema 필드 추가 고려 (예: `isolation: single|dual|quad`).
 
 ---
 

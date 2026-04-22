@@ -168,13 +168,11 @@ def run_scenario(scen: dict) -> dict:
     expected = scen["expected_hex"]
     passed = (actual == expected)
 
-    # 5) single mode인 경우 0x3c fallback도 확인
-    fallback_actual = ""
-    if not passed and addr != 0x3c:
-        fallback_actual = read_isp(bus, 0x3c, reg_hi, reg_lo)
-        if fallback_actual == expected:
-            passed = True
-            actual = f"{actual} → fallback 0x3c={fallback_actual}"
+    # 5) 의도한 주소에서 값이 일치해야만 PASS.
+    #    이전에는 dual(0x11/0x12)에서 값이 안 맞으면 0x3c로 fallback했지만,
+    #    fallback이 실제 동작 모드(single/dual) 혼동을 은폐해 false PASS를 만들었음
+    #    (docs/03-analysis/verification-audit-2026-04-22.md FINDING #12).
+    #    → fallback 제거. 기대 모드의 기대 주소에서만 검증.
 
     return {
         **scen,
@@ -189,12 +187,23 @@ def generate_scenarios():
     scenarios = []
 
     # Phase 2: 모든 4 채널 활성화 + 한 채널의 설정만 토글
-    # 모든 테스트 시작 전 모든 per-channel 설정을 defaults로 완전 리셋 (이전 테스트 잔존 방지)
+    # 모든 테스트 시작 전 모든 per-channel 설정 + 글로벌 설정을 defaults로 완전 리셋 (이전 테스트 잔존 방지).
+    # FINDING #13 (docs/03-analysis/verification-audit-2026-04-22.md) 정정:
+    # 기존은 SETTING_TESTS(vflip/hflip/ae/awb)만 reset → bps/fps/muxer/recording_time/capture 잔존 가능.
+    # → bps=[2048,1024], fps=15, recording_time=1, muxer=mp4, capture.enable=false도 함께 reset.
     def build_reset_changes(w, h, enables):
-        """해상도 + 모든 per-channel 설정을 defaults로 리셋하는 changes 리스트 생성."""
-        chs = [(".VHL_CAM.cam_width", w), (".VHL_CAM.cam_height", h)]
+        """해상도 + 글로벌 defaults + 모든 per-channel 설정 defaults로 리셋."""
+        chs = [
+            (".VHL_CAM.cam_width", w),
+            (".VHL_CAM.cam_height", h),
+            (".VHL_CAM.fps", 15),
+            (".VHL_CAM.recording_time", 1),
+            (".VHL_CAM.muxer", "mp4"),
+            (".VHL_CAM.capture.enable", False),
+        ]
         for ch in range(4):
             chs.append((f"{CH_PATH[ch]}.enable", enables[ch]))
+            chs.append((f"{CH_PATH[ch]}.bps", [2048, 1024]))
             for s_name, s_info in SETTING_TESTS.items():
                 chs.append((f"{CH_PATH[ch]}.{s_name}", s_info["default_ec"]))
         return chs

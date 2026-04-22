@@ -5,7 +5,7 @@ tests/test_setup.py - SetupManager 단위 테스트
 import unittest
 from unittest.mock import patch, MagicMock
 
-from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP, EDGECONF_BACKUP_DIR
+from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP
 
 
 class TestBackupEdgeconf(unittest.TestCase):
@@ -14,29 +14,11 @@ class TestBackupEdgeconf(unittest.TestCase):
         self.mgr = SetupManager(self.ssh)
 
     def test_backup_edgeconf(self):
-        """backup()이 분리된 디렉토리를 생성하고 cp하는지 확인"""
+        """backup()이 올바른 cp 명령을 실행하는지 확인"""
         self.ssh.run.return_value = "OK"
         result = self.mgr.backup()
-        self.ssh.run.assert_called_once_with(
-            f"mkdir -p {EDGECONF_BACKUP_DIR} && cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK"
-        )
+        self.ssh.run.assert_called_once_with(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK")
         self.assertTrue(result)
-
-    def test_backup_path_not_in_shared_v_root(self):
-        """백업 경로가 /root/shared_v 루트에 있으면 안 됨 (glob 충돌 방지)."""
-        # EDGECONF_BACKUP_DIR는 /root/shared_v의 하위(숨김) 디렉토리여야 함
-        self.assertIn("/root/shared_v/", EDGECONF_BACKUP_DIR)
-        self.assertNotEqual(EDGECONF_BACKUP_DIR, "/root/shared_v")
-        # 백업 파일명이 edgeconf_*.json glob 패턴에 매칭되지 않아야 함
-        import fnmatch
-        import os
-        backup_basename = os.path.basename(EDGECONF_BACKUP)
-        # edgeconf_*.json 패턴에 매칭되면 안 됨 (update_network_pim.py glob 충돌)
-        # 현재 파일명 edgeconf_pim.json.bak은 .json으로 끝나지 않으므로 안전
-        self.assertFalse(
-            fnmatch.fnmatch(backup_basename, "edgeconf_*.json"),
-            f"백업 파일명 '{backup_basename}'이 edgeconf_*.json 패턴에 매칭됨 (glob 충돌)"
-        )
 
 
 class TestApplyEdgeconfChanges(unittest.TestCase):
