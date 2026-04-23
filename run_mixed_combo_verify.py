@@ -17,8 +17,6 @@
 from __future__ import annotations
 
 import json
-import os
-import re
 import subprocess
 import sys
 import time
@@ -117,12 +115,12 @@ def apply_edgeconf(enabled: dict[int, str]) -> None:
     """
     # 1. Global 설정 defaults
     jq_parts = [
-        f".VHL_CAM.cam_width = 1280",
-        f".VHL_CAM.cam_height = 720",
-        f".VHL_CAM.fps = 15",
-        f".VHL_CAM.recording_time = 1",
-        f'.VHL_CAM.muxer = "mp4"',
-        f".VHL_CAM.capture.enable = false",
+        ".VHL_CAM.cam_width = 1280",
+        ".VHL_CAM.cam_height = 720",
+        ".VHL_CAM.fps = 15",
+        ".VHL_CAM.recording_time = 1",
+        '.VHL_CAM.muxer = "mp4"',
+        ".VHL_CAM.capture.enable = false",
     ]
     # 2. 모든 채널을 defaults로 reset (enable=false + per-channel settings)
     for ch in range(4):

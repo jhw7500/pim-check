@@ -14,3 +14,19 @@ build/
 .serena/
 .vscode/
 .context/
+
+# AI tooling local dirs
+.base/
+.claude/
+.serena/
+
+# Coverage artifacts
+.coverage
+
+# Runtime logs (keep JSON results untracked by default; track selectively)
+mixed_combo*.log
+smart_retry.log
+bps_*.log
+
+# Schema backups
+profiles/schema.yaml.bak.*

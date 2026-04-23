@@ -77,7 +77,7 @@ def scenario_cli() -> list[QAResult]:
     # --list
     def check_list():
         rc, out, err = _run([PYTHON, PIM_CHECK, "--list"])
-        lines = [l.strip() for l in out.strip().splitlines() if l.strip()]
+        lines = [line.strip() for line in out.strip().splitlines() if line.strip()]
         return rc == 0 and len(lines) > 5, f"{len(lines)} cases"
     (passed, detail), ms = _timed(check_list)
     results.append(QAResult("cli", "--list 케이스 목록", passed, detail, ms))
@@ -94,7 +94,7 @@ def scenario_cli() -> list[QAResult]:
         rc, out, err = _run([PYTHON, PIM_CHECK, "--list"])
         has_generated = any("gen_" in line or "generated" in line.lower()
                            for line in out.splitlines())
-        case_count = len([l for l in out.strip().splitlines() if l.strip()])
+        case_count = len([ln for ln in out.strip().splitlines() if ln.strip()])
         return rc == 0, f"generated={'Y' if has_generated else 'N'}, total={case_count}"
     (passed, detail), ms = _timed(check_generated)
     results.append(QAResult("cli", "--list generated 케이스 포함", passed, detail, ms))

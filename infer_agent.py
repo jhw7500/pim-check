@@ -12,17 +12,15 @@ Usage:
 import argparse
 import json
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
-import yaml
 
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 from config import load_profile
-from generator import (generate_cases, generate_combinations, list_manual_cases,
+from generator import (generate_cases, generate_combinations,
                        load_schema, resolve_rule)
 from ssh import SshClient
 
@@ -85,7 +83,7 @@ def validate_cases(ssh=None) -> list[Finding]:
             if expected_range and cpu_config["gst_range"] != expected_range:
                 findings.append(Finding(
                     "validate", "warning", case_name,
-                    f"gst_range 불일치: schema 규칙 vs 케이스 정의",
+                    "gst_range 불일치: schema 규칙 vs 케이스 정의",
                     expected=expected_range, actual=cpu_config["gst_range"],
                 ))
 
@@ -97,7 +95,7 @@ def validate_cases(ssh=None) -> list[Finding]:
             if expected_stab is not None and stabilize != expected_stab:
                 findings.append(Finding(
                     "validate", "warning", case_name,
-                    f"stabilize_sec 불일치",
+                    "stabilize_sec 불일치",
                     expected=expected_stab, actual=stabilize,
                 ))
 
@@ -110,7 +108,7 @@ def validate_cases(ssh=None) -> list[Finding]:
             if ch_count is not None and expected_ch != ch_count:
                 findings.append(Finding(
                     "validate", "error", case_name,
-                    f"expected_channels 불일치",
+                    "expected_channels 불일치",
                     expected=ch_count, actual=expected_ch,
                 ))
 
@@ -244,7 +242,6 @@ def gap_analysis() -> list[Finding]:
     existing_generated = {f.stem for f in gen_path.glob("*.yaml")} if gen_path.exists() else set()
 
     all_existing = existing_manual | existing_generated
-    manual_changes = list_manual_cases(CASES_DIR)
 
     total_expected = 0
     total_found = 0

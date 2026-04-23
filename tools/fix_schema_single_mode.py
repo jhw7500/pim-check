@@ -162,7 +162,7 @@ def main() -> int:
 
     SCHEMA_PATH.write_text(content)
 
-    print(f"✅ schema.yaml 정정 완료:")
+    print("✅ schema.yaml 정정 완료:")
     print(f"   - hflip 축 enable+disable 삽입: {hflip_count}")
     print(f"   - per-channel 축 disable 삽입: {disable_count}")
     print(f"   - dual fallback 제거: {fallback_count}")

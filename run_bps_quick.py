@@ -105,7 +105,7 @@ def run_test(ch, bps):
     rc, since_str, _ = ssh("date +%s", timeout=5)
     since_ts = int(since_str) if since_str.strip().isdigit() else int(time.time())
 
-    print(f"  [2] killcam 실행...", flush=True)
+    print("  [2] killcam 실행...", flush=True)
     ok2, out, err2 = restart_cam()
     if not ok2:
         return {"channel": ch, "bps": bps, "result": "KILLCAM_FAIL",
