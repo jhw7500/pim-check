@@ -45,7 +45,18 @@ jobs:
         run: |
           python -m pytest --cov --cov-report=term-missing --cov-fail-under=90 -q
 
-      - name: Verify case generation
+      - name: Verify schema validity
+        run: python -c "import yaml; yaml.safe_load(open('profiles/schema.yaml'))"
+
+      - name: Regenerate profiles
+        run: python pim_check.py --generate
+
+      - name: Fail on profile drift
         run: |
-          python pim_check.py --generate
-          python pim_check.py --list --include-generated
+          if ! git diff --exit-code profiles/generated/; then
+            echo "::error::재생성된 프로파일이 커밋된 것과 다릅니다. 로컬에서 'python pim_check.py --generate' 실행 후 커밋하세요."
+            exit 1
+          fi
+
+      - name: List generated cases
+        run: python pim_check.py --list --include-generated
