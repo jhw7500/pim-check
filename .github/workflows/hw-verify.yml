@@ -1,0 +1,110 @@
+name: Hardware Verification (mixed_combo)
+
+# 실물 타겟(192.168.0.5) + SSH + 재부팅이 필요한 검증 워크플로우.
+# self-hosted runner가 빌드서버에 설치되어 있어야 동작.
+#
+# 트리거:
+#   1. workflow_dispatch — Actions UI에서 수동 실행
+#   2. schedule          — 매일 19:00 KST (UTC 10:00)
+#   3. pull_request      — 'needs-hw-verify' 라벨이 붙은 PR
+#
+# 동시성: 한 타겟을 여러 워크플로우가 동시에 만지지 못하도록 lock.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * *'   # 매일 19:00 KST (UTC 10:00)
+  pull_request:
+    types: [labeled, synchronize]
+
+concurrency:
+  group: pim-target-lock
+  cancel-in-progress: false   # 실행 중이면 새 트리거는 큐에 대기
+
+jobs:
+  mixed-combo:
+    # PR 트리거는 'needs-hw-verify' 라벨이 있을 때만 실행.
+    # workflow_dispatch / schedule은 항상 실행.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'needs-hw-verify'))
+    runs-on: [self-hosted, linux, pim-target]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show runner info
+        run: |
+          echo "Runner: $(hostname)"
+          echo "Date: $(date -Iseconds)"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Commit: ${{ github.sha }}"
+
+      - name: Verify required tools
+        run: |
+          for tool in sshpass jq python3 ffprobe; do
+            if ! command -v $tool >/dev/null 2>&1; then
+              echo "::error::Required tool '$tool' not installed on runner"
+              exit 1
+            fi
+          done
+          python3 --version
+          jq --version
+
+      - name: Install Python deps
+        run: |
+          python3 -m pip install --user pyyaml || true
+          python3 -c "import yaml; print('pyyaml ok')"
+
+      - name: Target reachability precheck
+        run: |
+          if ! ping -c 2 -W 2 192.168.0.5 >/dev/null 2>&1; then
+            echo "::error::Target 192.168.0.5 unreachable from runner"
+            exit 1
+          fi
+          if ! sshpass -p root ssh -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=5 -o LogLevel=ERROR \
+                root@192.168.0.5 "echo SSH_OK" 2>/dev/null | grep -q SSH_OK; then
+            echo "::error::SSH to root@192.168.0.5 failed"
+            exit 1
+          fi
+          echo "Target reachable, SSH OK"
+
+      - name: Run mixed_combo verification (4 tests × 10 channel registers)
+        run: python3 run_mixed_combo_verify.py
+
+      - name: Upload results (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixed-combo-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            mixed_combo*.log
+            mixed_combo_results.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f mixed_combo_results.json ]; then
+            python3 -c "
+            import json
+            d = json.load(open('mixed_combo_results.json'))
+            print('=== Test Summary ===')
+            for r in d:
+                if 'error' in r:
+                    print(f\"  [ERROR] Test {r['test_id']}: {r['error']}\")
+                else:
+                    sub = sum(1 for x in r['results'] if x['all_pass'])
+                    total = len(r['results'])
+                    mark = 'PASS' if r['pass'] else 'FAIL'
+                    print(f\"  [{mark}] Test {r['test_id']}: {sub}/{total} ch — {r['name']}\")
+            "
+          else
+            echo "No results JSON produced"
+          fi

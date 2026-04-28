@@ -1,0 +1,80 @@
+name: Hardware Verification (comprehensive — weekly)
+
+# run_comprehensive_verify.py — 96 시나리오, ~2시간 소요.
+# 주말 새벽 한 번 실행하여 깊은 회귀 검증 수행.
+#
+# 트리거:
+#   1. workflow_dispatch — Actions UI에서 수동 실행 (긴급/사후 검증)
+#   2. schedule          — 매주 일요일 02:00 KST (토요일 17:00 UTC)
+#
+# pim-target-lock concurrency 그룹을 mixed_combo와 공유하여 충돌 방지.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 17 * * 6'   # 매주 일요일 02:00 KST (토요일 17:00 UTC)
+
+concurrency:
+  group: pim-target-lock
+  cancel-in-progress: false
+
+jobs:
+  comprehensive:
+    runs-on: [self-hosted, linux, pim-target]
+    timeout-minutes: 180   # 96 tests × ~70s + 마진
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show runner info
+        run: |
+          echo "Runner: $(hostname)"
+          echo "Date: $(date -Iseconds)"
+          echo "Trigger: ${{ github.event_name }}"
+
+      - name: Verify required tools
+        run: |
+          for tool in sshpass jq python3 ffprobe; do
+            command -v $tool >/dev/null 2>&1 || { echo "::error::missing $tool"; exit 1; }
+          done
+
+      - name: Install Python deps
+        run: python3 -m pip install --user pyyaml || true
+
+      - name: Target reachability precheck
+        run: |
+          ping -c 2 -W 2 192.168.0.5 >/dev/null || { echo "::error::target down"; exit 1; }
+          sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o LogLevel=ERROR root@192.168.0.5 "echo SSH_OK" \
+              | grep -q SSH_OK || { echo "::error::ssh fail"; exit 1; }
+
+      - name: Run comprehensive verification (96 tests, ~2h)
+        run: python3 run_comprehensive_verify.py
+
+      - name: Upload results (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comprehensive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            comprehensive*.log
+            comprehensive_results.json
+          retention-days: 60   # 야간 결과는 더 오래 보관
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f comprehensive_results.json ]; then
+            python3 -c "
+            import json
+            d = json.load(open('comprehensive_results.json'))
+            total = len(d)
+            passed = sum(1 for r in d if r.get('result') == 'PASS')
+            print(f'=== Comprehensive Summary: {passed}/{total} PASS ===')
+            for r in d[:10]:
+                print(f\"  [{r.get('result','?')}] {r.get('name','?')}\")
+            if total > 10: print(f'  ... ({total-10} more)')
+            "
+          fi
