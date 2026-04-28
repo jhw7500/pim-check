@@ -5,15 +5,24 @@ name: Hardware Verification (mixed_combo)
 #
 # 트리거:
 #   1. workflow_dispatch — Actions UI에서 수동 실행
-#   2. schedule          — 매일 19:00 KST (UTC 10:00)
+#   2. push to main      — main에 머지/푸시될 때 즉시 검증 (코드 회귀 감지)
 #   3. pull_request      — 'needs-hw-verify' 라벨이 붙은 PR
+#
+# 매일 cron 제거 (2026-04-28): 타겟이 거의 변하지 않는 환경에서 매일 반복은
+# eMMC 마모/알림 피로 등 비용만 발생. 코드 변경 시점(main push)에 검증하고,
+# 인프라/펌웨어 드리프트 sanity는 hw-verify-comprehensive.yml의 주 1회 야간으로 커버.
 #
 # 동시성: 한 타겟을 여러 워크플로우가 동시에 만지지 못하도록 lock.
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 10 * * *'   # 매일 19:00 KST (UTC 10:00)
+  push:
+    branches: [main]
+    # 코드/스키마/프로파일 변경에만 트리거. 문서/워크플로우 자체 수정은 제외.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.github/workflows/**'
   pull_request:
     types: [labeled, synchronize]
 
