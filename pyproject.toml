@@ -52,11 +52,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-# SSH/실물 타겟 의존 스크립트가 omit에 추가되면서 측정 모수(1277 lines)가 줄어들어
-# reporter.py/parallel.py/history.py 등 기존 커버리지 격차가 두드러지게 드러남.
-# 현재 실측 89.74%. 기준을 85%로 완화 — 회귀 방지 보장은 유지하되,
-# 후속 작업에서 reporter/parallel 테스트 추가하여 다시 90%로 상향 예정.
-fail_under = 85
+fail_under = 90
 exclude_lines = [
     "if __name__",
     "pragma: no cover",
