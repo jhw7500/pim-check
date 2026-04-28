@@ -66,15 +66,18 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          if [ -f comprehensive_results.json ]; then
-            python3 -c "
-            import json
-            d = json.load(open('comprehensive_results.json'))
-            total = len(d)
-            passed = sum(1 for r in d if r.get('result') == 'PASS')
-            print(f'=== Comprehensive Summary: {passed}/{total} PASS ===')
-            for r in d[:10]:
-                print(f\"  [{r.get('result','?')}] {r.get('name','?')}\")
-            if total > 10: print(f'  ... ({total-10} more)')
-            "
+          if [ ! -f comprehensive_results.json ]; then
+            echo "No results JSON produced"
+            exit 0
           fi
+          python3 <<'PYEOF'
+          import json
+          d = json.load(open('comprehensive_results.json'))
+          total = len(d)
+          passed = sum(1 for r in d if r.get('result') == 'PASS')
+          print(f'=== Comprehensive Summary: {passed}/{total} PASS ===')
+          for r in d[:10]:
+              print(f"  [{r.get('result','?')}] {r.get('name','?')}")
+          if total > 10:
+              print(f'  ... ({total-10} more)')
+          PYEOF

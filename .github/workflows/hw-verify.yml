@@ -91,20 +91,20 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          if [ -f mixed_combo_results.json ]; then
-            python3 -c "
-            import json
-            d = json.load(open('mixed_combo_results.json'))
-            print('=== Test Summary ===')
-            for r in d:
-                if 'error' in r:
-                    print(f\"  [ERROR] Test {r['test_id']}: {r['error']}\")
-                else:
-                    sub = sum(1 for x in r['results'] if x['all_pass'])
-                    total = len(r['results'])
-                    mark = 'PASS' if r['pass'] else 'FAIL'
-                    print(f\"  [{mark}] Test {r['test_id']}: {sub}/{total} ch — {r['name']}\")
-            "
-          else
+          if [ ! -f mixed_combo_results.json ]; then
             echo "No results JSON produced"
+            exit 0
           fi
+          python3 <<'PYEOF'
+          import json
+          d = json.load(open('mixed_combo_results.json'))
+          print('=== Test Summary ===')
+          for r in d:
+              if 'error' in r:
+                  print(f"  [ERROR] Test {r['test_id']}: {r['error']}")
+              else:
+                  sub = sum(1 for x in r['results'] if x['all_pass'])
+                  total = len(r['results'])
+                  mark = 'PASS' if r['pass'] else 'FAIL'
+                  print(f"  [{mark}] Test {r['test_id']}: {sub}/{total} ch — {r['name']}")
+          PYEOF
