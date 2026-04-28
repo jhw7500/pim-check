@@ -9,6 +9,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -301,7 +302,8 @@ def main():
                         help="타겟 없이 CLI/WEB 구조만 검증")
     parser.add_argument("--scenario", choices=["cli", "target", "web", "all"],
                         default="all", help="실행할 시나리오")
-    parser.add_argument("--host", default="192.168.0.5", help="타겟 호스트")
+    parser.add_argument("--host", default=os.environ.get("TARGET_HOST", "192.168.0.5"),
+                        help="타겟 호스트 (env: TARGET_HOST)")
     parser.add_argument("--user", default="root", help="타겟 사용자")
     parser.add_argument("--password", default="root", help="타겟 비밀번호")
     parser.add_argument("--json", dest="json_output", action="store_true",

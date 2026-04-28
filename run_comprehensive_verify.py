@@ -16,6 +16,7 @@
 - 2채널 enable: dual mode, ch0/ch2=0x11, ch1/ch3=0x12
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -24,7 +25,8 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 RESULT = BASE / "comprehensive_results.json"
-TARGET = "192.168.0.5"
+# 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback.
+TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
 REBOOT_WAIT = 300   # reboot 후 SSH 복귀 최대 대기 (초) — 기존 180s는 부족
 STABILIZE = 30
 

@@ -5,6 +5,7 @@ schema.yaml에 enable=true 강제 추가한 후, 이전에 FAIL났던 케이스�
 이제 PASS하는지 확인한다.
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -14,7 +15,8 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 RESULT = BASE / "channel_retry_results.json"
 
-TARGET_HOST = "192.168.0.5"
+# 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback.
+TARGET_HOST = os.environ.get("TARGET_HOST", "192.168.0.5")
 CASE_TIMEOUT = 900
 WAIT_BETWEEN = 180
 CHECK_INTERVAL = 5

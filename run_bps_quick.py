@@ -11,6 +11,7 @@
 bps 배열 [high, low]: 첫번째(recording) bps만 검증, 두번째(RTSP)는 미지원이라 동일값으로 저장.
 """
 import json
+import os
 import subprocess
 import time
 from datetime import datetime
@@ -18,7 +19,8 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 RESULT = BASE / "bps_quick_results.json"
-TARGET = "192.168.0.5"
+# 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback.
+TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
 
 TEST_CHANNEL = 0  # i2c-2 bus, 편의상 ch0만 사용
 TEST_BPS_VALUES = [1024, 2048, 4096, 8192]

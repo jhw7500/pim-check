@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-TARGET = "192.168.0.5"
+# 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback (단일 소스 — TARGET_IP 중앙화).
+TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
 EDGECONF = "/root/shared_v/edgeconf_pim.json"
 
 # 설정 조합 (vflip, hflip, ae_on, awb) + 예상 레지스터 값

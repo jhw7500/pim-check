@@ -269,10 +269,22 @@ email:
   recipients: [team@example.com]
 ```
 
+## 환경 변수
+
+다음 환경 변수로 코드/설정 수정 없이 동작 변경 가능:
+
+| 변수 | 우선순위 | 설명 | 예시 |
+|------|---------|------|------|
+| `TARGET_HOST` | 최상위 | 타겟 IP — `run_*.py` runner와 `qa_agent`/`infer_agent`의 기본 호스트 | `TARGET_HOST=192.168.0.50 python3 run_mixed_combo_verify.py` |
+
+**우선순위 (높음→낮음)**: env var → CLI 인자(`--host`) → `~/.pim-check.yaml`(`default_host`) → `profiles/base.yaml`(`target.host`) → 코드 fallback (`192.168.0.5`).
+
+CI(GitHub Actions hw-verify*)는 `env: TARGET_HOST: ...` 으로 워크플로우 상단에서 한 곳만 수정하면 모든 step에 자동 적용됨.
+
 ## 테스트
 
 ```bash
-python3 -m pytest tests/ -v    # 205 tests
+python3 -m pytest tests/ -v    # 256 tests, 93% coverage
 ```
 
 ## 라이선스

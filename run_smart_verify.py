@@ -21,6 +21,7 @@
 - EXP_TIME 0x500c (4B): per-bus
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -29,7 +30,8 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 RESULT = BASE / "smart_results.json"
-TARGET = "192.168.0.5"
+# 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback.
+TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
 REBOOT_WAIT = 300
 STABILIZE = 30
 

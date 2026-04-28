@@ -11,6 +11,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -516,7 +517,8 @@ def main():
     parser.add_argument("--all", action="store_true", help="전체 파이프라인")
     parser.add_argument("--no-target", action="store_true", help="타겟 없이 정적 분석만")
     parser.add_argument("--dry-run", action="store_true", help="생성 시 파일 미작성")
-    parser.add_argument("--host", default="192.168.0.5")
+    parser.add_argument("--host", default=os.environ.get("TARGET_HOST", "192.168.0.5"),
+                        help="타겟 호스트 (env: TARGET_HOST)")
     parser.add_argument("--user", default="root")
     parser.add_argument("--password", default="root")
     parser.add_argument("--json", dest="json_output", action="store_true")

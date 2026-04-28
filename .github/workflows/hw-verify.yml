@@ -21,6 +21,10 @@ concurrency:
   group: pim-target-lock
   cancel-in-progress: false   # 실행 중이면 새 트리거는 큐에 대기
 
+# 타겟 IP 단일 소스. 환경 변경 시 이 값만 수정하면 모든 SSH runner가 자동 적용됨.
+env:
+  TARGET_HOST: 192.168.0.5
+
 jobs:
   mixed-combo:
     # PR 트리거는 'needs-hw-verify' 라벨이 있을 때만 실행.

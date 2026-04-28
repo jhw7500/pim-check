@@ -7,6 +7,7 @@
 - 모든 결과를 JSON 로그로 저장하고 요약 출력
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -17,7 +18,8 @@ BASE = Path(__file__).resolve().parent
 LOG = BASE / "channel_verify.log"
 RESULT = BASE / "channel_verify_results.json"
 
-TARGET_HOST = "192.168.0.5"
+# 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback.
+TARGET_HOST = os.environ.get("TARGET_HOST", "192.168.0.5")
 CASE_TIMEOUT = 900      # 15분 per case
 WAIT_BETWEEN = 120      # 최대 2분 SSH 복구 대기
 CHECK_INTERVAL = 5
