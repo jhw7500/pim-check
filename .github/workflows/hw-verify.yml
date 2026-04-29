@@ -37,10 +37,11 @@ env:
 jobs:
   mixed-combo:
     # PR 트리거는 'needs-hw-verify' 라벨이 있을 때만 실행.
-    # workflow_dispatch / schedule은 항상 실행.
+    # workflow_dispatch / schedule / push (main)은 항상 실행.
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
+      github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'needs-hw-verify'))
     runs-on: [self-hosted, linux, pim-target]
