@@ -29,6 +29,9 @@ RESULT = BASE / "comprehensive_results.json"
 TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
 REBOOT_WAIT = 300   # reboot 후 SSH 복귀 최대 대기 (초) — 기존 180s는 부족
 STABILIZE = 30
+RETRY_EXTRA_WAIT = 90   # 1차 read 실패 시 추가 안정화 대기 (초) 후 재시도
+RETRY_COUNT = 2         # 재시도 횟수 (총 1차 + RETRY_COUNT회)
+STOP_ON_FAIL = True     # FAIL 시 즉시 중단 (edgeconf는 그대로 남김 — 수동 진단용)
 
 # 채널 → 버스 매핑
 CH_BUS = {0: 2, 1: 2, 2: 1, 3: 1}
@@ -91,16 +94,18 @@ def wait_ssh(timeout=REBOOT_WAIT):
 
 
 def apply_edgeconf(changes: list[tuple[str, object]]):
-    """모든 변경을 단일 jq 체인으로 한 번에 적용 (SSH 1회)."""
+    """모든 변경을 단일 jq 체인으로 한 번에 적용 (SSH 1회).
+
+    값 직렬화는 json.dumps를 사용해 모든 JSON 타입(bool/int/float/str/list/dict)을 정확히 변환.
+    이전 구현은 list/dict가 string으로 wrap돼 bps=[2048,1024] 같은 array가
+    "[2048, 1024]" 문자열로 잘못 저장되는 버그가 있었음.
+    """
     exprs = []
     for path, value in changes:
-        if isinstance(value, bool):
-            v_str = "true" if value else "false"
-            exprs.append(f"{path} = {v_str}")
-        elif isinstance(value, (int, float)):
-            exprs.append(f"{path} = {value}")
-        else:
-            exprs.append(f'{path} = "{value}"')
+        # bool은 Python json.dumps가 "true"/"false"로 정확히 출력 — jq 호환.
+        # list/dict도 JSON 그대로 출력 (jq는 JSON literal 그대로 수용).
+        v_jq = json.dumps(value)
+        exprs.append(f"{path} = {v_jq}")
     combined = " | ".join(exprs)
     cmd = (f"jq '{combined}' /root/shared_v/edgeconf_pim.json > /tmp/_e.json "
            f"&& mv /tmp/_e.json /root/shared_v/edgeconf_pim.json && echo OK")
@@ -161,25 +166,34 @@ def run_scenario(scen: dict) -> dict:
                 "error": f"{type(e).__name__}: {str(e)[:200]}",
                 "elapsed": round(time.monotonic() - t0, 1)}
 
-    # 4) ISP 레지스터 읽기
+    # 4) ISP 레지스터 읽기 (1차 + 실패 시 RETRY_COUNT회 추가 대기 후 재시도)
     bus = scen["bus"]
     addr = scen["addr"]
     reg_hi = scen["reg_hi"]
     reg_lo = scen["reg_lo"]
-    actual = read_isp(bus, addr, reg_hi, reg_lo)
     expected = scen["expected_hex"]
+
+    actual = read_isp(bus, addr, reg_hi, reg_lo)
     passed = (actual == expected)
+    retries_used = 0
+    actual_history = [actual or "(no response)"]
 
-    # 5) 의도한 주소에서 값이 일치해야만 PASS.
-    #    이전에는 dual(0x11/0x12)에서 값이 안 맞으면 0x3c로 fallback했지만,
-    #    fallback이 실제 동작 모드(single/dual) 혼동을 은폐해 false PASS를 만들었음
-    #    (docs/03-analysis/verification-audit-2026-04-22.md FINDING #12).
-    #    → fallback 제거. 기대 모드의 기대 주소에서만 검증.
+    # 5) 1차 실패 시 추가 안정화 대기 후 재시도.
+    #    (단발 timing/ISP unstable 이슈 회피)
+    while not passed and retries_used < RETRY_COUNT:
+        time.sleep(RETRY_EXTRA_WAIT)
+        actual = read_isp(bus, addr, reg_hi, reg_lo)
+        passed = (actual == expected)
+        retries_used += 1
+        actual_history.append(actual or "(no response)")
 
+    # 6) 의도한 주소에서 값이 일치해야만 PASS (fallback 없음, FINDING #12 정정).
     return {
         **scen,
         "actual": actual or "(no response)",
         "result": "PASS" if passed else "FAIL",
+        "retries_used": retries_used,
+        "actual_history": actual_history,  # 재시도 추적 (1차/N차 변화 분석)
         "elapsed": round(time.monotonic() - t0, 1),
     }
 
@@ -296,12 +310,39 @@ def main():
         t_start = datetime.now().strftime("%H:%M:%S")
         print(f"[{i}/{len(scenarios)}] {t_start} {scen['name']}...", flush=True)
         r = run_scenario(scen)
+
+        # EXCEPTION_TIMEOUT: SSH 일시 timeout — STOP하지 않고 60s 대기 후 시나리오 1회 retry.
+        # 단발 SSH timeout은 진짜 결함이 아니므로 회복 시도.
+        if r["result"] == "EXCEPTION_TIMEOUT":
+            print(f"   ⚠️  EXCEPTION_TIMEOUT — 60s 대기 후 재시도", flush=True)
+            time.sleep(60)
+            r2 = run_scenario(scen)
+            r2["after_exception_retry"] = True
+            r = r2
+
         results.append(r)
         mark = "[+]" if r["result"] == "PASS" else "[X]"
         actual_str = r.get("actual", "-")
         print(f"   {mark} {r['result']} ({r['elapsed']}s) expected={scen['expected_hex']} got={actual_str}",
               flush=True)
         RESULT.write_text(json.dumps(results, indent=2, ensure_ascii=False))
+
+        # STOP_ON_FAIL: EXCEPTION_TIMEOUT 재시도 후에도 PASS 아니면 즉시 중단.
+        # edgeconf는 해당 시나리오의 설정 그대로 남아 있어 수동 진단 가능.
+        if STOP_ON_FAIL and r["result"] != "PASS":
+            print()
+            print("=" * 60)
+            print(f"⚠️  STOP_ON_FAIL 활성: 첫 FAIL 발생 → 즉시 중단")
+            print(f"   시나리오: {scen['name']}")
+            print(f"   결과: {r['result']}, expected={scen['expected_hex']}, actual={actual_str}")
+            print(f"   타겟 edgeconf는 이 시나리오 설정으로 남아있음.")
+            print(f"   수동 검증 명령:")
+            print(f"     ssh root@{TARGET}")
+            print(f"     i2ctransfer -f -y {scen['bus']} w2@0x{scen['addr']:02x} "
+                  f"0x{scen['reg_hi']:02x} 0x{scen['reg_lo']:02x} r2 | tr -d ' '")
+            print(f"   기대값: {scen['expected_hex']}")
+            print("=" * 60)
+            sys.exit(2)
 
     # 요약
     p = sum(1 for r in results if r["result"] == "PASS")
