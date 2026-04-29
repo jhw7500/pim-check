@@ -314,7 +314,7 @@ def main():
         # EXCEPTION_TIMEOUT: SSH 일시 timeout — STOP하지 않고 60s 대기 후 시나리오 1회 retry.
         # 단발 SSH timeout은 진짜 결함이 아니므로 회복 시도.
         if r["result"] == "EXCEPTION_TIMEOUT":
-            print(f"   ⚠️  EXCEPTION_TIMEOUT — 60s 대기 후 재시도", flush=True)
+            print("   ⚠️  EXCEPTION_TIMEOUT — 60s 대기 후 재시도", flush=True)
             time.sleep(60)
             r2 = run_scenario(scen)
             r2["after_exception_retry"] = True
@@ -332,11 +332,11 @@ def main():
         if STOP_ON_FAIL and r["result"] != "PASS":
             print()
             print("=" * 60)
-            print(f"⚠️  STOP_ON_FAIL 활성: 첫 FAIL 발생 → 즉시 중단")
+            print("⚠️  STOP_ON_FAIL 활성: 첫 FAIL 발생 → 즉시 중단")
             print(f"   시나리오: {scen['name']}")
             print(f"   결과: {r['result']}, expected={scen['expected_hex']}, actual={actual_str}")
-            print(f"   타겟 edgeconf는 이 시나리오 설정으로 남아있음.")
-            print(f"   수동 검증 명령:")
+            print("   타겟 edgeconf는 이 시나리오 설정으로 남아있음.")
+            print("   수동 검증 명령:")
             print(f"     ssh root@{TARGET}")
             print(f"     i2ctransfer -f -y {scen['bus']} w2@0x{scen['addr']:02x} "
                   f"0x{scen['reg_hi']:02x} 0x{scen['reg_lo']:02x} r2 | tr -d ' '")
