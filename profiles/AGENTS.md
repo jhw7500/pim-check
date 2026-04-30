@@ -18,8 +18,9 @@ YAML 기반 테스트 프로파일 디렉토리. `base.yaml`이 공통 기본값
 
 | Directory | Purpose |
 |-----------|---------|
-| `cases/` | 수동 작성 테스트 케이스 YAML (verify_*, fault_*, config_*, board_* 등) |
+| `cases/` | 수동 작성 테스트 케이스 YAML (verify_*, fault_*, config_*, board_*, multi_* 등) |
 | `generated/` | `--generate` 명령으로 자동 생성된 케이스 (gen_* 접두사) |
+| `plans/` | Declarative Release Plan YAML — case 묶음 + 합격선 + reporting (`plans/AGENTS.md` 참조) |
 
 ## For AI Agents
 

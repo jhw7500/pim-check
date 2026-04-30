@@ -9,8 +9,9 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 
 | File | Description |
 |------|-------------|
-| `pim_check.py` | CLI 엔트리포인트. argparse 기반 명령행 인터페이스 (`--case`, `--all`, `--parallel`, `--watch` 등) |
+| `pim_check.py` | CLI 엔트리포인트. argparse 기반 명령행 인터페이스 (`--case`, `--all`, `--parallel`, `--watch`, `--plan`, `--list-plans`, `--promote-baseline` 등) |
 | `engine.py` | QA 체크 엔진. 스냅샷 1회 실행(`run_snapshot`) 및 모니터 루프(`run_monitor`) + thermal shutdown 복구 |
+| `plan.py` | Declarative Release Plan layer — load/lint/resolve/execute/gate/render. case 묶음 + 합격선 + reporting을 plan YAML 1개에 표현. 6개 누적 run_*.py 통합 wedge. |
 | `ssh.py` | SSH 클라이언트 래퍼. paramiko 우선, sshpass 폴백. `SshClient`, `SshTimeoutError`, `SshConnectionError` |
 | `config.py` | YAML 설정 로더. `base.yaml` + `cases/{name}.yaml` 딥 머지 패턴 |
 | `setup.py` | `SetupManager` — edgeconf JSON 변경, 백업/복원, 재부팅 대기 |
@@ -40,7 +41,7 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 | Directory | Purpose |
 |-----------|---------|
 | `checks/` | QA 체크 모듈 (BaseCheck 서브클래스들) — `checks/AGENTS.md` 참조 |
-| `profiles/` | YAML 테스트 프로파일 (base + cases + generated + schema) — `profiles/AGENTS.md` 참조 |
+| `profiles/` | YAML 테스트 프로파일 (base + cases + generated + schema + plans) — `profiles/AGENTS.md` 참조 |
 | `tests/` | pytest 테스트 스위트 — `tests/AGENTS.md` 참조 |
 | `scripts/` | Windows 실행/설정 스크립트 — `scripts/AGENTS.md` 참조 |
 | `deploy/` | 배포 설정 (Grafana, systemd) — `deploy/AGENTS.md` 참조 |

@@ -41,6 +41,10 @@ python3 pim_check.py --case 720p_2ch --html --history
 
 # 대시보드 확인
 python3 pim_check.py --history-report
+
+# Plan 실행 (case 묶음 + 합격선 + 리포트 한번에)
+python3 pim_check.py --plan smoke --host 192.168.0.5
+python3 pim_check.py --list-plans
 ```
 
 ## CLI 플래그 전체
@@ -83,6 +87,16 @@ python3 pim_check.py --history-report
 | `--learn` | 타겟 현재 상태 기반 베이스라인 생성 |
 | `--dry-run` | 재부팅 없이 설정 차이 미리보기 |
 | `--diff-targets H1,H2` | 두 타겟 간 edgeconf 비교 |
+
+### Plan (Declarative Release)
+
+| 플래그 | 설명 |
+|--------|------|
+| `--plan NAME` | profiles/plans/{name}.yaml 실행 (case 묶음 + 합격선 + 리포트) |
+| `--list-plans` | 사용 가능한 plan 목록 |
+| `--promote-baseline PLAN` | plan 결과를 baseline으로 promote (다음 릴리스에서 회귀 비교용) |
+| `--baseline-source PATH` | promote 대상 결과 JSON 경로 (생략 시 가장 최근) |
+| `--baseline-label LABEL` | baseline 라벨 (예: `v1_2`, 생략 시 source 파일명) |
 
 ### 알림/설정
 
@@ -286,6 +300,78 @@ CI(GitHub Actions hw-verify*)는 `env: TARGET_HOST: ...` 으로 워크플로우 
 ```bash
 python3 -m pytest tests/ -v    # 256 tests, 93% coverage
 ```
+
+## Plans (Declarative Release Workflow)
+
+`profiles/plans/{name}.yaml` 한 파일에 (a) 어떤 case 묶음을 (b) 어떤 합격선으로 (c) 어떤 baseline과 비교하여 (d) 어떤 형식으로 보고할지 모두 표현한다. 매 릴리스마다 새 Python runner 스크립트를 작성하지 않아도 된다.
+
+기존 plan (`--list-plans`):
+
+| Plan | 용도 | Cases |
+|------|------|------:|
+| `smoke` | 빠른 회귀 보호 (PR/build 직후 sanity) | 6 |
+| `comprehensive` | 채널 × 해상도 × 설정 종합 검증 (multi-channel) | 18 |
+| `channel_verify` | vflip/ae 32 cases 단일 토글 | 32 |
+| `bps_quick` | bitrate 검증 | 3 |
+| `mixed_combo` | 채널 조합별 i2c 모드 검증 | 22 |
+| `nightly` | 야간 전수 회귀 (6 러너 통합) | 146 |
+| `release_next` | 다음 릴리스 게이트 (가상, 시나리오별 교체 필요) | 49 |
+
+### 운영 워크플로우
+
+```bash
+# 1. plan 실행 → reports/{plan}/{ts}.json/html/junit/md 생성
+python3 pim_check.py --plan comprehensive --host 192.168.0.5
+
+# 2. 결과 검토 후 baseline으로 promote
+python3 pim_check.py --promote-baseline comprehensive --baseline-label v1_2
+# → reports/comprehensive/baselines/v1_2.json 생성
+
+# 3. plan YAML의 gate.baseline_ref.file을 새 경로로 갱신
+#    file: reports/comprehensive/baselines/v1_2.json
+
+# 4. 다음 릴리스에서 plan 다시 실행 → 자동 회귀 비교
+python3 pim_check.py --plan comprehensive --host 192.168.0.5
+# → regressions / fixed / new_cases 분석 + verdict (PASS/FAIL/WARN)
+```
+
+### Exit Code 매핑
+
+| Code | 의미 |
+|------|------|
+| 0 | PASS (모든 case 통과 + warning 없음) |
+| 1 | FAIL (regressions 또는 threshold 미달) |
+| 2 | WARN (통과지만 known_issue 발생) |
+| 3 | plan lint 실패 / 파일 없음 / 실행 자체 에러 |
+
+### Plan YAML 구조 (요약)
+
+```yaml
+name: "..."
+description: "..."
+version: 1
+cases:
+  regression: [case_a, case_b, "glob_*"]   # 항상 도는 회귀 보호
+  delta:      [feature_*]                  # 이번 릴리스 특화 (regression과 차집합)
+execution:
+  stop_on_fail: false
+  case_retry: 2                            # 실패 시 재시도
+  reboot_wait_sec: 300
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: true
+  baseline_ref:
+    file: reports/{plan}/baselines/v_prev.json
+    fail_on_new_failure: true              # 이전 PASS → 이번 FAIL만 차단
+    new_case_policy: warn                  # baseline에 없는 신규 case
+reports:
+  - { format: html, path: "reports/{plan_name}/{timestamp}.html" }
+  - { format: junit, path: "reports/{plan_name}/{timestamp}.xml" }
+  - { format: json, path: "reports/{plan_name}/{timestamp}.json" }
+  - { format: markdown_summary, path: "reports/{plan_name}/{timestamp}.md" }
+```
+
+자세한 plan 작성 가이드 + 흔한 lint 에러: `profiles/plans/AGENTS.md`.
 
 ## 라이선스
 
