@@ -923,3 +923,74 @@ def render_reports(plan: Plan, executions: list[CaseExecution],
             print(f"WARNING: report '{fmt}' 생성 실패: {exc}")
 
     return written
+
+
+# ── Baseline Promotion (Phase 3 — 운영 헬퍼) ─────────────────────
+
+def find_latest_report(plan_name: str, base_path: str) -> str | None:
+    """reports/{plan_name}/*.json 중 mtime 가장 최근 파일 경로 반환.
+
+    baselines/ 하위는 제외 — 이미 promote된 baseline은 source가 아니어야 함.
+    Returns: 절대경로 또는 None (없을 때).
+    """
+    reports_dir = os.path.join(base_path, "reports", plan_name)
+    if not os.path.isdir(reports_dir):
+        return None
+
+    candidates: list[tuple[float, str]] = []
+    for entry in os.listdir(reports_dir):
+        if not entry.endswith(".json"):
+            continue
+        full = os.path.join(reports_dir, entry)
+        if not os.path.isfile(full):
+            continue  # baselines/ 같은 하위 디렉토리 스킵
+        try:
+            candidates.append((os.path.getmtime(full), full))
+        except OSError:
+            continue
+
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def promote_baseline(source_path: str, plan_name: str, base_path: str,
+                     label: str | None = None) -> str:
+    """source_path JSON을 reports/{plan_name}/baselines/{label}.json으로 복사.
+
+    label 없으면 source 파일명 그대로 사용. .json 확장자 자동 부가.
+
+    Args:
+        source_path: 결과 JSON 절대 또는 base_path 기준 상대경로
+        plan_name: plan 이름 (target 디렉토리 결정)
+        base_path: project root
+        label: baseline 라벨 (예: "v1_2"). None이면 source 파일명 사용.
+
+    Returns:
+        복사된 baseline 파일 절대경로.
+
+    Raises:
+        FileNotFoundError: source가 없을 때.
+    """
+    import shutil
+
+    if not os.path.isabs(source_path):
+        source_path = os.path.join(base_path, source_path)
+
+    if not os.path.exists(source_path):
+        raise FileNotFoundError(f"Source not found: {source_path}")
+
+    if label is None:
+        label = os.path.basename(source_path)
+        if not label.endswith(".json"):
+            label += ".json"
+    elif not label.endswith(".json"):
+        label = label + ".json"
+
+    target_dir = os.path.join(base_path, "reports", plan_name, "baselines")
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, label)
+
+    shutil.copy2(source_path, target_path)
+    return target_path

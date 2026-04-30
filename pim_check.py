@@ -54,6 +54,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="실행할 plan 이름 (profiles/plans/{name}.yaml)")
     parser.add_argument("--list-plans", action="store_true",
                         help="사용 가능한 plan 목록 출력")
+    parser.add_argument("--promote-baseline", type=str, default=None, metavar="PLAN",
+                        help="plan 결과를 baseline으로 promote (예: --promote-baseline comprehensive)")
+    parser.add_argument("--baseline-source", type=str, default=None, metavar="PATH",
+                        help="promote 대상 결과 JSON 경로 (생략 시 가장 최근)")
+    parser.add_argument("--baseline-label", type=str, default=None, metavar="LABEL",
+                        help="baseline 파일 라벨 (예: v1_2). 생략 시 source 파일명 그대로")
     return parser.parse_args(argv)
 
 
@@ -110,6 +116,43 @@ def list_cases(include_generated: bool = False, tag: str | None = None) -> list[
         _visit(n)
 
     return sorted_names
+
+
+def _promote_baseline(args) -> int:
+    """plan 결과 JSON을 baseline으로 promote.
+
+    Source 결정: --baseline-source 명시 또는 reports/{plan}/*.json 중 가장 최근.
+    Target: reports/{plan}/baselines/{label}.json (label은 --baseline-label 또는 source 파일명).
+    """
+    from plan import find_latest_report, promote_baseline as _promote
+    plan_name = args.promote_baseline
+    project_root = os.path.dirname(os.path.abspath(__file__))
+
+    if args.baseline_source:
+        source = args.baseline_source
+        if not os.path.isabs(source):
+            source = os.path.join(project_root, source)
+    else:
+        source = find_latest_report(plan_name, project_root)
+        if source is None:
+            print(f"ERROR: reports/{plan_name}/ 에 결과 JSON이 없습니다.")
+            print(f"  먼저 'python3 pim_check.py --plan {plan_name}'을 실행하세요.")
+            return 3
+
+    try:
+        target = _promote(source, plan_name, project_root,
+                          label=args.baseline_label)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        return 3
+
+    rel_target = os.path.relpath(target, project_root)
+    print(f"Promoted: {os.path.relpath(source, project_root)}")
+    print(f"      → {rel_target}")
+    print()
+    print(f"plan의 gate.baseline_ref.file을 다음 경로로 갱신하세요:")
+    print(f"  {rel_target}")
+    return 0
 
 
 def _run_plan(args) -> int:
@@ -397,6 +440,9 @@ def _main_run(args) -> int:
 
     if args.plan:
         return _run_plan(args)
+
+    if args.promote_baseline:
+        return _promote_baseline(args)
 
     if args.export_csv:
         from history import export_csv
