@@ -1,0 +1,173 @@
+name: Hardware Verification (plan-driven)
+
+# Declarative Release Plan 실행 워크플로우.
+# pim_check.py --plan {name}으로 case 묶음 + 합격선 + reporting을
+# plan YAML 1개에 표현된 대로 실행. 결과는 reports/{plan}/{ts}.{json,xml,html,md}.
+#
+# 트리거:
+#   1. workflow_dispatch — Actions UI에서 plan/promote 옵션 지정 후 수동 실행
+#
+# 자동 cron 미적용: plan 선택은 사용자 결정 사항. 기존 hw-verify.yml(mixed_combo
+# on push) / hw-verify-comprehensive.yml(주 1회 cron)이 자동 검증을 담당.
+# 본 워크플로우는 ad-hoc 실행 + baseline promote 워크플로우 자동화에 집중.
+#
+# 동시성: pim-target-lock으로 다른 hw-verify*와 충돌 방지.
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: '실행할 plan 이름 (profiles/plans/{name}.yaml)'
+        required: true
+        type: choice
+        default: smoke
+        options:
+          - smoke
+          - comprehensive
+          - channel_verify
+          - mixed_combo
+          - bps_quick
+          - nightly
+          - release_next
+      promote_baseline:
+        description: 'PASS 시 결과를 baseline으로 자동 promote'
+        required: false
+        type: boolean
+        default: false
+      baseline_label:
+        description: 'promote 라벨 (예: v1_2). 비우면 timestamp 그대로'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: pim-target-lock
+  cancel-in-progress: false
+
+env:
+  TARGET_HOST: 192.168.0.5
+
+jobs:
+  plan-run:
+    runs-on: [self-hosted, linux, pim-target]
+    # plan별 timeout — 가장 긴 nightly(8-12h)에 맞춤. 짧은 plan은 자체 종료.
+    timeout-minutes: 720
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show runner info
+        run: |
+          echo "Runner: $(hostname)"
+          echo "Date: $(date -Iseconds)"
+          echo "Plan: ${{ inputs.plan }}"
+          echo "Promote: ${{ inputs.promote_baseline }}"
+          echo "Label: ${{ inputs.baseline_label }}"
+          echo "Target: ${{ env.TARGET_HOST }}"
+
+      - name: Verify required tools
+        run: |
+          for tool in sshpass jq python3 ffprobe; do
+            command -v $tool >/dev/null 2>&1 || { echo "::error::missing $tool"; exit 1; }
+          done
+
+      - name: Install Python deps
+        run: python3 -m pip install --user pyyaml || true
+
+      - name: Target reachability precheck
+        run: |
+          ping -c 2 -W 2 ${{ env.TARGET_HOST }} >/dev/null \
+            || { echo "::error::target down"; exit 1; }
+          sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+              -o LogLevel=ERROR root@${{ env.TARGET_HOST }} "echo SSH_OK" \
+              | grep -q SSH_OK || { echo "::error::ssh fail"; exit 1; }
+
+      - name: Lint plan (실행 전 사전 검증)
+        run: |
+          python3 -c "
+          from plan import load_plan
+          p = load_plan('profiles/plans/${{ inputs.plan }}.yaml')
+          print(f'Plan: {p.name}')
+          print(f'  description: {p.description}')
+          print(f'  execution: stop_on_fail={p.execution[\"stop_on_fail\"]}, '
+                f'case_retry={p.execution[\"case_retry\"]}')
+          print(f'  threshold: {p.gate[\"threshold_pass_rate\"]}')
+          if p.gate.get('baseline_ref'):
+              print(f'  baseline_ref: {p.gate[\"baseline_ref\"][\"file\"]}')
+          "
+
+      - name: Run plan
+        # exit code: 0=PASS, 1=FAIL, 2=WARN, 3=plan err.
+        # WARN(2)도 GHA job은 success로 간주 — known_issue 발생이지 회귀 아님.
+        # 정확한 exit code는 reports/{plan}/{ts}.json의 gate.verdict로 확인.
+        id: run
+        run: |
+          set +e
+          python3 pim_check.py --plan ${{ inputs.plan }} \
+              --host ${{ env.TARGET_HOST }}
+          rc=$?
+          echo "exit_code=$rc" >> $GITHUB_OUTPUT
+          # PASS/WARN(known_issue)는 success, FAIL/plan_err는 실패
+          if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then
+            exit 0
+          else
+            exit $rc
+          fi
+
+      - name: GitHub job summary (markdown_summary)
+        if: always()
+        run: |
+          # plan에 markdown_summary 리포트가 정의되어 있으면 GITHUB_STEP_SUMMARY에 직접 출력.
+          # 없으면 json 파일에서 verdict/cases만 추출하여 요약.
+          MD=$(find reports/${{ inputs.plan }} -name '*.md' -mmin -120 2>/dev/null \
+                | sort -r | head -1)
+          if [ -n "$MD" ] && [ -f "$MD" ]; then
+            cat "$MD" >> $GITHUB_STEP_SUMMARY
+          else
+            JSON=$(find reports/${{ inputs.plan }} -name '*.json' \
+                    -not -path '*/baselines/*' -mmin -120 2>/dev/null \
+                    | sort -r | head -1)
+            if [ -n "$JSON" ] && [ -f "$JSON" ]; then
+              python3 <<PYEOF >> $GITHUB_STEP_SUMMARY
+          import json
+          d = json.load(open("$JSON"))
+          g = d.get("gate", {})
+          execs = d.get("executions", [])
+          p = sum(1 for e in execs if e.get("passed"))
+          print(f"# {d.get('plan',{}).get('name','?')}")
+          print(f"")
+          print(f"**Verdict:** \`{g.get('verdict','?')}\` (pass_rate={g.get('pass_rate','?')})")
+          print(f"**Cases:** {p}/{len(execs)} passed")
+          if g.get("regressions"):
+              print(f"**Regressions:** {', '.join(g['regressions'])}")
+          PYEOF
+            else
+              echo "## ${{ inputs.plan }}" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "(no report file found — plan 실행 자체 실패 가능)" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+      - name: Promote baseline (옵션)
+        # PASS이고 사용자가 promote 요청한 경우만 실행.
+        if: success() && inputs.promote_baseline == true && steps.run.outputs.exit_code == '0'
+        run: |
+          ARGS="--promote-baseline ${{ inputs.plan }}"
+          if [ -n "${{ inputs.baseline_label }}" ]; then
+            ARGS="$ARGS --baseline-label ${{ inputs.baseline_label }}"
+          fi
+          python3 pim_check.py $ARGS
+
+      - name: Upload reports (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-${{ inputs.plan }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/${{ inputs.plan }}/**/*.json
+            reports/${{ inputs.plan }}/**/*.html
+            reports/${{ inputs.plan }}/**/*.xml
+            reports/${{ inputs.plan }}/**/*.md
+          retention-days: 60
+          if-no-files-found: warn
