@@ -142,6 +142,89 @@ class TestRenderReports(unittest.TestCase):
         self.assertEqual(written[0], abs_target)
         self.assertTrue(os.path.exists(abs_target))
 
+    def test_markdown_summary_pass(self):
+        plan = _plan([{"format": "markdown_summary", "path": "out/{timestamp}.md"}])
+        execs = [_exe("a", True), _exe("b", True)]
+        gate = _gate(verdict="PASS")
+        written = render_reports(plan, execs, gate, host="1.2.3.4",
+                                 base_path=self.tmpdir, timestamp="20260430_120000")
+        self.assertEqual(len(written), 1)
+        self.assertTrue(written[0].endswith(".md"))
+        with open(written[0]) as f:
+            md = f.read()
+        self.assertIn("Verdict:", md)
+        self.assertIn("`PASS`", md)
+        self.assertIn("2/2 passed", md)
+        self.assertIn("All cases passed", md)
+        # 실패 섹션은 없음
+        self.assertNotIn("## Failed Cases", md)
+
+    def test_markdown_summary_with_failures(self):
+        plan = _plan([{"format": "markdown_summary", "path": "out/{timestamp}.md"}])
+        execs = [_exe("a", True), _exe("b", False)]
+        gate = _gate(verdict="FAIL", pass_rate=0.5)
+        render_reports(plan, execs, gate, host="x",
+                       base_path=self.tmpdir, timestamp="20260430_120000")
+        with open(os.path.join(self.tmpdir, "out/20260430_120000.md")) as f:
+            md = f.read()
+        self.assertIn("## Failed Cases", md)
+        self.assertIn("`b`", md)
+        self.assertIn("FAIL_REASON", md)
+
+    def test_markdown_summary_with_baseline_diff(self):
+        plan = _plan([{"format": "markdown_summary", "path": "out/m.md"}])
+        execs = [_exe("a", False)]
+        gate = _gate(verdict="FAIL", regressions=["a"])
+        gate.fixed = ["c"]
+        gate.new_cases = ["d"]
+        render_reports(plan, execs, gate, host="x",
+                       base_path=self.tmpdir, timestamp="20260430_120000")
+        with open(os.path.join(self.tmpdir, "out/m.md")) as f:
+            md = f.read()
+        self.assertIn("## Baseline Diff", md)
+        self.assertIn("Regressions", md)
+        self.assertIn("`a`", md)
+        self.assertIn("Fixed", md)
+        self.assertIn("New cases", md)
+
+    def test_markdown_truncates_failed_checks_at_5(self):
+        """한 case에 6+ failed check가 있으면 5개만 표시 + '+N건 추가' 안내."""
+        plan = _plan([{"format": "markdown_summary", "path": "out/m.md"}])
+        many_fails = [
+            {"name": f"check_{i}", "passed": False,
+             "reason": f"reason_{i}", "data": {}, "duration_ms": 1}
+            for i in range(7)
+        ]
+        execs = [CaseExecution(
+            section="regression", case_name="big_fail",
+            results=many_fails, passed=False, retries_used=0, error=None,
+            duration_sec=1.0,
+        )]
+        gate = _gate(verdict="FAIL", pass_rate=0.0)
+        render_reports(plan, execs, gate, host="x",
+                       base_path=self.tmpdir, timestamp="20260430_120000")
+        with open(os.path.join(self.tmpdir, "out/m.md")) as f:
+            md = f.read()
+        # 5개는 표시
+        for i in range(5):
+            self.assertIn(f"check_{i}", md)
+        # 5번째 이후는 truncated
+        self.assertIn("+2건 추가", md)
+
+    def test_markdown_with_known_warns(self):
+        plan = _plan([{"format": "markdown_summary", "path": "out/m.md"}])
+        execs = [_exe("a", True)]
+        gate = _gate(verdict="WARN")
+        gate.known_warns = [{"case": "a", "check": "thermal", "label": "HW cooling"}]
+        render_reports(plan, execs, gate, host="x",
+                       base_path=self.tmpdir, timestamp="20260430_120000")
+        with open(os.path.join(self.tmpdir, "out/m.md")) as f:
+            md = f.read()
+        self.assertIn("## Known Warnings", md)
+        self.assertIn("HW cooling", md)
+        # WARN이라 "All cases passed" 안 뜸
+        self.assertNotIn("All cases passed", md)
+
     def test_timestamp_default_now_ish(self):
         """timestamp=None이면 자동 생성. 형식 YYYYMMDD_HHMMSS."""
         plan = _plan([{"format": "json", "path": "out/{timestamp}.json"}])

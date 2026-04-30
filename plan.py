@@ -36,7 +36,7 @@ DEFAULT_GATE: dict[str, Any] = {
     "allow_known_issue": True,
 }
 
-ALLOWED_REPORT_FORMATS = {"json", "html", "junit"}
+ALLOWED_REPORT_FORMATS = {"json", "html", "junit", "markdown_summary"}
 ALLOWED_NEW_CASE_POLICIES = {"warn", "skip", "fail"}
 SCHEMA_VERSION = 1
 
@@ -886,11 +886,84 @@ def _render_html(plan: Plan, executions: list[CaseExecution],
         f.write(html)
 
 
+def _render_markdown_summary(plan: Plan, executions: list[CaseExecution],
+                             gate: GateResult, host: str, timestamp: str,
+                             path: str) -> None:
+    """PR 코멘트/Slack 친화 plan-level summary (단일 markdown).
+
+    포함: verdict, pass_rate, baseline diff (regressions/fixed/new),
+         known warnings, failed cases + 실패 reason 요약.
+    실패 case 내부의 first 5 fail 항목까지만 표시 (PR 코멘트 길이 제한 대응).
+    """
+    total = len(executions)
+    passed = sum(1 for e in executions if e.passed)
+    failed = total - passed
+
+    lines: list[str] = []
+    lines.append(f"# {plan.name}")
+    lines.append("")
+    lines.append(f"**Verdict:** `{gate.verdict}` (pass_rate={gate.pass_rate})")
+    lines.append(f"**Cases:** {passed}/{total} passed, {failed} failed")
+    lines.append(f"**Host:** `{host}` / **Timestamp:** `{timestamp}`")
+    if plan.description:
+        lines.append("")
+        lines.append(f"> {plan.description.strip()}")
+    lines.append("")
+
+    # Baseline diff
+    if gate.regressions or gate.fixed or gate.new_cases:
+        lines.append("## Baseline Diff")
+        if gate.regressions:
+            lines.append(f"- **Regressions ({len(gate.regressions)}):** "
+                         f"{', '.join(f'`{c}`' for c in gate.regressions)}")
+        if gate.fixed:
+            lines.append(f"- Fixed ({len(gate.fixed)}): "
+                         f"{', '.join(f'`{c}`' for c in gate.fixed)}")
+        if gate.new_cases:
+            lines.append(f"- New cases ({len(gate.new_cases)}): "
+                         f"{', '.join(f'`{c}`' for c in gate.new_cases)}")
+        lines.append("")
+
+    # Known warnings
+    if gate.known_warns:
+        lines.append(f"## Known Warnings ({len(gate.known_warns)})")
+        for w in gate.known_warns:
+            lines.append(f"- `{w['case']}` / {w['check']}: {w['label']}")
+        lines.append("")
+
+    # Failed cases
+    failed_list = [e for e in executions if not e.passed]
+    if failed_list:
+        lines.append(f"## Failed Cases ({len(failed_list)})")
+        for e in failed_list:
+            err_str = f" — {e.error}" if e.error else ""
+            retry_str = f" (retries={e.retries_used})" if e.retries_used > 0 else ""
+            lines.append(f"- **`{e.case_name}`** [{e.section}]{err_str}{retry_str}")
+            # 실패한 check들 — first 5만
+            fail_checks = [
+                r for r in e.results
+                if isinstance(r, dict) and not r.get("passed") and "known_issue" not in r
+            ]
+            for r in fail_checks[:5]:
+                reason = (r.get("reason") or "")[:100]
+                lines.append(f"  - `{r.get('name')}`: {reason}")
+            if len(fail_checks) > 5:
+                lines.append(f"  - ... +{len(fail_checks) - 5}건 추가 (json/html 리포트 참고)")
+        lines.append("")
+
+    if not failed_list and not gate.known_warns:
+        lines.append("All cases passed.")
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def render_reports(plan: Plan, executions: list[CaseExecution],
                    gate: GateResult, host: str,
                    base_path: str,
                    timestamp: str | None = None) -> list[str]:
-    """plan.reports 명세에 따라 html/junit/json 파일 생성.
+    """plan.reports 명세에 따라 html/junit/json/markdown_summary 파일 생성.
 
     base_path: 상대경로 reports의 base (project root 권장).
     timestamp: 명시 시점 또는 None이면 현재 (YYYYMMDD_HHMMSS).
@@ -904,6 +977,7 @@ def render_reports(plan: Plan, executions: list[CaseExecution],
         "json": _render_json,
         "junit": _render_junit,
         "html": _render_html,
+        "markdown_summary": _render_markdown_summary,
     }
 
     for report in plan.reports:
