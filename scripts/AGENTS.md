@@ -1,12 +1,16 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-09 | Updated: 2026-04-09 -->
+<!-- Generated: 2026-04-09 | Updated: 2026-04-30 -->
 
 # scripts
 
 ## Purpose
-Windows 환경용 PowerShell/Batch 실행 스크립트. 가상환경 설정, 서버 시작/종료를 자동화한다.
+두 가지 목적의 스크립트가 공존:
+1. **Windows 운영 스크립트** — PowerShell/Batch로 가상환경 설정, 서버 시작/종료 자동화
+2. **Plan 운영 도구** (Python) — equivalence_check, comprehensive 매핑 생성기
 
 ## Key Files
+
+### Windows 운영 (PowerShell/Batch)
 
 | File | Description |
 |------|-------------|
@@ -18,11 +22,36 @@ Windows 환경용 PowerShell/Batch 실행 스크립트. 가상환경 설정, 서
 | `stop.bat` | Batch: stop.ps1 호출 래퍼 |
 | `run.ps1` | PowerShell: CLI 테스트 실행 래퍼 |
 
+### Plan 운영 도구 (Python)
+
+| File | Description |
+|------|-------------|
+| `equivalence_check.py` | run_*.py 결과 vs plan-driven 결과 동등성 비교 (binary). MATCHED / MISMATCHED / LEFT_ONLY / RIGHT_ONLY 카테고리 분류. `--mapping` JSON 옵션으로 도메인 case_name 매핑 지원. |
+| `generate_comprehensive_mapping.py` | run_comprehensive_verify의 96 scenario를 8 mandatory multi case로 자동 매핑 JSON 생성. `profiles/plans/comprehensive_mapping.json` 출력. |
+
 ## For AI Agents
 
 ### Working In This Directory
-- `.bat` 파일은 `.ps1`의 단순 래퍼 — 로직 수정은 `.ps1`에서.
-- 스크립트 수정 후 실행 권한(+x) 확인 불필요 (Windows 전용).
-- 줄바꿈은 CRLF 유지.
+- **Windows 스크립트** (.ps1/.bat): `.bat` 파일은 `.ps1`의 단순 래퍼 — 로직 수정은 `.ps1`에서. 줄바꿈은 CRLF 유지. 실행 권한(+x) 확인 불필요.
+- **Python 도구**: shebang `#!/usr/bin/env python3` + 실행 권한(+x). `from __future__ import annotations` 사용. 단위 테스트는 `tests/test_{module}.py`.
+- 두 카테고리는 다른 OS 환경 — 하나 수정해도 다른 쪽 영향 없음.
+
+### Plan 도구 사용 패턴
+
+```bash
+# 1. 매핑 JSON 생성 (1회 또는 schema 변경 시)
+python3 scripts/generate_comprehensive_mapping.py
+# → profiles/plans/comprehensive_mapping.json
+
+# 2. 동등성 비교 (마이그레이션 검증)
+python3 scripts/equivalence_check.py \
+  --left comprehensive_results.json \
+  --right reports/comprehensive/{ts}.json \
+  --mapping profiles/plans/comprehensive_mapping.json
+```
+
+### Testing
+- Python 도구: `tests/test_equivalence_check.py`, `tests/test_generate_mapping.py`
+- 두 테스트 모두 sys.path manipulation으로 scripts/ import (test 파일 헤더 참조)
 
 <!-- MANUAL: -->

@@ -373,6 +373,41 @@ reports:
 
 자세한 plan 작성 가이드 + 흔한 lint 에러: `profiles/plans/AGENTS.md`.
 
+### Migration from `run_*.py` runners
+
+기존 6개 누적 러너는 plan으로 통합되었다. 마이그레이션 매핑:
+
+| 기존 러너 | 대응 plan | 비고 |
+|-----------|-----------|------|
+| `run_comprehensive_verify.py` (368줄) | `--plan comprehensive` | 96 → 18 cases (multi-channel 단축, 4x 시간 절감). 동등성 검증: `scripts/equivalence_check.py + comprehensive_mapping.json`. |
+| `run_smart_verify.py` (668줄) | (v1.2 예정) | 9 combos × A/B 패턴은 case schema 확장 필요. 현 multi case가 부분 coverage. |
+| `run_mixed_combo_verify.py` (315줄) | `--plan mixed_combo` | 부분 마이그레이션 — full mixed-combo는 case schema 확장으로 v1.2. |
+| `run_channel_verify.py` (160줄) | `--plan channel_verify` | 32개 1:1 매핑 (vflip + ae 토글). |
+| `run_bps_quick.py` (173줄) | `--plan bps_quick` | killcam 방식 → reboot 방식 (시간 trade-off, 동일 검증). |
+| `run_failed_retry.py` (139줄) | `--retry-failed` (v1.1 예정) | retry는 plan보다 CLI 플래그로 표현이 자연스러움. |
+
+**마이그레이션 검증 워크플로우**:
+
+```bash
+# 1. 기존 러너 결과 (이미 있는 데이터)
+ls comprehensive_results.json mixed_combo_results.json ...
+
+# 2. 매핑 JSON 생성
+python3 scripts/generate_comprehensive_mapping.py
+
+# 3. 새 plan 실행
+python3 pim_check.py --plan comprehensive --host 192.168.0.5
+
+# 4. 동등성 비교
+python3 scripts/equivalence_check.py \
+  --left comprehensive_results.json \
+  --right reports/comprehensive/{ts}.json \
+  --mapping profiles/plans/comprehensive_mapping.json
+# MISMATCHED 0이면 동등 — 기존 러너를 안전하게 제거 가능
+```
+
+**기존 러너 코드는 당분간 남아있음** (v1 출시 시점). v1.1에서 동등성 확정 후 deprecation 결정. CI(`hw-verify.yml`, `hw-verify-comprehensive.yml`)는 기존 러너 그대로 사용 — `hw-verify-plan.yml`이 plan-driven 대안 추가.
+
 ## 라이선스
 
 Internal use only.
