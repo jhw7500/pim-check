@@ -1,10 +1,11 @@
 # Multi-channel unique-settings (3ch '3ch_123', fhd)
-# 1 reboot으로 채널별 다른 설정 동시 검증 (channel isolation + setting reflection).
+# 1 reboot으로 채널별 다른 설정 동시 검증.
 # Resolution: fhd (1920x1080, 15fps)
 # Active channels: [1, 2, 3]
 # i2c addrs: [(1, '0x3c'), (2, '0x11'), (3, '0x12')]
-# bps 검증: file-size-delta 5s, tolerance ±20%
-# fps 검증: dmesg max9296_fsync fps : 15 패턴
+# 검증 dimension: ROTATION/AE_CTRL/AE_GAIN/AWB_CTRL/EXP_TIME/BITRATE/FPS/
+#                file_integrity(codec/dim/ext)/per-ch cam_state/duration
+# stabilize_sec=75 (60s 녹화 + 15s buffer)
 # 자동 생성: /tmp/gen_multi_cases.py (1회용 scaffolding, 폐기됨)
 name: '[multi] 3ch 3ch_123 fhd'
 description: '3-channel "3ch_123" combination at fhd with channel-unique settings'
@@ -48,7 +49,7 @@ setup:
       - 2048
     .VHL_CAM.i2c1.ch3.awb: "d75"
   reboot_after: true
-  stabilize_sec: 30
+  stabilize_sec: 75
 
 checks:
   cam_state:
@@ -107,6 +108,60 @@ checks:
     command: i2ctransfer -f -y 2 w2@0x3c 0x50 0x0c r4 2>/dev/null | tr -d ' '
     expected: '0x000x000x130x88'
     on_fail: bus2 EXP_TIME 미반영
+  - name: ch1 cam_state error count
+    command: |-
+      F=/tmp/cam_state/channels/ch1_error
+      [ ! -f $F ] && echo FAIL:NO_FILE && exit 0
+      E=$(cat $F 2>/dev/null | tr -d ' \n')
+      [ -z "$E" ] || [ "$E" = "0" ] && echo OK || echo FAIL:err=$E
+    expected: 'OK'
+    on_fail: 'ch1 에러 카운트 발생'
+  - name: ch1 cam_state last_ok freshness (<30s)
+    command: |-
+      F=/tmp/cam_state/channels/ch1_last_ok
+      [ ! -f $F ] && echo FAIL:NO_FILE && exit 0
+      L=$(cat $F 2>/dev/null | tr -d ' \n')
+      [ -z "$L" ] && echo FAIL:EMPTY && exit 0
+      N=$(date +%s); D=$((N - L))
+      [ $D -lt 30 ] && echo OK || echo FAIL:stale_${D}s
+    expected: 'OK'
+    on_fail: 'ch1 last_ok이 stale (frame drop 또는 채널 죽음)'
+  - name: ch2 cam_state error count
+    command: |-
+      F=/tmp/cam_state/channels/ch2_error
+      [ ! -f $F ] && echo FAIL:NO_FILE && exit 0
+      E=$(cat $F 2>/dev/null | tr -d ' \n')
+      [ -z "$E" ] || [ "$E" = "0" ] && echo OK || echo FAIL:err=$E
+    expected: 'OK'
+    on_fail: 'ch2 에러 카운트 발생'
+  - name: ch2 cam_state last_ok freshness (<30s)
+    command: |-
+      F=/tmp/cam_state/channels/ch2_last_ok
+      [ ! -f $F ] && echo FAIL:NO_FILE && exit 0
+      L=$(cat $F 2>/dev/null | tr -d ' \n')
+      [ -z "$L" ] && echo FAIL:EMPTY && exit 0
+      N=$(date +%s); D=$((N - L))
+      [ $D -lt 30 ] && echo OK || echo FAIL:stale_${D}s
+    expected: 'OK'
+    on_fail: 'ch2 last_ok이 stale (frame drop 또는 채널 죽음)'
+  - name: ch3 cam_state error count
+    command: |-
+      F=/tmp/cam_state/channels/ch3_error
+      [ ! -f $F ] && echo FAIL:NO_FILE && exit 0
+      E=$(cat $F 2>/dev/null | tr -d ' \n')
+      [ -z "$E" ] || [ "$E" = "0" ] && echo OK || echo FAIL:err=$E
+    expected: 'OK'
+    on_fail: 'ch3 에러 카운트 발생'
+  - name: ch3 cam_state last_ok freshness (<30s)
+    command: |-
+      F=/tmp/cam_state/channels/ch3_last_ok
+      [ ! -f $F ] && echo FAIL:NO_FILE && exit 0
+      L=$(cat $F 2>/dev/null | tr -d ' \n')
+      [ -z "$L" ] && echo FAIL:EMPTY && exit 0
+      N=$(date +%s); D=$((N - L))
+      [ $D -lt 30 ] && echo OK || echo FAIL:stale_${D}s
+    expected: 'OK'
+    on_fail: 'ch3 last_ok이 stale (frame drop 또는 채널 죽음)'
   - name: ch1 BITRATE (~4096kbps ±20%, file-delta 5s)
     command: |-
       F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
@@ -131,10 +186,79 @@ checks:
       K=$(( (S2 - S1) * 8 / 5 / 1000 )); [ $K -ge 1638 ] && [ $K -le 2457 ] && echo OK || echo FAIL:${K}kbps
     expected: 'OK'
     on_fail: 'ch3 실측 bitrate 범위(1638~2457kbps) 벗어남'
+  - name: ch1 파일 무결성 (codec=h264, 1920x1080, .mp4)
+    command: |-
+      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      EXT="${F##*.}"
+      [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
+      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
+      echo "$P" | grep -qE '^codec_name=h264$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
+      echo "$P" | grep -qE '^width=1920$' || (echo FAIL:width_$(echo "$P" | grep width) && exit 0)
+      echo "$P" | grep -qE '^height=1080$' || (echo FAIL:height_$(echo "$P" | grep height) && exit 0)
+      echo OK
+    expected: 'OK'
+    on_fail: 'ch1 파일 무결성 (codec/dim/ext) 미일치'
+  - name: ch2 파일 무결성 (codec=h264, 1920x1080, .mp4)
+    command: |-
+      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      EXT="${F##*.}"
+      [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
+      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
+      echo "$P" | grep -qE '^codec_name=h264$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
+      echo "$P" | grep -qE '^width=1920$' || (echo FAIL:width_$(echo "$P" | grep width) && exit 0)
+      echo "$P" | grep -qE '^height=1080$' || (echo FAIL:height_$(echo "$P" | grep height) && exit 0)
+      echo OK
+    expected: 'OK'
+    on_fail: 'ch2 파일 무결성 (codec/dim/ext) 미일치'
+  - name: ch3 파일 무결성 (codec=h264, 1920x1080, .mp4)
+    command: |-
+      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      EXT="${F##*.}"
+      [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
+      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
+      echo "$P" | grep -qE '^codec_name=h264$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
+      echo "$P" | grep -qE '^width=1920$' || (echo FAIL:width_$(echo "$P" | grep width) && exit 0)
+      echo "$P" | grep -qE '^height=1080$' || (echo FAIL:height_$(echo "$P" | grep height) && exit 0)
+      echo OK
+    expected: 'OK'
+    on_fail: 'ch3 파일 무결성 (codec/dim/ext) 미일치'
+  - name: ch1 duration (~60s ±5s)
+    command: |-
+      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
+      [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
+      LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
+      [ $D -ge $LO ] && [ $D -le $HI ] && echo OK || echo FAIL:dur=${D}s
+    expected: 'OK'
+    on_fail: 'ch1 녹화 길이 60s ±5s 벗어남'
+  - name: ch2 duration (~60s ±5s)
+    command: |-
+      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
+      [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
+      LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
+      [ $D -ge $LO ] && [ $D -le $HI ] && echo OK || echo FAIL:dur=${D}s
+    expected: 'OK'
+    on_fail: 'ch2 녹화 길이 60s ±5s 벗어남'
+  - name: ch3 duration (~60s ±5s)
+    command: |-
+      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
+      [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
+      LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
+      [ $D -ge $LO ] && [ $D -le $HI ] && echo OK || echo FAIL:dur=${D}s
+    expected: 'OK'
+    on_fail: 'ch3 녹화 길이 60s ±5s 벗어남'
   - name: dmesg max9296_fsync fps (expected 15)
     command: |-
       F=$(dmesg 2>/dev/null | grep -oE 'max9296_fsync fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\n' ',' | sed 's/,$//')
       [ -z "$F" ] && echo FAIL:NO_DMESG && exit 0
       [ "$F" = "15" ] && echo OK || echo FAIL:got=$F
     expected: 'OK'
-    on_fail: 'dmesg max9296_fsync fps 15와 다름 (단일 fps 값 기대)'
+    on_fail: 'dmesg max9296_fsync fps 15와 다름'
