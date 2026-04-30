@@ -3,8 +3,10 @@
 # Resolution: 720p (1280x720, 30fps)
 # Active channels: [0, 1, 2, 3]
 # i2c addrs: [(0, '0x11'), (1, '0x12'), (2, '0x11'), (3, '0x12')]
-# 검증 dimension: ROTATION/AE_CTRL/AE_GAIN/AWB_CTRL/EXP_TIME/BITRATE/FPS/
-#                file_integrity(codec/dim/ext)/per-ch cam_state/duration
+# CPU range: gst_range=[20, 80] (4ch × 720p)
+# Thermal: warn=88°C, max=93°C (base 동일)
+# 검증: ROTATION/AE_CTRL/AE_GAIN/AWB_CTRL/EXP_TIME/BITRATE/FPS/
+#       file_integrity/per-ch cam_state/duration/CPU/thermal
 # stabilize_sec=75 (60s 녹화 + 15s buffer)
 # 자동 생성: /tmp/gen_multi_cases.py (1회용 scaffolding, 폐기됨)
 name: '[multi] 4ch 4ch 720p'
@@ -67,6 +69,11 @@ checks:
   recording:
     expected_channels: 4
     session_progress: '4/4'
+  cpu:
+    gst_range: [20, 80]
+  thermal:
+    warn_temp_c: 88
+    max_temp_c: 93
   custom_commands:
   - name: ch0 ROTATION (vflip=false, hflip=true)
     command: i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '

@@ -3,8 +3,10 @@
 # Resolution: fhd (1920x1080, 15fps)
 # Active channels: [0]
 # i2c addrs: [(0, '0x3c')]
-# 검증 dimension: ROTATION/AE_CTRL/AE_GAIN/AWB_CTRL/EXP_TIME/BITRATE/FPS/
-#                file_integrity(codec/dim/ext)/per-ch cam_state/duration
+# CPU range: gst_range=[10, 50] (1ch × fhd)
+# Thermal: warn=88°C, max=93°C (base 동일)
+# 검증: ROTATION/AE_CTRL/AE_GAIN/AWB_CTRL/EXP_TIME/BITRATE/FPS/
+#       file_integrity/per-ch cam_state/duration/CPU/thermal
 # stabilize_sec=75 (60s 녹화 + 15s buffer)
 # 자동 생성: /tmp/gen_multi_cases.py (1회용 scaffolding, 폐기됨)
 name: '[multi] 1ch 1ch_0 fhd'
@@ -42,6 +44,11 @@ checks:
   recording:
     expected_channels: 1
     session_progress: '1/1'
+  cpu:
+    gst_range: [10, 50]
+  thermal:
+    warn_temp_c: 88
+    max_temp_c: 93
   custom_commands:
   - name: ch0 ROTATION (vflip=false, hflip=true)
     command: i2ctransfer -f -y 2 w2@0x3c 0x10 0x0c r2 2>/dev/null | tr -d ' '
