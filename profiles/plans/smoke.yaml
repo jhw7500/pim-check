@@ -1,0 +1,49 @@
+# smoke.yaml — 빠른 회귀 보호 plan
+#
+# 용도: FW 빌드 직후 또는 PR 머지 전 5-10분 sanity check.
+#      "릴리스 통과 보장"이 아니라 "기본 케이스가 죽지 않았는지" 확인용.
+#
+# 실행: python pim_check.py --plan smoke --host 192.168.0.5
+#
+# 초안 작성: AI, 2026-04-30 (사용자 검토 필요)
+# - 검토 포인트: regression에 들어간 6개가 정말 "core sanity"를 대표하는가?
+# - 검토 포인트: 너무 빠르면(< 3분) 의미 없는 통과, 너무 느리면(> 15분) PR cycle 방해
+
+name: "Smoke Sanity Check"
+description: "FW 빌드/PR 머지 전 핵심 회귀 보호. 카메라 기본 동작 + 정상 모드 + 1개 fault path."
+version: 1
+
+cases:
+  regression:
+    # 정상 동작 모드 4개 (해상도 × 채널 조합)
+    - 720p_2ch
+    - 720p_4ch
+    - fhd_4ch
+    - rtsp_off
+    # board HW sanity
+    - board_hw_check
+    # config 무결성
+    - config_integrity
+
+# delta 섹션 비워둠 — smoke는 항상 같은 회귀 보호 셋만 돌림 (재현성 우선)
+
+execution:
+  stop_on_fail: false        # smoke는 실패해도 끝까지 돌려서 패턴 파악
+  case_retry: 1              # SSH 일시 노이즈 한 번만 재시도
+  retry_wait_sec: 30
+  reboot_wait_sec: 300
+  wait_between_cases: 0
+
+gate:
+  threshold_pass_rate: 1.0   # smoke는 100% 통과 요구
+  allow_known_issue: true    # known_issues는 WARN 처리
+
+# baseline_ref 없음 — smoke는 절대 기준만 보고 회귀 비교는 release plan에서
+
+reports:
+  - format: html
+    path: reports/smoke/{timestamp}.html
+  - format: junit
+    path: reports/smoke/{timestamp}.xml
+  - format: json
+    path: reports/smoke/{timestamp}.json

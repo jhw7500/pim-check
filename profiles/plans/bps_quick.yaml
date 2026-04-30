@@ -1,0 +1,48 @@
+# bps_quick.yaml — run_bps_quick.py 마이그레이션
+#
+# 원본: run_bps_quick.py (173줄)
+#   - ch0 bps 4값(1024/2048/4096/8192 kbps) 순차 검증
+#   - killcam 방식 (no reboot, ~10s 재시작)
+#   - ffprobe bitrate ±10% tolerance
+#
+# 동등성:
+#   ✓ 가능: gen_720p_ch0_bps_{default,high,low}는 동일 ffprobe 검증을 custom_commands에 내장
+#   ✗ 한계: killcam 방식(no reboot)은 case YAML의 setup.reboot_after 옵션이 표현 못 함.
+#           gen_*_bps_* 케이스는 reboot_after=true이라 ~5분 추가 소요.
+#           v1에서는 reboot 방식으로 동등 검증 (시간 trade-off).
+#           killcam-mode plan은 v1.2+에서 case YAML에 setup.restart_method 옵션 추가 후 지원.
+
+name: "BPS Quick Verify"
+description: |
+  ch0 bitrate 검증 (gen_720p_ch0_bps_* 3 cases).
+  원본의 killcam 방식 대신 reboot 방식 사용 (~5분 추가, 동일 검증).
+
+version: 1
+
+cases:
+  regression:
+    # gen_720p_ch0_bps_default (2048k), bps_high (4096k), bps_low (1024k) = 3
+    # 원본의 8192k는 generated에 없음 — schema에 추가 후 v1.2 plan에 포함 예정
+    - "gen_720p_ch0_bps_*"
+
+execution:
+  stop_on_fail: false           # 원본은 non-STOP
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 300          # 원본 killcam ~10s 대신 reboot 사용
+  wait_between_cases: 0
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: true
+
+reports:
+  - format: html
+    path: reports/bps_quick/{timestamp}.html
+  - format: json
+    path: reports/bps_quick/{timestamp}.json
+
+# v1 한계 (Reviewer Concerns 영속화):
+#   - killcam 방식 미표현 → reboot으로 대체
+#   - 8192k bps 케이스 미생성 → schema.yaml에 추가 후 generator.py 재실행 필요
+#   - ch1/ch2/ch3 bps 케이스 없음 → schema 확장으로 generated 케이스 추가 후 plan 갱신

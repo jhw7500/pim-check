@@ -1,0 +1,80 @@
+# release_next.yaml — 다음 릴리스 검증 plan (초안)
+#
+# 가상 시나리오: 다음 ISP 펌웨어 릴리스에 hflip/vflip 회로 변경 + ord_vcm 모듈 안정성 패치 포함.
+#                이 릴리스가 출시 가능한지 단일 PASS/FAIL로 판단.
+#
+# 실행: python pim_check.py --plan release_next --host 192.168.0.5
+#
+# 초안 작성: AI, 2026-04-30 (사용자 검토 필요)
+# 검토 포인트:
+#   1. 이 가상 릴리스 시나리오가 실제 다음 릴리스 패턴과 맞는가?
+#   2. regression 항목이 "이번 릴리스와 무관한 안전망"이 맞는가? 빠진 카테고리는?
+#   3. delta 항목이 "이번 릴리스 변경점이 닿는 곳"인가? 간접 효과까지 잡는가?
+#   4. baseline_ref.file 경로는 첫 실행 후 promote 필요 (현재는 placeholder)
+#   5. 30분 안에 끝나는가? 너무 길면 release gate 부담
+
+name: "Release v?.? Gate (다음 ISP firmware)"
+description: |
+  hflip/vflip 회로 변경 + ord_vcm 안정성 패치 검증.
+  regression: 변경과 무관한 핵심 동작 보호 (회귀 안전망).
+  delta: 이번 릴리스 변경점에 직접 닿는 케이스.
+
+version: 1
+
+cases:
+  # ── regression: 변경과 무관해도 항상 도는 안전망 ──
+  regression:
+    # 정상 모드 (모든 해상도 × 채널 조합)
+    - 720p_2ch
+    - 720p_4ch
+    - fhd_4ch
+    # 채널 동작 검증 (간접 영향 확인)
+    - gen_720p_2ch_15fps
+    - gen_720p_2ch_30fps
+    - gen_fhd_4ch_15fps
+    - gen_fhd_4ch_30fps
+    # 프로세스/시스템 안전망
+    - board_hw_check
+    - config_integrity
+    # ord_vcm 기존 동작 (변경 전 baseline)
+    - config_ord_vcm
+
+  # ── delta: 이번 릴리스 변경점이 직접 닿는 케이스 ──
+  delta:
+    # hflip 변경: 모든 채널 × 모든 해상도 (실제 명명: gen_{res}_ch{N}_hflip_{on|off})
+    - "gen_720p_ch*_hflip_*"
+    - "gen_fhd_ch*_hflip_*"
+    # vflip 변경 (hflip과 같은 회로 영향 가능)
+    - "gen_720p_ch*_vflip_*"
+    - "gen_fhd_ch*_vflip_*"
+    # ord_vcm 패치 검증: disk on/off × srt on/off 4조합
+    - "gen_ord_disk_*"
+    # 채널 fault 시뮬레이션 (ISP 변경이 fault 처리에 영향 주는지)
+    - fault_cam_disconnect
+    - fault_cam_partial
+    - fault_cam_ch_error
+
+execution:
+  stop_on_fail: false        # 전수 데이터 확보가 중요 — 한 번에 다 보기
+  case_retry: 2              # 실 HW 노이즈 흡수 (release gate라 보수적)
+  retry_wait_sec: 90         # 기존 RETRY_EXTRA_WAIT 값
+  reboot_wait_sec: 300       # 기존 REBOOT_WAIT 값
+  wait_between_cases: 5      # SSH 안정화 마진
+
+gate:
+  threshold_pass_rate: 1.0   # release gate는 100% 요구
+  allow_known_issue: true
+  baseline_ref:
+    # !! TODO: 실제 promote 후 경로 갱신 필요
+    # 첫 실행 후: cp reports/release_next/{ts}.json reports/release_next/baselines/v_prev.json
+    file: reports/release_next/baselines/v_prev.json
+    fail_on_new_failure: true        # 이전 PASS → 이번 FAIL만 차단
+    new_case_policy: warn            # 신규 추가 case는 WARN (정보 제공)
+
+reports:
+  - format: html
+    path: reports/release_next/{timestamp}.html
+  - format: junit
+    path: reports/release_next/{timestamp}.xml      # CI/JUnit 통합용
+  - format: json
+    path: reports/release_next/{timestamp}.json     # 다음 릴리스의 baseline 후보

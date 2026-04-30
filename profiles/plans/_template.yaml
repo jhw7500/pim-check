@@ -1,0 +1,45 @@
+# _template.yaml — 새 plan 작성용 템플릿 (`_` 접두사로 lint/list_plans에서 제외)
+#
+# 사용법: cp _template.yaml {plan_name}.yaml 후 값 채우기
+# 작성 후 검증: python -c "from plan import load_plan; load_plan('profiles/plans/{plan_name}.yaml')"
+#
+# 자세한 가이드: ./AGENTS.md (필수 키, naming convention, 흔한 lint 에러)
+
+# ── 메타데이터 (모두 필수) ──────────────────────────────────
+name: "Plan 이름 (사람이 읽는 한 줄)"
+description: "이 plan이 검증하는 것의 목적/범위 한 문단"
+version: 1
+
+# ── 케이스 선택 (regression/delta 중 최소 하나는 비어있지 않아야 함) ──
+cases:
+  regression:                         # 항상 도는 회귀 보호 케이스 (선택)
+    - case_name_exact_match
+    # - "glob_pattern_*"
+  delta:                              # 이번 릴리스 특화, regression과 차집합 (선택)
+    # - "feature_*"
+
+# ── 실행 정책 (모두 선택, 생략 시 default 적용) ──
+execution:
+  stop_on_fail: false                 # default: false
+  case_retry: 0                       # default: 0
+  retry_wait_sec: 0                   # default: 0
+  reboot_wait_sec: 300                # default: 300
+  wait_between_cases: 0               # default: 0
+
+# ── 합격선 (필수) ────────────────────────────────────────
+gate:
+  threshold_pass_rate: 1.0            # 0.0 ~ 1.0
+  allow_known_issue: true             # known_issues는 WARN 처리
+
+  # baseline_ref는 선택. 이전 릴리스 결과와 비교하려면 활성화.
+  # baseline_ref:
+  #   file: reports/{plan_name}/baselines/v_prev.json
+  #   fail_on_new_failure: true       # 이전 PASS → 이번 FAIL만 차단
+  #   new_case_policy: warn           # warn | skip | fail (baseline에 없는 신규 케이스)
+
+# ── 출력 (선택) ──────────────────────────────────────────
+reports:
+  - format: html                      # json | html | junit
+    path: reports/{plan_name}/{timestamp}.html
+  - format: json
+    path: reports/{plan_name}/{timestamp}.json

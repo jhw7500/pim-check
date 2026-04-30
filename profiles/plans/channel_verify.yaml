@@ -1,0 +1,53 @@
+# channel_verify.yaml — run_channel_verify.py 마이그레이션
+#
+# 원본: run_channel_verify.py (160줄)
+#   - 32개 generated 케이스(720p/fhd × 4채널 × vflip/ae) 순차 실행
+#   - pim_check.py를 subprocess로 호출하여 각 케이스 단독 실행
+#   - 케이스당 timeout=900s, SSH 복구 대기 120s
+#   - non-STOP (모든 케이스 끝까지)
+#
+# 동등성: 원본의 subprocess 호출은 plan-driven 실행으로 직접 대체.
+#         CASES 리스트를 selector로 그대로 옮김.
+
+name: "Channel Verify (vflip + ae)"
+description: |
+  채널별 vflip/ae 32 케이스 순차 실행.
+  run_channel_verify.py의 정확한 1:1 마이그레이션.
+
+version: 1
+
+cases:
+  regression:
+    # 720p vflip × 4채널 × on/off = 8
+    # 720p ae × 4채널 × on/off = 8
+    # fhd vflip × 4채널 × on/off = 8
+    # fhd ae × 4채널 × on/off = 8
+    # 총 32 cases — 원본 CASES 리스트와 동등
+    - "gen_720p_ch*_vflip_*"
+    - "gen_720p_ch*_ae_*"
+    - "gen_fhd_ch*_vflip_*"
+    - "gen_fhd_ch*_ae_*"
+
+execution:
+  stop_on_fail: false           # 원본은 non-STOP — 전수 데이터 확보
+  case_retry: 0                 # 원본은 케이스별 retry 없음 (러너 timeout=900으로 대체)
+  retry_wait_sec: 0
+  reboot_wait_sec: 300
+  wait_between_cases: 0         # 원본은 SSH wait_for_ssh로 자동 처리
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: true
+  # baseline_ref 없음 — channel_verify는 단독 회귀 검증 (release gate 아님)
+
+reports:
+  - format: html
+    path: reports/channel_verify/{timestamp}.html
+  - format: junit
+    path: reports/channel_verify/{timestamp}.xml
+  - format: json
+    path: reports/channel_verify/{timestamp}.json
+
+# 노트: run_failed_retry.py(13개 specific FAIL 재실행)는 별도 plan 불필요.
+#       plan v1.1의 --retry-failed CLI 플래그로 동등 처리 예정.
+#       ("실패 13건만 다시 돌리기" = `pim_check.py --plan channel_verify --retry-failed`)

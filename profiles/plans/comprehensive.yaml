@@ -1,0 +1,85 @@
+# comprehensive.yaml — run_comprehensive_verify.py 마이그레이션 (v2: multi-channel 단축)
+#
+# v2 변경 (사용자 요구 반영):
+#   - 8 mandatory channel combinations × 2 resolutions = 16 multi-channel cases
+#   - 각 case 안에서 채널마다 unique settings 동시 주입 → 1 reboot으로 다축 검증
+#   - resolution별 fps 분리: 720p=30fps, fhd=15fps
+#   - 효과: 70 → 16 cases (~4x 단축, 시간 ~75% 감소)
+#
+# Channel signature matrix (모든 조합에서 일관):
+#   ch0: vflip=F, hflip=T, ae=F, gain=8192, bps=[1024,1024], awb=auto, bus2_exp=5000
+#   ch1: vflip=T, hflip=F, ae=T, gain=256,  bps=[4096,4096], awb=off,  bus2_exp=5000
+#   ch2: vflip=T, hflip=T, ae=T, gain=256,  bps=[8192,8192], awb=d65,  bus1_exp=20000
+#   ch3: vflip=F, hflip=F, ae=F, gain=512,  bps=[2048,2048], awb=d75,  bus1_exp=20000
+#
+# 8 mandatory combinations:
+#   4ch:   ch0/1/2/3
+#   3ch:   ch0/1/2 (i2c2 dual + i2c1 single), ch1/2/3 (i2c2 single + i2c1 dual)
+#   2ch:   ch0/1 (i2c2 dual), ch0/3 (둘 다 single), ch1/2 (둘 다 single)
+#   1ch:   ch0, ch3
+#
+# 동등성: 각 multi case가 단일 reboot으로 채널별 ISP register 동시 검증.
+#         원본 96 시나리오 (4ch quad × 4 setting + 4 dual combo × 4 setting × 2 res)의
+#         핵심 검증 포인트(ROTATION/AE_CTRL/AE_GAIN/AWB_CTRL/EXP_TIME)는 모두 보존.
+
+name: "Comprehensive Channel Verify (multi-channel, 16 cases)"
+description: |
+  8 mandatory combinations × 2 resolutions = 16 multi-channel cases.
+  각 case는 활성 채널마다 unique settings 동시 주입 → channel isolation + setting reflection 검증.
+
+version: 1
+
+cases:
+  regression:
+    # 정상 동작 baseline (회귀 안전망)
+    - 720p_2ch
+    - fhd_4ch
+
+  delta:
+    # ── 4채널 (1 combo × 2 res) ──
+    - multi_4ch_720p
+    - multi_4ch_fhd
+    # ── 3채널 (2 combos × 2 res) ──
+    - multi_3ch_012_720p
+    - multi_3ch_012_fhd
+    - multi_3ch_123_720p
+    - multi_3ch_123_fhd
+    # ── 2채널 (3 combos × 2 res) ──
+    - multi_2ch_01_720p
+    - multi_2ch_01_fhd
+    - multi_2ch_03_720p
+    - multi_2ch_03_fhd
+    - multi_2ch_12_720p
+    - multi_2ch_12_fhd
+    # ── 1채널 (2 combos × 2 res) ──
+    - multi_1ch_0_720p
+    - multi_1ch_0_fhd
+    - multi_1ch_3_720p
+    - multi_1ch_3_fhd
+
+execution:
+  stop_on_fail: true            # 원본 STOP_ON_FAIL=True (디버그 friendly)
+  case_retry: 2                 # 원본 RETRY_COUNT=2
+  retry_wait_sec: 90            # 원본 RETRY_EXTRA_WAIT=90
+  reboot_wait_sec: 300          # 원본 REBOOT_WAIT=300
+  wait_between_cases: 0
+
+gate:
+  threshold_pass_rate: 1.0      # release gate는 100% 요구
+  allow_known_issue: true
+  baseline_ref:
+    file: reports/comprehensive/baselines/v_prev.json
+    fail_on_new_failure: true
+    new_case_policy: warn
+
+reports:
+  - format: html
+    path: reports/comprehensive/{timestamp}.html
+  - format: junit
+    path: reports/comprehensive/{timestamp}.xml
+  - format: json
+    path: reports/comprehensive/{timestamp}.json
+
+# 마이그레이션 동등성 검증 (Phase 4):
+#   scripts/equivalence_check.py로 이 plan 결과 vs run_comprehensive_verify.py 결과 비교.
+#   STATE_CHANGE = 0, MISSING_LOGIC = 0이어야 PASS.
