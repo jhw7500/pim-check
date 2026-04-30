@@ -79,6 +79,8 @@ reports:
     path: reports/comprehensive/{timestamp}.xml
   - format: json
     path: reports/comprehensive/{timestamp}.json
+  - format: markdown_summary
+    path: reports/comprehensive/{timestamp}.md
 
 # 마이그레이션 동등성 검증 (Phase 4):
 #   scripts/equivalence_check.py로 이 plan 결과 vs run_comprehensive_verify.py 결과 비교.

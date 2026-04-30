@@ -47,3 +47,5 @@ reports:
     path: reports/smoke/{timestamp}.xml
   - format: json
     path: reports/smoke/{timestamp}.json
+  - format: markdown_summary
+    path: reports/smoke/{timestamp}.md

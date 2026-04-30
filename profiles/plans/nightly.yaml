@@ -92,6 +92,8 @@ reports:
     path: reports/nightly/{timestamp}.xml
   - format: json
     path: reports/nightly/{timestamp}.json
+  - format: markdown_summary
+    path: reports/nightly/{timestamp}.md
 
 # 운영 노트:
 #   - 첫 실행 후 결과 검토하여 reports/nightly/baselines/v{N}.json으로 promote

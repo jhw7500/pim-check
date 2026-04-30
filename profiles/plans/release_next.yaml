@@ -78,3 +78,5 @@ reports:
     path: reports/release_next/{timestamp}.xml      # CI/JUnit 통합용
   - format: json
     path: reports/release_next/{timestamp}.json     # 다음 릴리스의 baseline 후보
+  - format: markdown_summary
+    path: reports/release_next/{timestamp}.md       # PR 코멘트/Slack용
