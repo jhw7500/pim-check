@@ -113,19 +113,22 @@ def list_cases(include_generated: bool = False, tag: str | None = None) -> list[
 
 
 def _run_plan(args) -> int:
-    """--plan {name} 실행 — plan-driven case 순차 실행 + 종합 결과 출력.
+    """--plan {name} 실행 — plan-driven case 순차 실행 + gate 평가 + reports 출력.
 
-    v1 scope: html/junit/json reporting과 evaluate_gate는 미적용 (Phase 3).
-    각 case별 PASS/FAIL을 stdout에 출력 + 종합 verdict로 exit code 결정.
+    Phase 3 통합: load_plan → execute_plan → load_baseline → evaluate_gate → render_reports.
+    Exit code: 0=PASS, 1=FAIL, 2=WARN, 3=plan lint/실행 에러.
     """
-    from plan import load_plan, execute_plan
+    from plan import (
+        load_plan, execute_plan, load_baseline, evaluate_gate, render_reports,
+    )
     from setup import SetupManager
     from engine import Engine
 
+    project_root = os.path.dirname(os.path.abspath(__file__))
     plan_path = os.path.join(PROFILES_DIR, "plans", f"{args.plan}.yaml")
     if not os.path.exists(plan_path):
         print(f"ERROR: Plan not found: {plan_path}")
-        return 3  # plan lint/file 에러는 exit 3
+        return 3
 
     try:
         plan = load_plan(plan_path)
@@ -133,7 +136,7 @@ def _run_plan(args) -> int:
         print(f"ERROR: {exc}")
         return 3
 
-    # CLI 오버라이드 dict 구성 (resolve_runtime_profile에 전달)
+    # CLI 오버라이드 dict 구성
     cli_args: dict = {}
     if args.host or args.user or args.password:
         cli_args["target"] = {}
@@ -146,11 +149,27 @@ def _run_plan(args) -> int:
     if args.duration is not None:
         cli_args["monitor"] = {"duration_sec": args.duration}
 
+    host_for_meta = (args.host
+                     or plan.gate.get("baseline_ref", {}).get("host", "")
+                     or "192.168.0.5")
+
+    # baseline 로드 (있으면)
+    baseline = None
+    baseline_warning = None
+    baseline_ref = plan.gate.get("baseline_ref")
+    if baseline_ref:
+        baseline, baseline_warning = load_baseline(baseline_ref, project_root)
+        if baseline_warning and not args.quiet:
+            print(f"WARNING: baseline — {baseline_warning}")
+
     if not args.quiet:
         print(f"Plan: {plan.name}")
         print(f"  description: {plan.description}")
         print(f"  execution: stop_on_fail={plan.execution['stop_on_fail']}, "
               f"case_retry={plan.execution['case_retry']}")
+        if baseline:
+            print(f"  baseline: {baseline_ref.get('file')} "
+                  f"({len(baseline.get('executions', []))} prior cases)")
         print()
 
     def on_progress(idx, total, case_name, execution):
@@ -171,28 +190,39 @@ def _run_plan(args) -> int:
         progress=on_progress,
     )
 
-    # 종합 결과
-    total = len(executions)
-    passed = sum(1 for e in executions if e.passed)
-    failed = total - passed
-    verdict = "PASS" if failed == 0 else "FAIL"
+    # Gate 평가
+    gate_result = evaluate_gate(plan, executions, baseline=baseline)
 
+    # Reports 출력
+    written = render_reports(plan, executions, gate_result,
+                             host=host_for_meta, base_path=project_root)
+
+    # 종합 출력
     if not args.quiet:
         print()
-        print(f"=== Plan {plan.name} {verdict}: {passed}/{total} cases passed ===")
-        if failed > 0:
-            print("Failed cases:")
-            for e in executions:
-                if not e.passed:
-                    err = f" ({e.error})" if e.error else ""
-                    print(f"  [{e.section}] {e.case_name}{err}")
+        print(f"=== Plan {plan.name} {gate_result.verdict}: pass_rate={gate_result.pass_rate} ===")
+        if gate_result.regressions:
+            print(f"Regressions ({len(gate_result.regressions)}): {', '.join(gate_result.regressions)}")
+        if gate_result.fixed:
+            print(f"Fixed ({len(gate_result.fixed)}): {', '.join(gate_result.fixed)}")
+        if gate_result.new_cases:
+            print(f"New cases ({len(gate_result.new_cases)}): {', '.join(gate_result.new_cases)}")
+        if gate_result.known_warns:
+            print(f"Known warnings: {len(gate_result.known_warns)}")
+        if written:
+            print(f"Reports: {len(written)}")
+            for p in written:
+                print(f"  {p}")
+        failed_cases = [e for e in executions if not e.passed]
+        if failed_cases:
+            print(f"Failed cases ({len(failed_cases)}):")
+            for e in failed_cases:
+                err = f" ({e.error})" if e.error else ""
+                print(f"  [{e.section}] {e.case_name}{err}")
 
-    # exit code (design doc 표 따름):
-    #   0 = PASS
-    #   1 = FAIL (regressions or threshold 미달)
-    #   2 = WARN (v1.1 — 현재는 미사용)
-    #   3 = plan lint/실행 자체 실패
-    return 0 if verdict == "PASS" else 1
+    # Exit code 매핑
+    verdict_to_exit = {"PASS": 0, "FAIL": 1, "WARN": 2}
+    return verdict_to_exit.get(gate_result.verdict, 1)
 
 
 def run_case(case_name, host, user, password, duration, save_json=False,

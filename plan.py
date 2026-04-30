@@ -1,9 +1,9 @@
 """
-plan.py — Declarative Release Plan loader, linter, resolver, and executor.
+plan.py — Declarative Release Plan loader, linter, resolver, executor, gate evaluator.
 
 Phase 1: Plan/GateResult dataclass + load_plan + lint_plan + resolve_cases + list_plans
-Phase 2 (NEW): resolve_runtime_profile + execute_plan (per-case loop)
-Phase 3 (TBD): evaluate_gate + render_reports + baseline_ref handling
+Phase 2: resolve_runtime_profile + execute_plan (per-case loop)
+Phase 3 (NEW): evaluate_gate + load_baseline (TTL warn) + render_reports
 
 Design doc: ~/.gstack/projects/jhw7500-pim-check/jhw-main-design-20260430-130751.md
 """
@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import copy
 import fnmatch
+import json
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 import yaml
@@ -624,3 +626,300 @@ def execute_plan(plan: Plan, profiles_dir: str,
             time.sleep(wait)
 
     return executions
+
+
+# ── Baseline Loading (Phase 3) ────────────────────────────────────
+
+BASELINE_TTL_DAYS = 30
+
+
+def load_baseline(baseline_ref: dict, base_path: str) -> tuple[dict | None, str | None]:
+    """baseline_ref.file에서 이전 plan 결과 JSON을 로드.
+
+    base_path: 상대경로의 base (보통 project root).
+
+    Returns: (baseline_dict, warning_msg).
+      - 파일 없으면 (None, "NO_FILE: ...")
+      - mtime이 BASELINE_TTL_DAYS(30일) 초과면 (dict, "STALE: ...일 전")
+      - 파싱 실패면 (None, "PARSE_ERROR: ...")
+      - 정상이면 (dict, None)
+    """
+    if not isinstance(baseline_ref, dict):
+        return None, "INVALID_REF: baseline_ref가 dict가 아님"
+    file_ref = baseline_ref.get("file")
+    if not file_ref:
+        return None, "NO_FILE_KEY: baseline_ref.file 누락"
+
+    path = file_ref if os.path.isabs(file_ref) else os.path.join(base_path, file_ref)
+    if not os.path.exists(path):
+        return None, f"NO_FILE: {path}"
+
+    age_sec = time.time() - os.path.getmtime(path)
+    age_days = age_sec / 86400
+    warning: str | None = None
+    if age_days > BASELINE_TTL_DAYS:
+        warning = f"STALE: baseline 파일이 {int(age_days)}일 전 (TTL {BASELINE_TTL_DAYS}일 초과)"
+
+    try:
+        with open(path, "r") as f:
+            baseline = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"PARSE_ERROR: {type(exc).__name__}: {exc}"
+
+    return baseline, warning
+
+
+def _baseline_case_status(baseline: dict, case_name: str) -> str | None:
+    """baseline.executions에서 case_name의 passed 상태 반환. None이면 case 없음."""
+    for exe in baseline.get("executions", []):
+        if exe.get("case_name") == case_name:
+            return "PASS" if exe.get("passed") else "FAIL"
+    return None
+
+
+# ── Gate Evaluation (Phase 3) ─────────────────────────────────────
+
+def evaluate_gate(plan: Plan,
+                  executions: list[CaseExecution],
+                  baseline: dict | None = None) -> GateResult:
+    """Plan + execution 결과를 받아 GateResult 반환.
+
+    알고리즘 (design doc 명시):
+      1. 각 case의 known_issue 매칭 결과 수집 → known_warns
+      2. baseline_ref가 있으면 case-by-case diff:
+         - regressions: 이전 PASS, 이번 FAIL
+         - fixed: 이전 FAIL, 이번 PASS
+         - new_cases: baseline에 없음
+      3. verdict:
+         - fail_on_new_failure=true이고 regressions 있으면 → FAIL
+         - 그 외 pass_rate < threshold_pass_rate → FAIL
+         - 그 외 known_warns 있으면 → WARN, 없으면 → PASS
+    """
+    gate_cfg = plan.gate
+    threshold = float(gate_cfg.get("threshold_pass_rate", 1.0))
+    baseline_ref = gate_cfg.get("baseline_ref") or {}
+    fail_on_regression = bool(baseline_ref.get("fail_on_new_failure", False))
+
+    regressions: list[str] = []
+    fixed: list[str] = []
+    new_cases: list[str] = []
+    known_warns: list[dict[str, str]] = []
+    pass_count = 0
+
+    for exe in executions:
+        # known_issue 수집 (results에 'known_issue' 키 있는 항목)
+        for r in exe.results:
+            if isinstance(r, dict) and "known_issue" in r:
+                known_warns.append({
+                    "case": exe.case_name,
+                    "check": str(r.get("name", "")),
+                    "label": str(r.get("known_issue", "")),
+                })
+
+        # baseline diff
+        if baseline:
+            prev = _baseline_case_status(baseline, exe.case_name)
+            cur = "PASS" if exe.passed else "FAIL"
+            if prev is None:
+                new_cases.append(exe.case_name)
+            elif prev == "PASS" and cur == "FAIL":
+                regressions.append(exe.case_name)
+            elif prev == "FAIL" and cur == "PASS":
+                fixed.append(exe.case_name)
+
+        if exe.passed:
+            pass_count += 1
+
+    total = len(executions)
+    pass_rate = (pass_count / total) if total > 0 else 0.0
+
+    # verdict
+    if fail_on_regression and regressions:
+        verdict = "FAIL"
+    elif pass_rate < threshold:
+        verdict = "FAIL"
+    elif known_warns:
+        verdict = "WARN"
+    else:
+        verdict = "PASS"
+
+    return GateResult(
+        verdict=verdict,
+        pass_rate=round(pass_rate, 4),
+        regressions=regressions,
+        fixed=fixed,
+        new_cases=new_cases,
+        known_warns=known_warns,
+    )
+
+
+# ── Reports Rendering (Phase 3) ───────────────────────────────────
+
+def _execution_to_dict(exe: CaseExecution) -> dict:
+    return {
+        "section": exe.section,
+        "case_name": exe.case_name,
+        "passed": exe.passed,
+        "retries_used": exe.retries_used,
+        "duration_sec": exe.duration_sec,
+        "error": exe.error,
+        "results": exe.results,
+    }
+
+
+def _gate_result_to_dict(gate: GateResult) -> dict:
+    return {
+        "verdict": gate.verdict,
+        "pass_rate": gate.pass_rate,
+        "regressions": gate.regressions,
+        "fixed": gate.fixed,
+        "new_cases": gate.new_cases,
+        "known_warns": gate.known_warns,
+    }
+
+
+def _render_json(plan: Plan, executions: list[CaseExecution],
+                 gate: GateResult, host: str, timestamp: str,
+                 path: str) -> None:
+    payload = {
+        "plan": {
+            "name": plan.name,
+            "description": plan.description,
+            "version": plan.version,
+        },
+        "timestamp": timestamp,
+        "host": host,
+        "executions": [_execution_to_dict(e) for e in executions],
+        "gate": _gate_result_to_dict(gate),
+    }
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def _render_junit(plan: Plan, executions: list[CaseExecution],
+                  gate: GateResult, host: str, timestamp: str,
+                  path: str) -> None:
+    """단순 JUnit XML — case = testcase, plan = testsuite."""
+    import xml.etree.ElementTree as ET
+    suite = ET.Element("testsuite", {
+        "name": plan.name,
+        "tests": str(len(executions)),
+        "failures": str(sum(1 for e in executions if not e.passed)),
+        "timestamp": timestamp,
+        "hostname": host,
+    })
+    for exe in executions:
+        tc = ET.SubElement(suite, "testcase", {
+            "name": exe.case_name,
+            "classname": f"plan.{plan.name}.{exe.section}",
+            "time": str(exe.duration_sec),
+        })
+        if not exe.passed:
+            failure_msg = exe.error or "case FAIL"
+            failed_checks = [
+                f"{r.get('name')}: {r.get('reason', '')}"
+                for r in exe.results
+                if isinstance(r, dict) and not r.get("passed") and "known_issue" not in r
+            ]
+            failure = ET.SubElement(tc, "failure", {"message": failure_msg})
+            failure.text = "\n".join(failed_checks) or failure_msg
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tree = ET.ElementTree(suite)
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def _render_html(plan: Plan, executions: list[CaseExecution],
+                 gate: GateResult, host: str, timestamp: str,
+                 path: str) -> None:
+    """단순 HTML summary — plan-level table + verdict + diff sections."""
+    rows = []
+    for exe in executions:
+        cls = "pass" if exe.passed else "fail"
+        err_str = f" ({exe.error})" if exe.error else ""
+        retry_str = f" retry={exe.retries_used}" if exe.retries_used > 0 else ""
+        rows.append(
+            f"<tr class='{cls}'><td>{exe.section}</td>"
+            f"<td>{exe.case_name}</td>"
+            f"<td>{'PASS' if exe.passed else 'FAIL'}{err_str}</td>"
+            f"<td>{exe.duration_sec}s{retry_str}</td></tr>"
+        )
+
+    diff = ""
+    if gate.regressions or gate.fixed or gate.new_cases:
+        diff = "<h2>Baseline Diff</h2><ul>"
+        if gate.regressions:
+            diff += f"<li><b>Regressions ({len(gate.regressions)}):</b> {', '.join(gate.regressions)}</li>"
+        if gate.fixed:
+            diff += f"<li>Fixed ({len(gate.fixed)}): {', '.join(gate.fixed)}</li>"
+        if gate.new_cases:
+            diff += f"<li>New cases ({len(gate.new_cases)}): {', '.join(gate.new_cases)}</li>"
+        diff += "</ul>"
+
+    known = ""
+    if gate.known_warns:
+        known = f"<h2>Known Warnings ({len(gate.known_warns)})</h2><ul>"
+        for w in gate.known_warns:
+            known += f"<li>{w['case']} / {w['check']}: {w['label']}</li>"
+        known += "</ul>"
+
+    html = (
+        f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>{plan.name} — {timestamp}</title>"
+        f"<style>body{{font-family:sans-serif;margin:2em}}"
+        f"table{{border-collapse:collapse;width:100%}}"
+        f"th,td{{border:1px solid #ccc;padding:6px;text-align:left}}"
+        f"tr.pass{{background:#e8f5e9}}tr.fail{{background:#ffebee}}"
+        f".verdict{{padding:8px;font-weight:bold}}"
+        f".v-PASS{{background:#a5d6a7}}.v-FAIL{{background:#ef9a9a}}"
+        f".v-WARN{{background:#fff59d}}</style></head><body>"
+        f"<h1>{plan.name}</h1><p>{plan.description}</p>"
+        f"<p>Host: {host} / Timestamp: {timestamp}</p>"
+        f"<div class='verdict v-{gate.verdict}'>VERDICT: {gate.verdict} (pass_rate={gate.pass_rate})</div>"
+        f"{diff}{known}"
+        f"<h2>Cases ({len(executions)})</h2>"
+        f"<table><tr><th>Section</th><th>Case</th><th>Status</th><th>Duration</th></tr>"
+        f"{''.join(rows)}</table></body></html>"
+    )
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        f.write(html)
+
+
+def render_reports(plan: Plan, executions: list[CaseExecution],
+                   gate: GateResult, host: str,
+                   base_path: str,
+                   timestamp: str | None = None) -> list[str]:
+    """plan.reports 명세에 따라 html/junit/json 파일 생성.
+
+    base_path: 상대경로 reports의 base (project root 권장).
+    timestamp: 명시 시점 또는 None이면 현재 (YYYYMMDD_HHMMSS).
+    Returns: 생성된 파일 절대경로 리스트.
+    """
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    written: list[str] = []
+    renderers = {
+        "json": _render_json,
+        "junit": _render_junit,
+        "html": _render_html,
+    }
+
+    for report in plan.reports:
+        fmt = report.get("format", "")
+        path_template = report.get("path", "")
+        if not path_template:
+            continue
+        path = path_template.replace("{timestamp}", timestamp).replace("{plan_name}", plan.name)
+        abs_path = path if os.path.isabs(path) else os.path.join(base_path, path)
+        renderer = renderers.get(fmt)
+        if renderer is None:
+            continue
+        try:
+            renderer(plan, executions, gate, host, timestamp, abs_path)
+            written.append(abs_path)
+        except (OSError, ValueError) as exc:
+            print(f"WARNING: report '{fmt}' 생성 실패: {exc}")
+
+    return written
