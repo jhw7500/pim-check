@@ -1,17 +1,20 @@
 """
-plan.py — Declarative Release Plan loader, linter, and case resolver.
+plan.py — Declarative Release Plan loader, linter, resolver, and executor.
 
-v1 scope: load_plan + lint_plan + resolve_cases + Plan/GateResult dataclasses.
-v1.1+ adds: execute_plan, evaluate_gate, render_reports, tag selector, case_overrides.
+Phase 1: Plan/GateResult dataclass + load_plan + lint_plan + resolve_cases + list_plans
+Phase 2 (NEW): resolve_runtime_profile + execute_plan (per-case loop)
+Phase 3 (TBD): evaluate_gate + render_reports + baseline_ref handling
 
 Design doc: ~/.gstack/projects/jhw7500-pim-check/jhw-main-design-20260430-130751.md
 """
 from __future__ import annotations
 
+import copy
 import fnmatch
 import os
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -416,3 +419,208 @@ def _match_selector(sel: str, available: list[str]) -> list[str]:
         matched = sorted(n for n in available if fnmatch.fnmatch(n, sel))
         return matched
     return [sel] if sel in available else []
+
+
+# ── Runtime Profile Merge (Phase 2) ───────────────────────────────
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """config.deep_merge와 동일 — 외부 의존을 plan.py 자체로 가져옴 (cycle 회피)."""
+    result = copy.deepcopy(base)
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = copy.deepcopy(val)
+    return result
+
+
+def resolve_runtime_profile(case_profile: dict,
+                            plan_global: dict | None = None,
+                            cli_args: dict | None = None) -> dict:
+    """case_profile (load_profile 결과) 위에 plan-level과 CLI 인자를 우선순위대로 머지.
+
+    우선순위 (낮음 → 높음): case_profile (= base + case YAML 머지) → plan_global → cli_args.
+
+    plan_global은 plan-level case override (v1에서는 미사용, v1.1+ case_overrides용 placeholder).
+    cli_args는 dict 형태 — 예: {"target": {"host": "10.0.0.5"}, "monitor": {"duration_sec": 60}}.
+
+    참고: plan.execution은 머지 대상이 아님 (run policy로 execute_plan이 직접 사용).
+
+    Returns: 머지된 새 dict (입력 보존).
+    """
+    profile = copy.deepcopy(case_profile)
+    if plan_global:
+        profile = _deep_merge(profile, plan_global)
+    if cli_args:
+        profile = _deep_merge(profile, cli_args)
+    return profile
+
+
+# ── Plan Execution (Phase 2) ──────────────────────────────────────
+
+@dataclass
+class CaseExecution:
+    """plan 안에서 단일 case 실행 결과."""
+    section: str                    # "regression" | "delta"
+    case_name: str
+    results: list                   # engine.run_snapshot 결과 리스트
+    passed: bool                    # 모든 check pass + known_issue 제외 시 True
+    retries_used: int               # plan.execution.case_retry 사용 횟수
+    error: str | None = None        # NO_SSH / SETUP_TIMEOUT / EXCEPTION 등
+    duration_sec: float = 0.0
+
+
+def _run_single_case(ssh, profile: dict, case_name: str,
+                     engine_factory: Callable,
+                     setup_factory: Callable | None) -> tuple[list, bool, str | None]:
+    """단일 case의 setup → engine.run_snapshot → known_issue 처리 한 번 실행.
+
+    Returns: (results, passed, error). error는 None or "NO_SSH"/"SETUP_TIMEOUT"/"EXCEPTION:..."
+    """
+    if not ssh.check_connectivity():
+        return [], False, "NO_SSH"
+
+    # Setup (edgeconf 변경 + reboot, 있으면)
+    setup_cfg = profile.get("setup")
+    if setup_cfg and setup_factory is not None:
+        try:
+            setup_mgr = setup_factory(ssh)
+            setup_mgr.run_setup(setup_cfg)
+        except TimeoutError as exc:
+            return [], False, f"SETUP_TIMEOUT: {exc}"
+        except Exception as exc:
+            return [], False, f"SETUP_EXCEPTION: {type(exc).__name__}: {exc}"
+
+    # Engine 실행 (run_snapshot 한 번만 — duration<=0 가정. monitor 모드는 v1.1)
+    try:
+        engine = engine_factory(ssh, profile)
+        results = engine.run_snapshot()
+    except Exception as exc:
+        return [], False, f"RUN_EXCEPTION: {type(exc).__name__}: {exc}"
+
+    # known_issues 매칭 — reporter가 in-place로 'known_issue' 키 추가
+    known = profile.get("known_issues")
+    if known:
+        try:
+            from reporter import Reporter
+            Reporter().format(results, case_name, 1, 1, known_issues=known)
+        except Exception:
+            pass  # 매칭 실패는 fatal 아님
+
+    # passed = all PASS + known_issue로 분류된 FAIL은 통과 처리
+    real_fails = [r for r in results if not r.get("passed") and "known_issue" not in r]
+    passed = len(real_fails) == 0
+    return results, passed, None
+
+
+def execute_plan(plan: Plan, profiles_dir: str,
+                 ssh_factory: Callable,
+                 setup_factory: Callable | None = None,
+                 engine_factory: Callable | None = None,
+                 cli_args: dict | None = None,
+                 progress: Callable | None = None) -> list[CaseExecution]:
+    """Plan 실행 — resolve_cases 순서대로 case 단위 실행.
+
+    각 case별:
+      1. load_profile(profiles_dir, case=case_name) — base + case YAML 머지
+      2. resolve_runtime_profile(profile, None, cli_args) — CLI override 적용
+      3. ssh_factory(host, user, password) — 새 SshClient
+      4. _run_single_case (setup + engine + known_issue)
+      5. plan.execution.case_retry까지 재시도
+      6. plan.execution.stop_on_fail 평가
+      7. plan.execution.wait_between_cases sleep
+
+    Args:
+        plan: Plan 인스턴스
+        profiles_dir: base.yaml과 cases/ 디렉토리가 있는 경로
+        ssh_factory: callable (host, user, password) → SshClient-like
+        setup_factory: callable (ssh) → SetupManager-like. None이면 setup 스킵.
+        engine_factory: callable (ssh, profile) → Engine-like. None이면 기본 Engine 사용.
+        cli_args: dict 형태 CLI 오버라이드 (예: {"target": {"host": "..."}})
+        progress: callable (idx, total, case_name, exec_result) — case 끝날 때 호출 (선택)
+
+    Returns:
+        list[CaseExecution] — case별 실행 결과. plan에 정의된 순서.
+    """
+    # 지연 import — testability (plan.py 자체는 engine 미의존)
+    if engine_factory is None:
+        from engine import Engine
+        engine_factory = lambda s, p: Engine(s, p)
+
+    # config.load_profile 사용 (base + case YAML 머지)
+    from config import load_profile
+
+    resolved = resolve_cases(plan, profiles_dir)
+    total = len(resolved)
+    executions: list[CaseExecution] = []
+
+    for idx, (section, case_name) in enumerate(resolved, 1):
+        t0 = time.monotonic()
+
+        # case profile 로드
+        try:
+            case_profile = load_profile(profiles_dir, case=case_name)
+        except FileNotFoundError as exc:
+            executions.append(CaseExecution(
+                section=section, case_name=case_name,
+                results=[], passed=False, retries_used=0,
+                error=f"PROFILE_NOT_FOUND: {exc}",
+                duration_sec=round(time.monotonic() - t0, 2),
+            ))
+            if plan.execution["stop_on_fail"]:
+                break
+            continue
+
+        # CLI 오버라이드 적용
+        runtime = resolve_runtime_profile(case_profile,
+                                          plan_global=None,
+                                          cli_args=cli_args)
+
+        target = runtime.get("target", {})
+        host = target.get("host", "192.168.0.5")
+        user = target.get("user", "root")
+        password = target.get("password", "root")
+
+        # case_retry 루프
+        results: list = []
+        passed = False
+        error: str | None = None
+        retries_used = 0
+        max_retry = plan.execution["case_retry"]
+        for attempt in range(max_retry + 1):
+            ssh = ssh_factory(host, user, password)
+            results, passed, error = _run_single_case(
+                ssh, runtime, case_name, engine_factory, setup_factory,
+            )
+            retries_used = attempt
+            if passed:
+                break
+            if attempt < max_retry:
+                wait = plan.execution["retry_wait_sec"]
+                if wait > 0:
+                    time.sleep(wait)
+
+        execution = CaseExecution(
+            section=section, case_name=case_name,
+            results=results, passed=passed, retries_used=retries_used,
+            error=error,
+            duration_sec=round(time.monotonic() - t0, 2),
+        )
+        executions.append(execution)
+
+        if progress is not None:
+            try:
+                progress(idx, total, case_name, execution)
+            except Exception:
+                pass  # progress callback 실패는 fatal 아님
+
+        # stop_on_fail
+        if not passed and plan.execution["stop_on_fail"]:
+            break
+
+        # case 간 인터벌
+        wait = plan.execution["wait_between_cases"]
+        if wait > 0 and idx < total:
+            time.sleep(wait)
+
+    return executions

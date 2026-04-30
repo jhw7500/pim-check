@@ -50,6 +50,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--validate-schema", action="store_true", help="schema.yaml 유효성 검증")
     parser.add_argument("--generate", action="store_true", help="스키마 기반 테스트 케이스 자동 생성")
     parser.add_argument("--include-generated", action="store_true", help="자동 생성된 케이스도 실행에 포함")
+    parser.add_argument("--plan", type=str, default=None,
+                        help="실행할 plan 이름 (profiles/plans/{name}.yaml)")
+    parser.add_argument("--list-plans", action="store_true",
+                        help="사용 가능한 plan 목록 출력")
     return parser.parse_args(argv)
 
 
@@ -106,6 +110,89 @@ def list_cases(include_generated: bool = False, tag: str | None = None) -> list[
         _visit(n)
 
     return sorted_names
+
+
+def _run_plan(args) -> int:
+    """--plan {name} 실행 — plan-driven case 순차 실행 + 종합 결과 출력.
+
+    v1 scope: html/junit/json reporting과 evaluate_gate는 미적용 (Phase 3).
+    각 case별 PASS/FAIL을 stdout에 출력 + 종합 verdict로 exit code 결정.
+    """
+    from plan import load_plan, execute_plan
+    from setup import SetupManager
+    from engine import Engine
+
+    plan_path = os.path.join(PROFILES_DIR, "plans", f"{args.plan}.yaml")
+    if not os.path.exists(plan_path):
+        print(f"ERROR: Plan not found: {plan_path}")
+        return 3  # plan lint/file 에러는 exit 3
+
+    try:
+        plan = load_plan(plan_path)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 3
+
+    # CLI 오버라이드 dict 구성 (resolve_runtime_profile에 전달)
+    cli_args: dict = {}
+    if args.host or args.user or args.password:
+        cli_args["target"] = {}
+        if args.host:
+            cli_args["target"]["host"] = args.host
+        if args.user:
+            cli_args["target"]["user"] = args.user
+        if args.password:
+            cli_args["target"]["password"] = args.password
+    if args.duration is not None:
+        cli_args["monitor"] = {"duration_sec": args.duration}
+
+    if not args.quiet:
+        print(f"Plan: {plan.name}")
+        print(f"  description: {plan.description}")
+        print(f"  execution: stop_on_fail={plan.execution['stop_on_fail']}, "
+              f"case_retry={plan.execution['case_retry']}")
+        print()
+
+    def on_progress(idx, total, case_name, execution):
+        if args.quiet:
+            return
+        mark = "[+]" if execution.passed else "[X]"
+        retry_str = f" (retries={execution.retries_used})" if execution.retries_used > 0 else ""
+        err_str = f" — {execution.error}" if execution.error else ""
+        print(f"  [{idx}/{total}] {mark} [{execution.section}] {case_name} "
+              f"({execution.duration_sec}s){retry_str}{err_str}")
+
+    executions = execute_plan(
+        plan, PROFILES_DIR,
+        ssh_factory=lambda h, u, p: SshClient(h, u, p),
+        setup_factory=lambda ssh: SetupManager(ssh),
+        engine_factory=lambda ssh, profile: Engine(ssh, profile),
+        cli_args=cli_args or None,
+        progress=on_progress,
+    )
+
+    # 종합 결과
+    total = len(executions)
+    passed = sum(1 for e in executions if e.passed)
+    failed = total - passed
+    verdict = "PASS" if failed == 0 else "FAIL"
+
+    if not args.quiet:
+        print()
+        print(f"=== Plan {plan.name} {verdict}: {passed}/{total} cases passed ===")
+        if failed > 0:
+            print("Failed cases:")
+            for e in executions:
+                if not e.passed:
+                    err = f" ({e.error})" if e.error else ""
+                    print(f"  [{e.section}] {e.case_name}{err}")
+
+    # exit code (design doc 표 따름):
+    #   0 = PASS
+    #   1 = FAIL (regressions or threshold 미달)
+    #   2 = WARN (v1.1 — 현재는 미사용)
+    #   3 = plan lint/실행 자체 실패
+    return 0 if verdict == "PASS" else 1
 
 
 def run_case(case_name, host, user, password, duration, save_json=False,
@@ -266,6 +353,20 @@ def _main_run(args) -> int:
         else:
             print("No cases found in profiles/cases/")
         return 0
+
+    if args.list_plans:
+        from plan import list_plans
+        plans = list_plans(PROFILES_DIR)
+        if plans:
+            print("Available plans:")
+            for p in plans:
+                print(f"  {p}")
+        else:
+            print("No plans found in profiles/plans/")
+        return 0
+
+    if args.plan:
+        return _run_plan(args)
 
     if args.export_csv:
         from history import export_csv
