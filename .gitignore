@@ -24,9 +24,15 @@ build/
 .coverage
 
 # Runtime logs (keep JSON results untracked by default; track selectively)
-mixed_combo*.log
-smart_retry.log
-bps_*.log
+*.log
+mixed_combo_results.json
+comprehensive_results.json.bak.*
+
+# Diagnostic artifacts (vflip frame compare PNG bundles 등)
+vflip_compare_artifacts/
+
+# Local-only docs (개인 작업 xlsx 등)
+docs/*.xlsx
 
 # Schema backups
 profiles/schema.yaml.bak.*
