@@ -547,7 +547,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # 지연 import — testability (plan.py 자체는 engine 미의존)
     if engine_factory is None:
         from engine import Engine
-        engine_factory = lambda s, p: Engine(s, p)
+        engine_factory = Engine
 
     # config.load_profile 사용 (base + case YAML 머지)
     from config import load_profile

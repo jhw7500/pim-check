@@ -162,17 +162,17 @@ def compare(left: list[CaseStatus],
 
     seen_right: set[str] = set()
 
-    for l in left:
-        mapped_name = _apply_mapping(l.name, mapping)
+    for ls in left:
+        mapped_name = _apply_mapping(ls.name, mapping)
         r = right_by_name.get(mapped_name)
         if r is None:
-            report.left_only.append(l.name)
+            report.left_only.append(ls.name)
             continue
         seen_right.add(mapped_name)
-        if l.passed == r.passed:
-            report.matched.append((l.name, r.name))
+        if ls.passed == r.passed:
+            report.matched.append((ls.name, r.name))
         else:
-            report.mismatched.append((l.name, r.name, l.passed, r.passed))
+            report.mismatched.append((ls.name, r.name, ls.passed, r.passed))
 
     # right에 있는데 left에 없는 case
     for r in right:
@@ -189,20 +189,20 @@ def print_report(report: EquivalenceReport,
     lo = len(report.left_only)
     ro = len(report.right_only)
 
-    print(f"=== Equivalence Report ===")
+    print("=== Equivalence Report ===")
     print(f"  Left:  {left_total} cases")
     print(f"  Right: {right_total} cases")
-    print(f"")
+    print("")
     print(f"  MATCHED:    {matched}")
     print(f"  MISMATCHED: {mismatched}")
     print(f"  LEFT_ONLY:  {lo} (mapping으로 매칭 안 된 left case)")
     print(f"  RIGHT_ONLY: {ro} (mapping으로 매칭 안 된 right case)")
-    print(f"")
+    print("")
 
     if mismatched > 0:
         print("Mismatched cases (left passed != right passed):")
-        for l, r, lp, rp in report.mismatched[:20]:
-            print(f"  {l!r} -> {r!r}: left={lp}, right={rp}")
+        for ln, rn, lp, rp in report.mismatched[:20]:
+            print(f"  {ln!r} -> {rn!r}: left={lp}, right={rp}")
         if mismatched > 20:
             print(f"  ... +{mismatched - 20} more")
         print()
@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             mapping = _load_json(args.mapping)
             if not isinstance(mapping, dict):
-                print(f"ERROR: --mapping은 {{left: right}} dict여야 합니다.")
+                print("ERROR: --mapping은 {left: right} dict여야 합니다.")
                 return 3
         except (OSError, json.JSONDecodeError) as e:
             print(f"ERROR: --mapping 로드 실패: {e}")

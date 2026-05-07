@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         # 활성 채널 조합별 카운트
         combo_counts = Counter(tuple(u["active_channels"]) for u in unmapped)
         print()
-        print(f"Unmapped scenarios (8 mandatory combinations에 없는 조합):")
+        print("Unmapped scenarios (8 mandatory combinations에 없는 조합):")
         for combo, count in sorted(combo_counts.items()):
             chs = ", ".join(f"ch{c}" for c in combo)
             print(f"  {{{chs}}}: {count} scenarios")

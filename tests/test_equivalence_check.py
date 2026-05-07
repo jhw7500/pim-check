@@ -13,7 +13,6 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from equivalence_check import (  # type: ignore[import-not-found]
     CaseStatus,
-    EquivalenceReport,
     compare,
     normalize_left,
     normalize_right,
@@ -125,9 +124,9 @@ class TestCompare(unittest.TestCase):
         right = [CaseStatus("a", False)]
         report = compare(left, right)
         self.assertEqual(len(report.mismatched), 1)
-        l, r, lp, rp = report.mismatched[0]
-        self.assertEqual(l, "a")
-        self.assertEqual(r, "a")
+        ln, rn, lp, rp = report.mismatched[0]
+        self.assertEqual(ln, "a")
+        self.assertEqual(rn, "a")
         self.assertTrue(lp)
         self.assertFalse(rp)
 

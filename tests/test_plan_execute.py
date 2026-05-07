@@ -13,7 +13,6 @@ import unittest
 from unittest.mock import MagicMock
 
 from plan import (
-    CaseExecution,
     Plan,
     DEFAULT_EXECUTION,
     DEFAULT_GATE,

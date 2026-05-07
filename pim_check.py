@@ -150,7 +150,7 @@ def _promote_baseline(args) -> int:
     print(f"Promoted: {os.path.relpath(source, project_root)}")
     print(f"      → {rel_target}")
     print()
-    print(f"plan의 gate.baseline_ref.file을 다음 경로로 갱신하세요:")
+    print("plan의 gate.baseline_ref.file을 다음 경로로 갱신하세요:")
     print(f"  {rel_target}")
     return 0
 
