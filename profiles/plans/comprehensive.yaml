@@ -34,6 +34,9 @@ cases:
     # 정상 동작 baseline (회귀 안전망)
     - 720p_2ch
     - fhd_4ch
+    # mux ts 분기 + process restart 안전망 (multi 미커버 영역)
+    - mux_ts_smoke
+    - process_restart_smoke
 
   delta:
     # ── 4채널 (1 combo × 2 res) ──
