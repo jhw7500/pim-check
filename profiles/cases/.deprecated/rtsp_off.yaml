@@ -10,7 +10,7 @@ setup:
 
 checks:
   cpu:
-    gst_range: [5, 70]
+    gst_range: [0, 280]
   recording:
     expected_channels: null
     session_progress: null

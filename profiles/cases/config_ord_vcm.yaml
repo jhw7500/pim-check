@@ -3,6 +3,12 @@
 name: "Config: ORD/VCM Process"
 description: "ORD/VCM 프로세스 상태 및 설정값 정합성 검증"
 
+setup:
+  ord_vcm_changes:
+    .VCM.srt_enable: false
+  reboot_after: true
+  stabilize_sec: 30
+
 checks:
   processes:
     required:

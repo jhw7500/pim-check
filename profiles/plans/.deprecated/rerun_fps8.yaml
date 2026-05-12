@@ -1,0 +1,30 @@
+name: "Rerun FPS 8 (after gst_range fix)"
+description: "fps 8건 별도 재실행 — gst_range lower bound 0 fix 검증"
+version: 1
+tags: [rerun, fps8]
+
+execution:
+  stop_on_fail: false
+  case_retry: 0
+  wait_between_cases: 5
+
+cases:
+  regression:
+    - gen_720p_2ch_15fps
+    - gen_720p_2ch_30fps
+    - gen_720p_4ch_15fps
+    - gen_720p_4ch_30fps
+    - gen_fhd_2ch_15fps
+    - gen_fhd_2ch_30fps
+    - gen_fhd_4ch_15fps
+    - gen_fhd_4ch_30fps
+
+gate:
+  threshold_pass_rate: 0.80
+  allow_known_issue: true
+
+reports:
+  - format: json
+    path: reports/rerun_fps8/{timestamp}.json
+  - format: markdown_summary
+    path: reports/rerun_fps8/{timestamp}.md

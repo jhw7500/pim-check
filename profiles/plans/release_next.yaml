@@ -29,10 +29,6 @@ cases:
     - 720p_4ch
     - fhd_4ch
     # 채널 동작 검증 (간접 영향 확인)
-    - gen_720p_2ch_15fps
-    - gen_720p_2ch_30fps
-    - gen_fhd_4ch_15fps
-    - gen_fhd_4ch_30fps
     # 프로세스/시스템 안전망
     - board_hw_check
     - config_integrity

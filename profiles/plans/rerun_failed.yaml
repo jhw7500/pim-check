@@ -1,0 +1,74 @@
+# rerun_failed.yaml — 2026-05-07 nightly의 73 FAIL 케이스만 재실행
+# SD 카드 교체 후 cascade fail 회복 검증 + 진짜 회귀 좁히기
+# Generated: 2026-05-08
+
+name: "Re-run failed cases from 2026-05-07 nightly"
+description: |
+  2026-05-07 nightly에서 FAIL한 73건을 동일 execution 정책으로 재실행.
+  SD 카드 교체 후 cascade(SD 미마운트) fail이 자동 회복되는지 + 진짜 FW 회귀 영역을 좁히기 위함.
+  nightly.yaml의 execution/gate 설정 그대로 상속.
+version: 1
+
+cases:
+  regression:
+    - board_hw_check
+    - board_error_detect
+    - config_edgeconf_network
+    - config_ord_vcm
+    - multi_1ch_0_720p
+    - multi_1ch_0_fhd
+    - multi_1ch_3_720p
+    - multi_1ch_3_fhd
+    - multi_2ch_01_720p
+    - multi_2ch_01_fhd
+    - multi_2ch_03_720p
+    - multi_2ch_03_fhd
+    - multi_2ch_12_720p
+    - multi_2ch_12_fhd
+    - multi_3ch_012_720p
+    - multi_3ch_012_fhd
+    - multi_3ch_123_720p
+    - multi_3ch_123_fhd
+    - multi_4ch_720p
+    - multi_4ch_fhd
+    - gen_720p_ch0_vflip_off
+    - gen_720p_ch0_vflip_on
+    - gen_720p_ch2_vflip_off
+    - gen_720p_ch2_vflip_on
+    - gen_fhd_ch0_vflip_off
+    - gen_fhd_ch0_vflip_on
+    - gen_fhd_ch1_vflip_off
+    - gen_fhd_ch1_vflip_on
+    - gen_fhd_ch2_vflip_off
+    - gen_fhd_ch2_vflip_on
+    - gen_fhd_ch3_vflip_off
+    - gen_fhd_ch3_vflip_on
+    - gen_ord_disk_off_srt_off
+    - gen_ord_disk_off_srt_on
+    - gen_ord_disk_on_srt_off
+    - gen_fhd_mux_mp4
+    - gen_fhd_mux_ts
+    - gen_fhd_rec1m
+    - gen_fhd_rec2m
+    - gen_fhd_rec5m
+
+execution:
+  stop_on_fail: false
+  case_retry: 2
+  retry_wait_sec: 90
+  reboot_wait_sec: 300
+  wait_between_cases: 5
+
+gate:
+  threshold_pass_rate: 0.98
+  allow_known_issue: true
+
+reports:
+  - format: html
+    path: reports/rerun_failed/{timestamp}.html
+  - format: junit
+    path: reports/rerun_failed/{timestamp}.xml
+  - format: json
+    path: reports/rerun_failed/{timestamp}.json
+  - format: markdown_summary
+    path: reports/rerun_failed/{timestamp}.md

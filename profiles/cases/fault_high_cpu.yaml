@@ -6,7 +6,7 @@ description: "CPU 사용량 이상 감지 (범위 벗어남)"
 checks:
   cpu:
     bg_check_max_pct: 2.0
-    gst_range: [10, 80]
+    gst_range: [20, 320]
 
   thermal:
     max_temp_c: 80

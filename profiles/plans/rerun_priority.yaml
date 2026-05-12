@@ -1,0 +1,76 @@
+# rerun_priority.yaml — 디버깅된 그룹 우선 검증
+# 1) vflip (schema vflip+hflip 명시 fix 검증)
+# 2) bps   (setup.py list 직렬화 fix 검증)
+# 3) multi (multi_*.yaml ch_error/last_ok/BITRATE/ext/stabilize fix 검증)
+# 4) mux/rec (capture fix + multi 영향)
+# 5) fps   (secondary)
+# 6) ord_disk/config/other (baseline/env — 가능성 낮음)
+# Generated: 2026-05-08
+
+name: "Rerun by priority — debugged groups first"
+description: "FAIL 73건을 디버깅 우선순위로 재정렬해 재실행 (수정 효과 빠른 검증)"
+version: 1
+
+cases:
+  regression:
+    - gen_720p_ch0_vflip_off
+    - gen_720p_ch0_vflip_on
+    - gen_720p_ch2_vflip_off
+    - gen_720p_ch2_vflip_on
+    - gen_fhd_ch0_vflip_off
+    - gen_fhd_ch0_vflip_on
+    - gen_fhd_ch1_vflip_off
+    - gen_fhd_ch1_vflip_on
+    - gen_fhd_ch2_vflip_off
+    - gen_fhd_ch2_vflip_on
+    - gen_fhd_ch3_vflip_off
+    - gen_fhd_ch3_vflip_on
+    - multi_1ch_0_720p
+    - multi_1ch_0_fhd
+    - multi_1ch_3_720p
+    - multi_1ch_3_fhd
+    - multi_2ch_01_720p
+    - multi_2ch_01_fhd
+    - multi_2ch_03_720p
+    - multi_2ch_03_fhd
+    - multi_2ch_12_720p
+    - multi_2ch_12_fhd
+    - multi_3ch_012_720p
+    - multi_3ch_012_fhd
+    - multi_3ch_123_720p
+    - multi_3ch_123_fhd
+    - multi_4ch_720p
+    - multi_4ch_fhd
+    - gen_fhd_mux_mp4
+    - gen_fhd_mux_ts
+    - gen_fhd_rec1m
+    - gen_fhd_rec2m
+    - gen_fhd_rec5m
+    - gen_ord_disk_off_srt_off
+    - gen_ord_disk_off_srt_on
+    - gen_ord_disk_on_srt_off
+    - config_edgeconf_network
+    - config_ord_vcm
+    - board_hw_check
+    - board_error_detect
+
+execution:
+  stop_on_fail: false
+  case_retry: 2
+  retry_wait_sec: 90
+  reboot_wait_sec: 300
+  wait_between_cases: 5
+
+gate:
+  threshold_pass_rate: 0.98
+  allow_known_issue: true
+
+reports:
+  - format: html
+    path: reports/rerun_priority/{timestamp}.html
+  - format: junit
+    path: reports/rerun_priority/{timestamp}.xml
+  - format: json
+    path: reports/rerun_priority/{timestamp}.json
+  - format: markdown_summary
+    path: reports/rerun_priority/{timestamp}.md

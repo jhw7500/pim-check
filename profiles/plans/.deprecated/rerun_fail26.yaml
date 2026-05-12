@@ -1,0 +1,52 @@
+name: "Rerun FAIL 26 (post-fix verification)"
+description: "rerun_priority(2026-05-11) FAIL 26건만 추출. P1+P2+P4 framework fix 검증용."
+version: 1
+tags: [rerun, fail26]
+
+execution:
+  stop_on_fail: false
+  case_retry: 1
+  wait_between_cases: 5
+
+cases:
+  regression:
+    # multi 10건 (gst_range fix 검증)
+    - multi_1ch_0_fhd
+    - multi_1ch_3_fhd
+    - multi_2ch_01_fhd
+    - multi_2ch_03_720p
+    - multi_2ch_03_fhd
+    - multi_2ch_12_720p
+    - multi_2ch_12_fhd
+    - multi_3ch_012_fhd
+    - multi_3ch_123_fhd
+    - multi_4ch_fhd
+
+
+    # rec 2건 (ssh_timeout 600s fix 검증)
+    - gen_fhd_rec2m
+    - gen_fhd_rec5m
+
+
+    # ord_disk 3건 (edgeconf default 잔존 — fix 미적용, 재검증)
+    - gen_ord_disk_off_srt_off
+    - gen_ord_disk_off_srt_on
+    - gen_ord_disk_on_srt_off
+
+    # config 2건 (edgeconf default 잔존 + 환경)
+    - config_edgeconf_network
+    - config_ord_vcm
+
+gate:
+  threshold_pass_rate: 0.80
+  allow_known_issue: true
+
+reports:
+  - format: html
+    path: reports/rerun_fail26/{timestamp}.html
+  - format: junit
+    path: reports/rerun_fail26/{timestamp}.xml
+  - format: json
+    path: reports/rerun_fail26/{timestamp}.json
+  - format: markdown_summary
+    path: reports/rerun_fail26/{timestamp}.md

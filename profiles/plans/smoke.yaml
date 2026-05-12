@@ -19,7 +19,6 @@ cases:
     - 720p_2ch
     - 720p_4ch
     - fhd_4ch
-    - rtsp_off
     # board HW sanity
     - board_hw_check
     # config 무결성

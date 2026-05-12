@@ -25,7 +25,6 @@ cases:
     - 720p_2ch
     - 720p_4ch
     - fhd_4ch
-    - rtsp_off
 
     # ── 시스템/HW sanity (2) ──
     - board_hw_check

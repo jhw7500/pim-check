@@ -38,7 +38,7 @@ class SshClient:
         user: str = "root",
         password: str = "root",
         connect_timeout: int = 5,
-        command_timeout: int = 10,
+        command_timeout: int = 600,
     ) -> None:
         self.host = host
         self.user = user

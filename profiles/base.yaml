@@ -36,7 +36,7 @@ checks:
 
   cpu:
     bg_check_max_pct: 3.0
-    gst_range: [0, 100]
+    gst_range: [0, 400]  # multi-core 합산 가능 (4 cores × 100%)
 
   thermal:
     max_temp_c: 93

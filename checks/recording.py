@@ -12,8 +12,10 @@ class RecordingCheck(BaseCheck):
     name = "recording"
 
     def collect(self, ssh, config: dict) -> dict:
+        # since 시계 의존 — 부팅 직후 NTP 미동기 상태에서 빈 결과 가능
+        # 최근 200 라인에서 progress 찾는 방식이 더 robust
         output = ssh.run(
-            "journalctl -t gstApp --no-pager --since '2 min ago' 2>/dev/null"
+            "journalctl -t gstApp --no-pager -n 200 2>/dev/null"
             " | grep -i 'progress' | tail -1"
         )
 

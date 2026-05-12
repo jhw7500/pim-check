@@ -1,0 +1,26 @@
+name: "Rerun ORD/VCM 4 (P3 fix verification)"
+description: "ord_disk 3 + config_ord_vcm 1건 — setup.py ord_vcm_changes 지원 검증"
+version: 1
+tags: [rerun, ord4]
+
+execution:
+  stop_on_fail: false
+  case_retry: 0
+  wait_between_cases: 5
+
+cases:
+  regression:
+    - gen_ord_disk_off_srt_off
+    - gen_ord_disk_off_srt_on
+    - gen_ord_disk_on_srt_off
+    - config_ord_vcm
+
+gate:
+  threshold_pass_rate: 0.75
+  allow_known_issue: true
+
+reports:
+  - format: json
+    path: reports/rerun_ord4/{timestamp}.json
+  - format: markdown_summary
+    path: reports/rerun_ord4/{timestamp}.md
