@@ -7,7 +7,7 @@ setup:
     .ORD.event_auto_remove: false
     .VCM.srt_enable: false
   reboot_after: true
-  stabilize_sec: 30
+  stabilize_sec: 80
 checks:
   cam_state:
     dir: /tmp/cam_state
@@ -26,5 +26,13 @@ checks:
     command: jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json
     expected: 'false'
     on_fail: .VCM.srt_enable 값이 false와 다름
+  - name: 최근 2분 내 mp4 ≥1 (record 동작 전제)
+    command: find /mnt/sd_cam /dev/shm/recording -name '*-ch0.mp4' -mmin -2 2>/dev/null | wc -l | tr -d ' '
+    expected_min: 1
+    on_fail: 최근 2분 record 미동작 — srt 검증 전제 불충족
+  - name: 최근 2분 내 .srt 파일 0건 (srt_enable=false 실측)
+    command: find /mnt/sd_cam /dev/shm/recording \( -name '*.srt' -o -name '*.srt.part' \) -mmin -2 2>/dev/null | wc -l | tr -d ' '
+    expected: '0'
+    on_fail: srt_enable=false인데 .srt 파일 생성됨
 monitor:
   duration_sec: 0
