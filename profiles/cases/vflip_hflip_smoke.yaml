@@ -1,0 +1,48 @@
+# vflip/hflip 통합 sanity — i2c ROTATION 레지스터 회귀 보호
+# 한 reboot으로 ch별 unique flip 조합 4가지 검증 (smoke gate 12건 FAIL 회귀 경험 기반)
+name: "vflip+hflip smoke"
+description: "ch별 unique vflip/hflip 조합 × i2c ROTATION reg read-back (4ch 통합)"
+tags: [smoke, camera, i2c]
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1280
+    ".VHL_CAM.cam_height": 720
+    ".VHL_CAM.fps": 30
+    ".VHL_CAM.i2c2.ch0.enable": true
+    ".VHL_CAM.i2c2.ch1.enable": true
+    ".VHL_CAM.i2c1.ch2.enable": true
+    ".VHL_CAM.i2c1.ch3.enable": true
+    ".VHL_CAM.i2c2.ch0.vflip": false
+    ".VHL_CAM.i2c2.ch0.hflip": false
+    ".VHL_CAM.i2c2.ch1.vflip": false
+    ".VHL_CAM.i2c2.ch1.hflip": true
+    ".VHL_CAM.i2c1.ch2.vflip": true
+    ".VHL_CAM.i2c1.ch2.hflip": false
+    ".VHL_CAM.i2c1.ch3.vflip": true
+    ".VHL_CAM.i2c1.ch3.hflip": true
+  reboot_after: true
+  stabilize_sec: 80
+
+checks:
+  cpu:
+    gst_range: [0, 320]
+  recording:
+    expected_channels: 4
+  custom_commands:
+    - name: ch0 ROTATION (vflip=false, hflip=false → 0x0000)
+      command: i2ctransfer -f -y 2 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '
+      expected: '0x000x00'
+      on_fail: ch0 ROTATION 미반영
+    - name: ch1 ROTATION (vflip=false, hflip=true → 0x0001)
+      command: i2ctransfer -f -y 2 w2@0x12 0x10 0x0c r2 2>/dev/null | tr -d ' '
+      expected: '0x000x01'
+      on_fail: ch1 ROTATION 미반영
+    - name: ch2 ROTATION (vflip=true, hflip=false → 0x0002)
+      command: i2ctransfer -f -y 1 w2@0x11 0x10 0x0c r2 2>/dev/null | tr -d ' '
+      expected: '0x000x02'
+      on_fail: ch2 ROTATION 미반영
+    - name: ch3 ROTATION (vflip=true, hflip=true → 0x0003)
+      command: i2ctransfer -f -y 1 w2@0x12 0x10 0x0c r2 2>/dev/null | tr -d ' '
+      expected: '0x000x03'
+      on_fail: ch3 ROTATION 미반영

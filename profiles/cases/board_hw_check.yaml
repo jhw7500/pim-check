@@ -36,8 +36,8 @@ checks:
       on_fail: "CAM SD 카드 쓰기 불가 — Board #7 확장"
 
     # === 영상 저장 (Board #9) ===
-    - name: "영상 파일 저장 중 (최근 5분)"
-      command: "find /mnt/sd_cam -name '*.mp4' -mmin -5 2>/dev/null | wc -l | tr -d ' '"
+    - name: "영상 파일 저장 중 (최근 5분, mp4 또는 ts)"
+      command: "find /mnt/sd_cam /dev/shm/recording \\( -name '*.mp4' -o -name '*.ts' \\) -mmin -5 2>/dev/null | wc -l | tr -d ' '"
       expected_min: 1
       on_fail: "최근 5분 이내 영상 파일 없음 — Board #9 FAIL"
 

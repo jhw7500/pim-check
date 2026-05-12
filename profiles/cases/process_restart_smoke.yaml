@@ -1,0 +1,28 @@
+# gstApp 강제 종료 후 chk_cam_operate 자동 재시작 sanity
+# reboot 없이 빠른 회귀 보호 (~1분)
+name: "process restart smoke"
+description: "pkill gstApp → chk_cam_operate가 30s 안에 재시작 → cam_state healthy 복귀"
+tags: [smoke, process]
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    expected_state: healthy
+    max_streak: 0
+  custom_commands:
+    - name: 사전 gstApp 실행 확인
+      command: pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED
+      expected: RUNNING
+      on_fail: gstApp 사전 미실행
+    - name: gstApp 강제 종료 + 35s 대기
+      command: pkill -9 -x gstApp; sleep 35; pgrep -x gstApp > /dev/null && echo RESTARTED || echo NOT_RESTARTED
+      expected: RESTARTED
+      on_fail: chk_cam_operate가 gstApp 자동 재시작 못 함
+    - name: 재시작 후 cam_state healthy
+      command: cat /tmp/cam_state/state
+      expected: healthy
+      on_fail: 재시작 후 cam_state가 healthy로 복귀 못 함
+    - name: 재시작 후 channel 에러 없음 (ch0)
+      command: cat /tmp/cam_state/channels/ch0_error
+      expected: 'false'
+      on_fail: ch0 error 상태 (재시작 직후)
