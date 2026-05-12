@@ -5,6 +5,9 @@ name: "ord/vcm restart smoke"
 description: "pkill ord && pkill vcm → 자동 재시작 (시스템 watchdog 검증)"
 tags: [smoke, process, ord, vcm]
 
+monitor:
+  duration_sec: 0
+
 checks:
   cam_state:
     dir: /tmp/cam_state
