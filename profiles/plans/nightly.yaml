@@ -21,10 +21,16 @@ version: 1
 
 cases:
   regression:
-    # ── 정상 동작 모드 (4) ──
+    # ── 정상 동작 모드 (3, fps+bps 통합) ──
     - 720p_2ch
     - 720p_4ch
     - fhd_4ch
+
+    # ── smoke 보강 sanity (4) ──
+    - vflip_hflip_smoke
+    - mux_ts_smoke
+    - ae_awb_smoke
+    - process_restart_smoke
 
     # ── 시스템/HW sanity (2) ──
     - board_hw_check
@@ -57,16 +63,12 @@ cases:
     - "gen_720p_3ch*"
     - "gen_720p_4ch*"
 
-    # ── BPS (현재 ch0만, schema 확장 시 자동 포함) ──
-    - "gen_720p_ch*_bps_*"
-    - "gen_fhd_*_bps_*"
+    # ── BPS/FPS는 multi 16건 + smoke 보강으로 흡수 (deprecated 32 yaml) ──
 
-    # ── Capture / ord_disk / FPS / muxer / recording_time ──
+    # ── Capture / ord_disk / muxer / recording_time ──
     - "gen_720p_cap_*"
     - "gen_fhd_cap_*"
     - "gen_ord_disk_*"
-    - "gen_*_15fps"
-    - "gen_*_30fps"
     - "gen_fhd_mux_*"
     - "gen_fhd_rec*"
 
