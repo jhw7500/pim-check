@@ -1,0 +1,33 @@
+# ord/vcm 자동 재시작 sanity — 시스템 watchdog 회귀 보호
+# pkill ord && pkill vcm → 60s 안에 자동 재시작 확인
+# (process_restart_smoke가 gstApp 담당, 이건 ord/vcm)
+name: "ord/vcm restart smoke"
+description: "pkill ord && pkill vcm → 자동 재시작 (시스템 watchdog 검증)"
+tags: [smoke, process, ord, vcm]
+
+checks:
+  cam_state:
+    dir: /tmp/cam_state
+    expected_state: healthy
+    max_streak: 0
+  custom_commands:
+    - name: 사전 ord/vcm 동시 실행 확인
+      command: pgrep -x ord >/dev/null && pgrep -x vcm >/dev/null && echo BOTH_RUNNING || echo SOMEONE_DOWN
+      expected: BOTH_RUNNING
+      on_fail: ord/vcm 사전 미실행 — 테스트 전제 불충족
+    - name: ord 강제 종료 + 60s 대기 + 자동 재시작 확인
+      command: pkill -9 -x ord; sleep 60; pgrep -x ord >/dev/null && echo RESTARTED || echo NOT_RESTARTED
+      expected: RESTARTED
+      on_fail: ord 자동 재시작 못 함 — watchdog/systemd 회귀
+    - name: vcm 강제 종료 + 60s 대기 + 자동 재시작 확인
+      command: pkill -9 -x vcm; sleep 60; pgrep -x vcm >/dev/null && echo RESTARTED || echo NOT_RESTARTED
+      expected: RESTARTED
+      on_fail: vcm 자동 재시작 못 함 — watchdog/systemd 회귀
+    - name: 재시작 후 ord 포트 다시 리슨 (10007)
+      command: P=$(jq '.ORD.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c ":$P " || true
+      expected_min: 1
+      on_fail: 재시작 후 ord 포트 미리슨
+    - name: 재시작 후 vcm 포트 다시 리슨 (10009)
+      command: P=$(jq '.VCM.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c ":$P " || true
+      expected_min: 1
+      on_fail: 재시작 후 vcm 포트 미리슨
