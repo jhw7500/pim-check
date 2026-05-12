@@ -32,6 +32,9 @@ cases:
     # 프로세스/시스템 안전망
     - board_hw_check
     - config_integrity
+    # mux ts 분기 + process restart 안전망 (release gate에 적합)
+    - mux_ts_smoke
+    - process_restart_smoke
     # ord_vcm 기존 동작 (변경 전 baseline)
     - config_ord_vcm
 
