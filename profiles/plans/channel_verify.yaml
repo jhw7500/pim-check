@@ -19,13 +19,17 @@ version: 1
 cases:
   regression:
     # 720p vflip × 4채널 × on/off = 8
-    # 720p ae × 4채널 × on/off = 8
-    # fhd vflip × 4채널 × on/off = 8
-    # fhd ae × 4채널 × on/off = 8
-    # 총 32 cases — 원본 CASES 리스트와 동등
+    # 720p hflip × 4채널 × on/off = 8
+    # 720p ae    × 4채널 × on/off = 8
+    # fhd vflip  × 4채널 × on/off = 8
+    # fhd hflip  × 4채널 × on/off = 8
+    # fhd ae     × 4채널 × on/off = 8
+    # 총 48 cases (원본 32 + hflip 16, 이전 schema vflip+hflip 회귀 detail 대응)
     - "gen_720p_ch*_vflip_*"
+    - "gen_720p_ch*_hflip_*"
     - "gen_720p_ch*_ae_*"
     - "gen_fhd_ch*_vflip_*"
+    - "gen_fhd_ch*_hflip_*"
     - "gen_fhd_ch*_ae_*"
 
 execution:
