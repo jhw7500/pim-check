@@ -8,6 +8,7 @@ setup:
     ".VHL_CAM.cam_width": 1280
     ".VHL_CAM.cam_height": 720
     ".VHL_CAM.fps": 30
+    ".VHL_CAM.recording_time": 2
     ".VHL_CAM.muxer": mp4
     ".VHL_CAM.i2c2.exp_time": 2000
     ".VHL_CAM.i2c2.ch0.enable": true
@@ -36,7 +37,7 @@ setup:
   ord_vcm_changes:
     .VCM.srt_enable: false
   reboot_after: true
-  stabilize_sec: 80
+  stabilize_sec: 140
 
 checks:
   cpu:
@@ -92,3 +93,6 @@ checks:
     - name: ch1 led_flash (enable=F, wiper=32)
       command: jq -r '.VHL_CAM.i2c2.ch1.led_flash | "\(.enable)|\(.wiper)"' /root/shared_v/edgeconf_pim.json
       expected: 'false|32'
+    - name: ch0 mp4 duration ~ recording_time*60s (±5s)
+      command: "EX=$(jq -r '.VHL_CAM.recording_time' /root/shared_v/edgeconf_pim.json); F=$(find /mnt/sd_cam /dev/shm/recording -name '*-ch0.mp4' -mmin -2 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); [ -n \"$F\" ] && D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 \"$F\" 2>/dev/null | cut -d. -f1) && echo \"$D\" | awk -v ex=$((EX*60)) '{if ($1>=ex-5 && $1<=ex+5) print \"OK\"; else printf \"FAIL:%ds_ex=%ds\\n\", $1, ex}' || echo FAIL:NO_FILE"
+      expected: OK
