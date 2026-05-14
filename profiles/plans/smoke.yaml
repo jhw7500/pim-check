@@ -22,10 +22,8 @@ cases:
     - fhd_2ch_03        # ch0+ch3 cross-bus, 30fps, muxer=ts (ts 분기 흡수)
     - fhd_3ch_012       # ch0+ch1+ch2, 30fps, mp4, srt=on
     - fhd_4ch           # ch0~3, 15fps (VPU spec), mp4, srt=on
-    # 프로세스 자동 복구 sanity (killcam)
+    # 프로세스 자동 복구 sanity (gstApp+ord+vcm 통합)
     - process_restart_smoke
-    # ord/vcm 자동 복구 (시스템 watchdog)
-    - ord_vcm_restart_smoke
     # board HW sanity
     - board_hw_check
     # config 무결성

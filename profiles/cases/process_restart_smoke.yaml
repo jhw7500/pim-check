@@ -1,8 +1,11 @@
-# gstApp 강제 종료 후 chk_cam_operate 자동 재시작 sanity
-# reboot 없이 빠른 회귀 보호 (~1분)
-name: "process restart smoke"
-description: "pkill gstApp → chk_cam_operate가 30s 안에 재시작 → cam_state healthy 복귀"
-tags: [smoke, process]
+# gstApp + ord + vcm 일괄 강제 종료 후 자동 재시작 sanity
+# reboot 없이 chk_cam_operate + 시스템 watchdog 동시 검증
+name: "process restart smoke (gstApp+ord+vcm)"
+description: "pkill gstApp/ord/vcm → 60s 안에 자동 재시작 + 포트 리슨"
+tags: [smoke, process, watchdog]
+
+monitor:
+  duration_sec: 0
 
 checks:
   cam_state:
@@ -10,15 +13,23 @@ checks:
     expected_state: healthy
     max_streak: 0
   custom_commands:
-    - name: 사전 gstApp 실행 확인
-      command: pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED
-      expected: RUNNING
-      on_fail: gstApp 사전 미실행
-    - name: gstApp 강제 종료 + 60s 대기 (cam_state 복구 시간 포함)
-      command: pkill -9 -x gstApp; sleep 60; pgrep -x gstApp > /dev/null && echo RESTARTED || echo NOT_RESTARTED
-      expected: RESTARTED
-      on_fail: chk_cam_operate가 gstApp 자동 재시작 못 함
-    - name: 재시작 후 cam_state healthy 또는 recovering (degraded 아님)
+    - name: 사전 gstApp+ord+vcm 동시 실행
+      command: pgrep -x gstApp >/dev/null && pgrep -x ord >/dev/null && pgrep -x vcm >/dev/null && echo ALL_RUNNING || echo SOMEONE_DOWN
+      expected: ALL_RUNNING
+      on_fail: gstApp/ord/vcm 중 하나 사전 미실행
+    - name: 3 process 일괄 강제 종료 + 60s 대기
+      command: pkill -9 -x gstApp; pkill -9 -x ord; pkill -9 -x vcm; sleep 60; pgrep -x gstApp >/dev/null && pgrep -x ord >/dev/null && pgrep -x vcm >/dev/null && echo ALL_RESTARTED || echo SOMEONE_NOT_RESTARTED
+      expected: ALL_RESTARTED
+      on_fail: gstApp/ord/vcm 중 하나 자동 재시작 못 함 (watchdog 회귀)
+    - name: 재시작 후 cam_state healthy
       command: cat /tmp/cam_state/state
       expected: healthy
       on_fail: 재시작 후 cam_state degraded 잔존
+    - name: 재시작 후 ord 포트 리슨 (10007)
+      command: P=$(jq '.ORD.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c ":$P " || true
+      expected_min: 1
+      on_fail: ord 포트 미리슨
+    - name: 재시작 후 vcm 포트 리슨 (10009)
+      command: P=$(jq '.VCM.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c ":$P " || true
+      expected_min: 1
+      on_fail: vcm 포트 미리슨
