@@ -1,0 +1,105 @@
+# FHD 2채널 cross-bus (ch0+ch3) — smoke 통합 케이스
+# i2c2.ch0 + i2c1.ch3 (서로 다른 bus single) + muxer=ts (ts 분기 검증)
+# multi-axis: i2c ROTATION + AE/AWB + BPS + FPS + ts mpegts ffprobe
+name: "FHD 2채널 cross-bus (ch0+ch3)"
+description: "fhd × ch0+ch3 (cross-bus) × 30fps × muxer=ts + i2c reg + fps/bps 통합"
+tags: [smoke, camera, cross_bus, ts]
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1920
+    ".VHL_CAM.cam_height": 1080
+    ".VHL_CAM.fps": 30
+    ".VHL_CAM.muxer": ts
+    ".VHL_CAM.i2c2.exp_time": 15000
+    ".VHL_CAM.i2c1.exp_time": 8000
+    ".VHL_CAM.i2c2.ch0.enable": true
+    ".VHL_CAM.i2c2.ch1.enable": false
+    ".VHL_CAM.i2c1.ch2.enable": false
+    ".VHL_CAM.i2c1.ch3.enable": true
+    ".VHL_CAM.i2c2.ch0.vflip": false
+    ".VHL_CAM.i2c2.ch0.hflip": true
+    ".VHL_CAM.i2c2.ch0.ae_on": false
+    ".VHL_CAM.i2c2.ch0.ae_gain": 8192
+    ".VHL_CAM.i2c2.ch0.awb": "auto"
+    ".VHL_CAM.i2c2.ch0.bps":
+      - 1024
+      - 1024
+    ".VHL_CAM.i2c1.ch3.vflip": true
+    ".VHL_CAM.i2c1.ch3.hflip": true
+    ".VHL_CAM.i2c1.ch3.ae_on": false
+    ".VHL_CAM.i2c1.ch3.ae_gain": 512
+    ".VHL_CAM.i2c1.ch3.awb": "d75"
+    ".VHL_CAM.i2c1.ch3.bps":
+      - 8192
+      - 8192
+    ".VHL_CAM.i2c2.ch0.led_flash.enable": true
+    ".VHL_CAM.i2c2.ch0.led_flash.wiper": 20
+    ".VHL_CAM.i2c2.ch0.led_flash.flash_delay": 0
+    ".VHL_CAM.i2c1.ch3.led_flash.enable": false
+    ".VHL_CAM.i2c1.ch3.led_flash.wiper": 40
+    ".VHL_CAM.i2c1.ch3.led_flash.flash_delay": 10
+  ord_vcm_changes:
+    .VCM.srt_enable: true
+  reboot_after: true
+  stabilize_sec: 90
+
+checks:
+  cpu:
+    gst_range: [0, 320]
+  recording:
+    expected_channels: 2
+  custom_commands:
+    # === i2c register (vflip/hflip/AE/AWB) ===
+    - name: ch0 ROTATION (vflip=F hflip=T → 0x0001)
+      command: i2ctransfer -f -y 2 w2@0x3c 0x10 0x0c r2 2>/dev/null | tr -d ' '
+      expected: '0x000x01'
+    - name: ch3 ROTATION (vflip=T hflip=T → 0x0003)
+      command: i2ctransfer -f -y 1 w2@0x3c 0x10 0x0c r2 2>/dev/null | tr -d ' '
+      expected: '0x000x03'
+    - name: ch0 AE_CTRL (ae_on=false)
+      command: i2ctransfer -f -y 2 w2@0x3c 0x50 0x02 r2 2>/dev/null | tr -d ' '
+      expected: '0x020x90'
+    - name: ch3 AE_CTRL (ae_on=false)
+      command: i2ctransfer -f -y 1 w2@0x3c 0x50 0x02 r2 2>/dev/null | tr -d ' '
+      expected: '0x020x90'
+    - name: ch0 AWB_CTRL (auto)
+      command: i2ctransfer -f -y 2 w2@0x3c 0x51 0x00 r2 2>/dev/null | tr -d ' '
+      expected: '0x110x5f'
+    - name: ch3 AWB_CTRL (d75)
+      command: i2ctransfer -f -y 1 w2@0x3c 0x51 0x00 r2 2>/dev/null | tr -d ' '
+      expected: '0x110x56'
+    - name: bus2 EXP_TIME (15000us = 0x3a98)
+      command: i2ctransfer -f -y 2 w2@0x3c 0x50 0x0c r4 2>/dev/null | tr -d ' '
+      expected: '0x000x000x3a0x98'
+    - name: bus1 EXP_TIME (8000us = 0x1f40)
+      command: i2ctransfer -f -y 1 w2@0x3c 0x50 0x0c r4 2>/dev/null | tr -d ' '
+      expected: '0x000x000x1f0x40'
+    - name: dmesg max9296_fsync fps (expected 30)
+      command: "dmesg 2>/dev/null | grep -oE 'max9296_fsync fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'"
+      expected: '30'
+      on_fail: dmesg max9296_fsync fps 30과 다름
+    - name: ch0 led_flash (T/20/delay=0)
+      command: jq -r '.VHL_CAM.i2c2.ch0.led_flash | "\(.enable)|\(.wiper)|\(.flash_delay)"' /root/shared_v/edgeconf_pim.json
+      expected: 'true|20|0'
+    - name: ch3 led_flash (F/40/delay=10)
+      command: jq -r '.VHL_CAM.i2c1.ch3.led_flash | "\(.enable)|\(.wiper)|\(.flash_delay)"' /root/shared_v/edgeconf_pim.json
+      expected: 'false|40|10'
+    # === ts file + ffprobe mpegts ===
+    - name: ts 파일 생성 (직전 2분)
+      command: find /mnt/sd_cam /dev/shm/recording -name '*-ch0.ts' -mmin -2 2>/dev/null | head -1 | wc -l
+      expected_min: 1
+      on_fail: ts 파일 미생성
+    - name: ts 파일 format = mpegts
+      command: "F=$(find /mnt/sd_cam /dev/shm/recording -name '*-ch0.ts' -mmin -2 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); [ -n \"$F\" ] && ffprobe -v error -show_entries format=format_name -of csv=p=0 \"$F\" 2>/dev/null || echo NO_FILE"
+      expected: mpegts
+    - name: ch0 ts fps == 30 (±0.5)
+      command: "EX=$(jq -r '.VHL_CAM.fps' /root/shared_v/edgeconf_pim.json); F=$(find /mnt/sd_cam /dev/shm/recording -name '*-ch0.ts' -mmin -2 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); [ -n \"$F\" ] && FR=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 \"$F\" 2>/dev/null | head -1) && echo \"$FR\" | awk -F/ -v ex=\"$EX\" '{n=$1/$2; if (n>=ex-0.5 && n<=ex+0.5) print \"OK\"; else printf \"FAIL:%.1f_ex=%s\\n\", n, ex}' || echo FAIL:NO_FILE"
+      expected: OK
+    - name: ch3 ts fps == 30 (±0.5)
+      command: "EX=$(jq -r '.VHL_CAM.fps' /root/shared_v/edgeconf_pim.json); F=$(find /mnt/sd_cam /dev/shm/recording -name '*-ch3.ts' -mmin -2 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); [ -n \"$F\" ] && FR=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 \"$F\" 2>/dev/null | head -1) && echo \"$FR\" | awk -F/ -v ex=\"$EX\" '{n=$1/$2; if (n>=ex-0.5 && n<=ex+0.5) print \"OK\"; else printf \"FAIL:%.1f_ex=%s\\n\", n, ex}' || echo FAIL:NO_FILE"
+      expected: OK
+    # === srt enable=true 실측 ===
+    - name: 최근 2분 내 .srt 파일 ≥1 (srt_enable=true 실측)
+      command: find /mnt/sd_cam /dev/shm/recording \( -name '*.srt' -o -name '*.srt.part' \) -mmin -2 2>/dev/null | wc -l | tr -d ' '
+      expected_min: 1

@@ -15,18 +15,17 @@ version: 1
 
 cases:
   regression:
-    # 정상 동작 모드 3개 (해상도 × 채널 × fps × bps 통합)
-    - 720p_2ch
-    - 720p_4ch
-    - fhd_4ch
-    # i2c register sanity (vflip/hflip 12건 회귀 경험)
-    - vflip_hflip_smoke
-    # mux ts 분기 sanity (mp4 default + ts 변형)
-    - mux_ts_smoke
-    # ISP 파이프라인 sanity (AE/AWB)
-    - ae_awb_smoke
+    # 정상 동작 모드 5개 (해상도 × 채널 조합 × fps × bps × i2c reg × AE/AWB 통합)
+    # 각 케이스가 한 번의 reboot으로 multi-axis 동시 검증
+    - 720p_2ch          # ch0+ch1, 30fps, mp4, srt=off, i2c reg/AE/AWB
+    - 720p_4ch          # ch0~3, 30fps, mp4, srt=on, 4-tier bps + i2c
+    - fhd_2ch_03        # ch0+ch3 cross-bus, 30fps, muxer=ts (ts 분기 흡수)
+    - fhd_3ch_012       # ch0+ch1+ch2, 30fps, mp4, srt=on
+    - fhd_4ch           # ch0~3, 15fps (VPU spec), mp4, srt=on
     # 프로세스 자동 복구 sanity (killcam)
     - process_restart_smoke
+    # ord/vcm 자동 복구 (시스템 watchdog)
+    - ord_vcm_restart_smoke
     # board HW sanity
     - board_hw_check
     # config 무결성

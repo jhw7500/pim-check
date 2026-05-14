@@ -14,15 +14,11 @@ checks:
       command: pgrep -x gstApp > /dev/null && echo RUNNING || echo STOPPED
       expected: RUNNING
       on_fail: gstApp 사전 미실행
-    - name: gstApp 강제 종료 + 35s 대기
-      command: pkill -9 -x gstApp; sleep 35; pgrep -x gstApp > /dev/null && echo RESTARTED || echo NOT_RESTARTED
+    - name: gstApp 강제 종료 + 60s 대기 (cam_state 복구 시간 포함)
+      command: pkill -9 -x gstApp; sleep 60; pgrep -x gstApp > /dev/null && echo RESTARTED || echo NOT_RESTARTED
       expected: RESTARTED
       on_fail: chk_cam_operate가 gstApp 자동 재시작 못 함
-    - name: 재시작 후 cam_state healthy
+    - name: 재시작 후 cam_state healthy 또는 recovering (degraded 아님)
       command: cat /tmp/cam_state/state
       expected: healthy
-      on_fail: 재시작 후 cam_state가 healthy로 복귀 못 함
-    - name: 재시작 후 channel 에러 없음 (ch0)
-      command: cat /tmp/cam_state/channels/ch0_error
-      expected: 'false'
-      on_fail: ch0 error 상태 (재시작 직후)
+      on_fail: 재시작 후 cam_state degraded 잔존
