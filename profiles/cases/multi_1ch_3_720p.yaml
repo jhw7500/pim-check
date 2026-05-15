@@ -14,12 +14,14 @@ description: '1-channel "1ch_3" combination at 720p with channel-unique settings
 tags: [multi, comprehensive]
 
 setup:
+
   edgeconf_changes:
     .VHL_CAM.cam_width: 1280
     .VHL_CAM.cam_height: 720
     .VHL_CAM.fps: 30
     .VHL_CAM.recording_time: 1
     .VHL_CAM.muxer: mp4
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.i2c1.exp_time: 20000
     .VHL_CAM.i2c2.ch0.enable: false
     .VHL_CAM.i2c2.ch1.enable: false
