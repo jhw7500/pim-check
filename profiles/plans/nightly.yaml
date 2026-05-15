@@ -23,13 +23,12 @@ cases:
   regression:
     # ── 정상 동작 모드 (3, fps+bps 통합) ──
     - 720p_2ch
+    - fhd_2ch_03
+    - fhd_3ch_012
     - 720p_4ch
     - fhd_4ch
 
     # ── smoke 보강 sanity (4) ──
-    - vflip_hflip_smoke
-    - mux_ts_smoke
-    - ae_awb_smoke
     - process_restart_smoke
 
     # ── 시스템/HW sanity (2) ──

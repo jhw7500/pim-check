@@ -11,6 +11,7 @@ setup:
     ".VHL_CAM.fps": 30
     ".VHL_CAM.recording_time": 1
     ".VHL_CAM.muxer": mp4
+    ".VHL_CAM.capture.enable": false
     ".VHL_CAM.i2c2.exp_time": 20000
     ".VHL_CAM.i2c1.exp_time": 25000
     ".VHL_CAM.i2c2.ch0.enable": true

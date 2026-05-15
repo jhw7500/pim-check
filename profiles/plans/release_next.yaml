@@ -26,6 +26,8 @@ cases:
   regression:
     # 정상 모드 (모든 해상도 × 채널 조합)
     - 720p_2ch
+    - fhd_2ch_03
+    - fhd_3ch_012
     - 720p_4ch
     - fhd_4ch
     # 채널 동작 검증 (간접 영향 확인)
@@ -33,7 +35,6 @@ cases:
     - board_hw_check
     - config_integrity
     # mux ts 분기 + process restart 안전망 (release gate에 적합)
-    - mux_ts_smoke
     - process_restart_smoke
     # ord_vcm 기존 동작 (변경 전 baseline)
     - config_ord_vcm

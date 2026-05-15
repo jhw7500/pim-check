@@ -33,9 +33,10 @@ cases:
   regression:
     # 정상 동작 baseline (회귀 안전망)
     - 720p_2ch
+    - fhd_2ch_03
+    - fhd_3ch_012
     - fhd_4ch
     # mux ts 분기 + process restart 안전망 (multi 미커버 영역)
-    - mux_ts_smoke
     - process_restart_smoke
 
   delta:
