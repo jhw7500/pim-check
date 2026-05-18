@@ -57,6 +57,20 @@ class SetupManager:
             retry_wait=SETUP_SSH_RETRY_WAIT,
         )
 
+    def _local0_log(self, message: str) -> None:
+        """보드 /var/log/cantops/local0.log에 [PIM_CHECK] marker entry를 남긴다.
+        setup/teardown lifecycle을 보드 로그에서 추적하여 reboot 트리거 디버깅에 활용.
+        SSH 실패 시 silent skip (fatal 아님)."""
+        try:
+            # shell 안전을 위해 message에서 따옴표/백슬래시 escape
+            safe = message.replace('\\', '\\\\').replace('"', '\\"')
+            self.ssh.run(
+                f'logger -p local0.notice -t PIM_CHECK "{safe}"',
+                retries=0,  # logger는 best-effort, retry 의미 없음
+            )
+        except Exception:
+            pass
+
     def backup(self, conf_path: str = EDGECONF_PATH) -> bool:
         """conf 파일을 보드 fw가 인식하는 BACKUP_DIR에 백업한다.
         config_guard.sh가 이 백업으로 default reset을 방지한다."""
@@ -276,12 +290,20 @@ class SetupManager:
         ord_match = (not ord_changes) or self.check_current(ord_changes, ORD_VCM_PATH)
         if edge_match and ord_match:
             print("Config already matches target — skipping setup/reboot")
+            self._local0_log(
+                f"setup SKIP — config already matches (edge={len(edge_changes)} ord={len(ord_changes)})"
+            )
             return False
+
+        self._local0_log(
+            f"setup START — edge_changes={len(edge_changes)} ord_changes={len(ord_changes)}"
+        )
 
         if edge_changes and not edge_match:
             print(f"edgeconf differs — applying {len(edge_changes)} changes...")
             if not self.backup(EDGECONF_PATH):
                 print("ERROR: Failed to backup edgeconf — aborting setup")
+                self._local0_log("setup ABORT — edgeconf backup failed")
                 return False
             self.apply_changes(edge_changes, EDGECONF_PATH)
 
@@ -289,12 +311,16 @@ class SetupManager:
             print(f"ord_vcm_conf differs — applying {len(ord_changes)} changes...")
             if not self.backup(ORD_VCM_PATH):
                 print("ERROR: Failed to backup ord_vcm_conf — aborting setup")
+                self._local0_log("setup ABORT — ord_vcm backup failed")
                 return False
             self.apply_changes(ord_changes, ORD_VCM_PATH)
+
+        self._local0_log("setup APPLIED — issuing reboot")
 
         if setup_config.get("reboot_after", False):
             stabilize_sec = setup_config.get("stabilize_sec", 30)
             self.reboot_and_wait(stabilize_sec=stabilize_sec)
+            self._local0_log(f"setup DONE — back online + stabilize {stabilize_sec}s passed")
         return True
 
     def run_teardown(self, setup_config: dict) -> None:
@@ -304,10 +330,17 @@ class SetupManager:
         if not edge_changes and not ord_changes:
             return
 
+        self._local0_log(
+            f"teardown START — restore edge={bool(edge_changes)} ord={bool(ord_changes)}"
+        )
+
         if edge_changes:
             self.restore(EDGECONF_PATH)
         if ord_changes:
             self.restore(ORD_VCM_PATH)
 
+        self._local0_log("teardown RESTORED — issuing reboot")
+
         if setup_config.get("reboot_after", False):
             self.reboot_and_wait(stabilize_sec=20)
+            self._local0_log("teardown DONE — back online")
