@@ -7,9 +7,14 @@ import subprocess
 import time
 
 EDGECONF_PATH = "/root/shared_v/edgeconf_pim.json"
-EDGECONF_BACKUP = f"{EDGECONF_PATH}.bak"
 ORD_VCM_PATH = "/root/shared_v/ord_vcm_conf.json"
-ORD_VCM_BACKUP = f"{ORD_VCM_PATH}.bak"
+
+# 보드 fw의 config_guard.sh가 인식하는 backup 디렉토리.
+# pim-check가 만든 .bak가 이 디렉토리에 있어야 보드 reboot 시 config_guard가
+# 복원에 사용하고, 디폴트(/etc/defaultconf.json) reset을 막을 수 있다.
+BACKUP_DIR = "/root/shared_v/backup"
+EDGECONF_BACKUP = f"{BACKUP_DIR}/edgeconf_pim.json.bak"
+ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
 DEFAULT_POLL_INTERVAL = 60     # 1분
@@ -27,10 +32,18 @@ class SetupManager:
         self.reboot_timeout = reboot_timeout
         self.poll_interval = poll_interval
 
+    def _backup_path(self, conf_path: str) -> str:
+        """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
+        import os
+        return f"{BACKUP_DIR}/{os.path.basename(conf_path)}.bak"
+
     def backup(self, conf_path: str = EDGECONF_PATH) -> bool:
-        """conf 파일을 백업한다. 성공 시 True."""
-        backup_path = f"{conf_path}.bak"
-        result = self.ssh.run(f"cp {conf_path} {backup_path} && echo OK")
+        """conf 파일을 보드 fw가 인식하는 BACKUP_DIR에 백업한다.
+        config_guard.sh가 이 백업으로 default reset을 방지한다."""
+        backup_path = self._backup_path(conf_path)
+        result = self.ssh.run(
+            f"mkdir -p {BACKUP_DIR} && cp {conf_path} {backup_path} && sync && echo OK"
+        )
         return result == "OK"
 
     def apply_changes(self, changes: dict, conf_path: str = EDGECONF_PATH) -> None:
@@ -69,9 +82,9 @@ class SetupManager:
                 )
 
     def restore(self, conf_path: str = EDGECONF_PATH) -> None:
-        """백업에서 conf 파일을 복원한다."""
-        backup_path = f"{conf_path}.bak"
-        self.ssh.run(f"cp {backup_path} {conf_path}")
+        """BACKUP_DIR의 백업에서 conf 파일을 복원한다."""
+        backup_path = self._backup_path(conf_path)
+        self.ssh.run(f"cp {backup_path} {conf_path} && sync")
 
     def _ping(self, ip: str, count: int = 1, timeout: int = 2) -> bool:
         """ICMP ping. True if reachable."""
