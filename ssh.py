@@ -47,12 +47,14 @@ class SshClient:
         self.command_timeout = command_timeout
         self._use_paramiko = _has_paramiko()
 
-    def run(self, command: str, retries: int = 0) -> str | None:
+    def run(self, command: str, retries: int = 0, retry_wait: int | None = None) -> str | None:
         """타겟에서 명령을 실행하고 stdout을 반환한다.
 
         Args:
             command: 실행할 셸 명령
             retries: 접속 실패 시 재시도 횟수 (기본 0)
+            retry_wait: 재시도 간 대기 초. None이면 기존 exponential backoff
+                (min(2^attempt, 10)). 명시 시 일정 시간 대기.
 
         Returns:
             str: 성공 시 stdout (strip 적용)
@@ -69,7 +71,7 @@ class SshClient:
             except SshConnectionError as e:
                 last_error = e
                 if attempt < retries:
-                    wait = min(2 ** attempt, 10)
+                    wait = retry_wait if retry_wait is not None else min(2 ** attempt, 10)
                     time.sleep(wait)
         raise last_error
 

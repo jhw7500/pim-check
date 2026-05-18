@@ -19,6 +19,16 @@ ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
 DEFAULT_POLL_INTERVAL = 60     # 1분
 
+# Setup 단계 SSH retry — 정책은 verify_retry 중앙 모듈에서 가져와
+# verify_retry 환경변수(PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT)
+# 한 곳에서 setup/verify 양쪽 retry 정책을 조정한다.
+# verify_retry.MAX_ATTEMPTS는 첫 시도 포함, ssh.run(retries=N)은 추가 시도
+# 횟수이므로 -1 보정한다.
+from verify_retry import MAX_ATTEMPTS as _VERIFY_MAX_ATTEMPTS
+from verify_retry import RETRY_WAIT_SEC as _VERIFY_RETRY_WAIT
+SETUP_SSH_RETRIES = max(_VERIFY_MAX_ATTEMPTS - 1, 0)
+SETUP_SSH_RETRY_WAIT = _VERIFY_RETRY_WAIT
+
 # Network 복구 명령
 HOST_WLAN_RESET_SCRIPT = "/home/jhw/ai/opencode/scripts/wlan_reset.sh"
 BOARD_NET_RECOVERY_CMD = "python3 /opt/cis/bin/update_network.py"
@@ -37,11 +47,21 @@ class SetupManager:
         import os
         return f"{BACKUP_DIR}/{os.path.basename(conf_path)}.bak"
 
+    def _setup_run(self, command: str):
+        """setup 단계 SSH 명령 wrapper — verify_retry 중앙 정책 적용
+        (PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT). 일시 SSH 끊김 시
+        자동 retry하여 SETUP_EXCEPTION 발생률을 낮춘다."""
+        return self.ssh.run(
+            command,
+            retries=SETUP_SSH_RETRIES,
+            retry_wait=SETUP_SSH_RETRY_WAIT,
+        )
+
     def backup(self, conf_path: str = EDGECONF_PATH) -> bool:
         """conf 파일을 보드 fw가 인식하는 BACKUP_DIR에 백업한다.
         config_guard.sh가 이 백업으로 default reset을 방지한다."""
         backup_path = self._backup_path(conf_path)
-        result = self.ssh.run(
+        result = self._setup_run(
             f"mkdir -p {BACKUP_DIR} && cp {conf_path} {backup_path} && sync && echo OK"
         )
         return result == "OK"
@@ -53,29 +73,29 @@ class SetupManager:
         for jq_path, value in changes.items():
             if isinstance(value, bool):
                 jq_value = "true" if value else "false"
-                self.ssh.run(
+                self._setup_run(
                     f"jq '{jq_path} = {jq_value}' {conf_path} "
                     f"> {tmp_path} && mv {tmp_path} {conf_path}"
                 )
             elif isinstance(value, (int, float)):
-                self.ssh.run(
+                self._setup_run(
                     f"jq --argjson v {value} '{jq_path} = $v' {conf_path} "
                     f"> {tmp_path} && mv {tmp_path} {conf_path}"
                 )
             elif isinstance(value, (list, dict)):
                 json_value = json.dumps(value).replace("'", "'\\''")
-                self.ssh.run(
+                self._setup_run(
                     f"jq --argjson v '{json_value}' '{jq_path} = $v' {conf_path} "
                     f"> {tmp_path} && mv {tmp_path} {conf_path}"
                 )
             else:
                 safe_value = str(value).replace("'", "'\\''")
-                self.ssh.run(
+                self._setup_run(
                     f"jq --arg v '{safe_value}' '{jq_path} = $v' {conf_path} "
                     f"> {tmp_path} && mv {tmp_path} {conf_path}"
                 )
             # Read-back verify: 적용된 값이 기대와 일치하는지 확인
-            actual = self.ssh.run(f"jq -c '{jq_path}' {conf_path}")
+            actual = self._setup_run(f"jq -c '{jq_path}' {conf_path}")
             if not self._values_match(actual, value):
                 raise RuntimeError(
                     f"conf apply verify FAILED [{conf_path}]: {jq_path} expected {value!r} got {actual!r}"
@@ -84,7 +104,7 @@ class SetupManager:
     def restore(self, conf_path: str = EDGECONF_PATH) -> None:
         """BACKUP_DIR의 백업에서 conf 파일을 복원한다."""
         backup_path = self._backup_path(conf_path)
-        self.ssh.run(f"cp {backup_path} {conf_path} && sync")
+        self._setup_run(f"cp {backup_path} {conf_path} && sync")
 
     def _ping(self, ip: str, count: int = 1, timeout: int = 2) -> bool:
         """ICMP ping. True if reachable."""
@@ -209,7 +229,7 @@ class SetupManager:
     def check_current(self, changes: dict, conf_path: str = EDGECONF_PATH) -> bool:
         """현재 conf 값이 변경 목표와 이미 일치하는지 확인한다."""
         for jq_path, expected in changes.items():
-            current = self.ssh.run(f"jq -c '{jq_path}' {conf_path}")
+            current = self._setup_run(f"jq -c '{jq_path}' {conf_path}")
             if current is None:
                 return False
             if not self._values_match(current, expected):
