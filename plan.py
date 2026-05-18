@@ -561,74 +561,93 @@ def execute_plan(plan: Plan, profiles_dir: str,
     total = len(resolved)
     executions: list[CaseExecution] = []
 
-    for idx, (section, case_name) in enumerate(resolved, 1):
-        t0 = time.monotonic()
+    # 마지막 case의 ssh + setup_cfg 추적 — plan 종료(정상/예외) 시
+    # teardown으로 conf를 case 직전 상태(backup)로 복원하여 보드 fw
+    # chk_cam_operate.sh의 stall escalation(→ reboot loop)을 방지.
+    last_ssh = None
+    last_setup_cfg = None
 
-        # case profile 로드
-        try:
-            case_profile = load_profile(profiles_dir, case=case_name)
-        except FileNotFoundError as exc:
-            executions.append(CaseExecution(
-                section=section, case_name=case_name,
-                results=[], passed=False, retries_used=0,
-                error=f"PROFILE_NOT_FOUND: {exc}",
-                duration_sec=round(time.monotonic() - t0, 2),
-            ))
-            if plan.execution["stop_on_fail"]:
-                break
-            continue
+    try:
+        for idx, (section, case_name) in enumerate(resolved, 1):
+            t0 = time.monotonic()
 
-        # CLI 오버라이드 적용
-        runtime = resolve_runtime_profile(case_profile,
-                                          plan_global=None,
-                                          cli_args=cli_args)
-
-        target = runtime.get("target", {})
-        host = target.get("host", "192.168.0.5")
-        user = target.get("user", "root")
-        password = target.get("password", "root")
-
-        # case_retry 루프
-        results: list = []
-        passed = False
-        error: str | None = None
-        retries_used = 0
-        max_retry = plan.execution["case_retry"]
-        for attempt in range(max_retry + 1):
-            ssh = ssh_factory(host, user, password)
-            results, passed, error = _run_single_case(
-                ssh, runtime, case_name, engine_factory, setup_factory,
-            )
-            retries_used = attempt
-            if passed:
-                break
-            if attempt < max_retry:
-                wait = plan.execution["retry_wait_sec"]
-                if wait > 0:
-                    time.sleep(wait)
-
-        execution = CaseExecution(
-            section=section, case_name=case_name,
-            results=results, passed=passed, retries_used=retries_used,
-            error=error,
-            duration_sec=round(time.monotonic() - t0, 2),
-        )
-        executions.append(execution)
-
-        if progress is not None:
+            # case profile 로드
             try:
-                progress(idx, total, case_name, execution)
-            except Exception:
-                pass  # progress callback 실패는 fatal 아님
+                case_profile = load_profile(profiles_dir, case=case_name)
+            except FileNotFoundError as exc:
+                executions.append(CaseExecution(
+                    section=section, case_name=case_name,
+                    results=[], passed=False, retries_used=0,
+                    error=f"PROFILE_NOT_FOUND: {exc}",
+                    duration_sec=round(time.monotonic() - t0, 2),
+                ))
+                if plan.execution["stop_on_fail"]:
+                    break
+                continue
 
-        # stop_on_fail
-        if not passed and plan.execution["stop_on_fail"]:
-            break
+            # CLI 오버라이드 적용
+            runtime = resolve_runtime_profile(case_profile,
+                                              plan_global=None,
+                                              cli_args=cli_args)
 
-        # case 간 인터벌
-        wait = plan.execution["wait_between_cases"]
-        if wait > 0 and idx < total:
-            time.sleep(wait)
+            target = runtime.get("target", {})
+            host = target.get("host", "192.168.0.5")
+            user = target.get("user", "root")
+            password = target.get("password", "root")
+
+            # case_retry 루프
+            results: list = []
+            passed = False
+            error: str | None = None
+            retries_used = 0
+            max_retry = plan.execution["case_retry"]
+            for attempt in range(max_retry + 1):
+                ssh = ssh_factory(host, user, password)
+                # 마지막 활성 ssh + setup_cfg 추적 (finally teardown용)
+                last_ssh = ssh
+                last_setup_cfg = runtime.get("setup")
+                results, passed, error = _run_single_case(
+                    ssh, runtime, case_name, engine_factory, setup_factory,
+                )
+                retries_used = attempt
+                if passed:
+                    break
+                if attempt < max_retry:
+                    wait = plan.execution["retry_wait_sec"]
+                    if wait > 0:
+                        time.sleep(wait)
+
+            execution = CaseExecution(
+                section=section, case_name=case_name,
+                results=results, passed=passed, retries_used=retries_used,
+                error=error,
+                duration_sec=round(time.monotonic() - t0, 2),
+            )
+            executions.append(execution)
+
+            if progress is not None:
+                try:
+                    progress(idx, total, case_name, execution)
+                except Exception:
+                    pass  # progress callback 실패는 fatal 아님
+
+            # stop_on_fail
+            if not passed and plan.execution["stop_on_fail"]:
+                break
+
+            # case 간 인터벌
+            wait = plan.execution["wait_between_cases"]
+            if wait > 0 and idx < total:
+                time.sleep(wait)
+    finally:
+        # Plan 종료(정상/예외/KeyboardInterrupt) 시 마지막 case 잔재 cleanup.
+        # 보드 fw chk_cam_operate.sh의 stall escalation(reboot loop) 방지.
+        if last_ssh is not None and last_setup_cfg and setup_factory is not None:
+            try:
+                _teardown_mgr = setup_factory(last_ssh)
+                _teardown_mgr.run_teardown(last_setup_cfg)
+            except Exception as _exc:
+                print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
 
     return executions
 

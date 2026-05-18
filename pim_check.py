@@ -4,8 +4,27 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import signal
 import sys
 import time
+
+
+def _install_graceful_exit_handlers() -> None:
+    """SIGTERM/SIGINT 수신 시 KeyboardInterrupt로 변환하여 finally 블록의
+    teardown이 동작하도록 한다. 강제 종료 시 보드 conf 잔재로 인한 reboot
+    loop 방지 목적 (보드 fw chk_cam_operate.sh가 final_dir stall 감지 시
+    reboot escalation 트리거).
+
+    SIGKILL은 OS 레벨이라 handler로 잡을 수 없음 — 사용자는 `kill -TERM`
+    또는 Ctrl+C 사용 권장.
+    """
+    def _handler(signum, _frame):
+        sig_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
+        raise KeyboardInterrupt(f"{sig_name} received — running teardown")
+
+    signal.signal(signal.SIGTERM, _handler)
+    # SIGINT는 Python 기본 KeyboardInterrupt지만 명시 등록으로 일관성 유지
+    signal.signal(signal.SIGINT, _handler)
 
 from config import load_profile
 from engine import Engine
@@ -382,6 +401,7 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
 
 def main(argv=None) -> int:
+    _install_graceful_exit_handlers()
     args = parse_args(argv)
 
     # 사용자 설정 파일 로드 + CLI 기본값 적용
