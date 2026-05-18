@@ -16,13 +16,17 @@ name: Hardware Verification (mixed_combo)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    # 코드/스키마/프로파일 변경에만 트리거. 문서/워크플로우 자체 수정은 제외.
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - '.github/workflows/**'
+  # push 자동 트리거 비활성 (2026-05-18 사용자 요청).
+  # 회귀 검증이 필요하면 (a) Actions UI에서 workflow_dispatch 수동 실행,
+  # (b) PR에 'needs-hw-verify' 라벨 부착, (c) hw-verify-comprehensive 주 1회 cron.
+  # 되살리려면 아래 push 블록의 주석만 풀면 됨.
+  # push:
+  #   branches: [main]
+  #   # 코드/스키마/프로파일 변경에만 트리거. 문서/워크플로우 자체 수정은 제외.
+  #   paths-ignore:
+  #     - 'docs/**'
+  #     - '**.md'
+  #     - '.github/workflows/**'
   pull_request:
     types: [labeled, synchronize]
 
