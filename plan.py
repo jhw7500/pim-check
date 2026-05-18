@@ -494,9 +494,14 @@ def _run_single_case(ssh, profile: dict, case_name: str,
             return [], False, f"SETUP_EXCEPTION: {type(exc).__name__}: {exc}"
 
     # Engine 실행 (run_snapshot 한 번만 — duration<=0 가정. monitor 모드는 v1.1)
+    # verify_retry: 안정화 미달(SSH 끊김 / recovering / NEED_2_FINALIZES 등) 시 자동 재시도.
     try:
         engine = engine_factory(ssh, profile)
-        results = engine.run_snapshot()
+        from verify_retry import run_verify_with_retry
+        effective_duration = (profile.get("monitor") or {}).get("duration_sec", 0) or 0
+        results, _coll, _total = run_verify_with_retry(
+            engine, ssh, effective_duration, log=print,
+        )
     except Exception as exc:
         return [], False, f"RUN_EXCEPTION: {type(exc).__name__}: {exc}"
 

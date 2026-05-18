@@ -5,12 +5,14 @@ import argparse
 import glob
 import os
 import sys
+import time
 
 from config import load_profile
 from engine import Engine
 from reporter import Reporter
 from setup import SetupManager
 from ssh import SshClient
+from verify_retry import run_verify_with_retry
 
 PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
 
@@ -319,11 +321,10 @@ def run_case(case_name, host, user, password, duration, save_json=False,
     try:
         engine = Engine(ssh, profile)
 
-        if effective_duration <= 0:
-            results = engine.run_snapshot()
-            collected, total = 1, 1
-        else:
-            results, collected, total = engine.run_monitor()
+        results, collected, total = run_verify_with_retry(
+            engine, ssh, effective_duration,
+            log=(None if quiet else print),
+        )
 
         reporter = Reporter()
         known_issues = profile.get("known_issues")
