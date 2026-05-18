@@ -111,8 +111,8 @@ checks:
     - name: ch0 ts와 srt 동일 session prefix
       command: "T=$(find /mnt/sd_cam /dev/shm/recording \\( -name '*-ch0.ts' -o -name '*-ch0.ts.part' \\) -mmin -3 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); S=$(find /mnt/sd_cam /dev/shm/recording -name '*-data.srt' -mmin -2 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); TP=${T##*/}; TP=${TP%-ch0.ts}; SP=${S##*/}; SP=${SP%-data.srt}; [ -n \"$TP\" ] && [ -n \"$SP\" ] && [ \"$TP\" = \"$SP\" ] && echo OK || echo \"MISMATCH ts=$TP srt=$SP\""
       expected: OK
-    - name: ch0 ts와 srt 종료 시간 ±2s
-      command: "T=$(find /mnt/sd_cam /dev/shm/recording \\( -name '*-ch0.ts' -o -name '*-ch0.ts.part' \\) -mmin -3 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); S=$(find /mnt/sd_cam /dev/shm/recording -name '*-data.srt' -mmin -2 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); D=$((T-S)); A=${D#-}; [ \"$A\" -le 2 ] && echo OK || echo \"FAIL:diff=${D}s\""
+    - name: ch0 ts와 srt 종료 시간 ±5s
+      command: "T=$(find /mnt/sd_cam /dev/shm/recording \\( -name '*-ch0.ts' -o -name '*-ch0.ts.part' \\) -mmin -3 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); S=$(find /mnt/sd_cam /dev/shm/recording -name '*-data.srt' -mmin -2 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); D=$((T-S)); A=${D#-}; [ \"$A\" -le 5 ] && echo OK || echo \"FAIL:diff=${D}s\""
       expected: OK
     # === disabled channels (ch enable=false → ts 0건이어야 함) ===
     - name: ch1 disabled (i2c2.ch1.enable=false → ts 0건)

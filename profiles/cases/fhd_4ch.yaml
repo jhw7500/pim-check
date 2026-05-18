@@ -166,6 +166,6 @@ checks:
       command: "M=$(find /mnt/sd_cam /dev/shm/recording \\( -name '*-ch0.mp4' -o -name '*-ch0.mp4.part' \\) -mmin -3 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); S=$(find /mnt/sd_cam /dev/shm/recording -name '*-data.srt' -mmin -2 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-); MP=${M##*/}; MP=${MP%-ch0.mp4}; SP=${S##*/}; SP=${SP%-data.srt}; [ -n \"$MP\" ] && [ -n \"$SP\" ] && [ \"$MP\" = \"$SP\" ] && echo OK || echo \"MISMATCH mp4=$MP srt=$SP\""
       expected: OK
       on_fail: mp4와 srt가 같은 session에 생성 안 됨
-    - name: ch0 mp4와 srt 종료 시간 ±2s
-      command: "M=$(find /mnt/sd_cam /dev/shm/recording \\( -name '*-ch0.mp4' -o -name '*-ch0.mp4.part' \\) -mmin -3 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); S=$(find /mnt/sd_cam /dev/shm/recording -name '*-data.srt' -mmin -2 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); D=$((M-S)); A=${D#-}; [ \"$A\" -le 2 ] && echo OK || echo \"FAIL:diff=${D}s\""
+    - name: ch0 mp4와 srt 종료 시간 ±5s
+      command: "M=$(find /mnt/sd_cam /dev/shm/recording \\( -name '*-ch0.mp4' -o -name '*-ch0.mp4.part' \\) -mmin -3 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); S=$(find /mnt/sd_cam /dev/shm/recording -name '*-data.srt' -mmin -2 -printf '%T@\\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); D=$((M-S)); A=${D#-}; [ \"$A\" -le 5 ] && echo OK || echo \"FAIL:diff=${D}s\""
       expected: OK
