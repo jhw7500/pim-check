@@ -53,6 +53,14 @@ jobs:
               -o LogLevel=ERROR root@192.168.0.5 "echo SSH_OK" \
               | grep -q SSH_OK || { echo "::error::ssh fail"; exit 1; }
 
+      - name: Clear stale results cache (avoid fake-success resume)
+        # self-hosted runner는 workspace를 persist하므로 이전 실행의
+        # comprehensive_results.json이 남아있으면 run_comprehensive_verify.py의
+        # resume 로직이 0초 만에 "Resume: 96 scenarios already PASSed — skipping"
+        # 처리하고 그대로 success로 마킹됨 (=가짜 성공).
+        # 매 cron 실행마다 fresh 검증 보장을 위해 검증 직전에 강제 삭제.
+        run: rm -f comprehensive_results.json comprehensive*.log
+
       - name: Run comprehensive verification (96 tests, ~2h)
         run: python3 run_comprehensive_verify.py
 
