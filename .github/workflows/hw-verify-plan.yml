@@ -101,11 +101,24 @@ jobs:
         # exit code: 0=PASS, 1=FAIL, 2=WARN, 3=plan err.
         # WARN(2)도 GHA job은 success로 간주 — known_issue 발생이지 회귀 아님.
         # 정확한 exit code는 reports/{plan}/{ts}.json의 gate.verdict로 확인.
+        #
+        # mixed_combo / bps_quick은 script-wrapper plan — plan engine을 우회하고
+        # 자체 스크립트(run_*_verify.py)를 직접 호출. yaml은 lint/metadata 목적.
         id: run
         run: |
           set +e
-          python3 pim_check.py --plan ${{ inputs.plan }} \
-              --host ${{ env.TARGET_HOST }}
+          case "${{ inputs.plan }}" in
+            mixed_combo)
+              python3 run_mixed_combo_verify.py
+              ;;
+            bps_quick)
+              python3 run_bps_quick.py
+              ;;
+            *)
+              python3 pim_check.py --plan ${{ inputs.plan }} \
+                  --host ${{ env.TARGET_HOST }}
+              ;;
+          esac
           rc=$?
           echo "exit_code=$rc" >> $GITHUB_OUTPUT
           # PASS/WARN(known_issue)는 success, FAIL/plan_err는 실패
@@ -149,9 +162,13 @@ jobs:
             fi
           fi
 
-      - name: Promote baseline (옵션)
+      - name: Promote baseline (옵션, script-wrapper plan 제외)
         # PASS이고 사용자가 promote 요청한 경우만 실행.
-        if: success() && inputs.promote_baseline == true && steps.run.outputs.exit_code == '0'
+        # mixed_combo / bps_quick은 plan engine 미사용 → baseline 개념 없음.
+        if: >
+          success() && inputs.promote_baseline == true &&
+          steps.run.outputs.exit_code == '0' &&
+          inputs.plan != 'mixed_combo' && inputs.plan != 'bps_quick'
         run: |
           ARGS="--promote-baseline ${{ inputs.plan }}"
           if [ -n "${{ inputs.baseline_label }}" ]; then
@@ -160,6 +177,9 @@ jobs:
           python3 pim_check.py $ARGS
 
       - name: Upload reports (always)
+        # 일반 plan은 reports/{plan}/ 아래, script-wrapper plan은 workspace
+        # root에 결과 파일 생성 (mixed_combo_results.json / bps_quick_results.json
+        # 등). 둘 다 매칭하도록 패턴 병합.
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -169,5 +189,9 @@ jobs:
             reports/${{ inputs.plan }}/**/*.html
             reports/${{ inputs.plan }}/**/*.xml
             reports/${{ inputs.plan }}/**/*.md
+            mixed_combo_results.json
+            mixed_combo*.log
+            bps_quick_results.json
+            bps_quick*.log
           retention-days: 60
           if-no-files-found: warn
