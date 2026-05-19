@@ -25,7 +25,9 @@ TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
 
 TEST_CHANNEL = 0  # i2c-2 bus, 편의상 ch0만 사용
 TEST_BPS_VALUES = [1024, 2048, 4096, 8192]
-RECORDING_WAIT = 75   # recording_time(1min) + buffer
+RECORDING_WAIT = 120  # recording_time(1min) + 충분한 buffer
+# 2026-05-19 회귀: 8192 kbps에서 75s 마진 부족(~63s 소요 + 변동성으로 NO_VIDEO).
+# 1분 녹화 + flush/sync + 고비트레이트 대용량 파일 처리까지 여유 확보.
 TOLERANCE_PCT = 10    # ±10% (기본값)
 # 저비트레이트는 H.264 헤더/SPS/PPS/SEI overhead 비중이 커서 정확도 낮음.
 # 2026-05-19 측정: 1024 kbps → 실측 1155 kbps (+12.8%) — 인코더 정상이나
