@@ -31,7 +31,10 @@ REBOOT_WAIT = 300   # reboot 후 SSH 복귀 최대 대기 (초) — 기존 180s�
 STABILIZE = 30
 RETRY_EXTRA_WAIT = 90   # 1차 read 실패 시 추가 안정화 대기 (초) 후 재시도
 RETRY_COUNT = 2         # 재시도 횟수 (총 1차 + RETRY_COUNT회)
-STOP_ON_FAIL = True     # FAIL 시 즉시 중단 (edgeconf는 그대로 남김 — 수동 진단용)
+STOP_ON_FAIL = False    # 96 시나리오 전수 실행 (cron 깊은 회귀 검증 목적).
+# 2026-05-19 실측: EXCEPTION_TIMEOUT이 ~15% 빈도로 발생(SSH/i2c 일시 hang),
+# 대부분 1회 재시도로 흡수되나 가끔 연속 발생. True면 일회성 timing 이슈로 70 시나리오
+# 미실행 → 깊은 검증 의도와 충돌. False로 전수 실행 후 FAIL 패턴 분석.
 
 # 채널 → 버스 매핑
 CH_BUS = {0: 2, 1: 2, 2: 1, 3: 1}
