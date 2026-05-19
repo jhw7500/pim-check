@@ -27,10 +27,10 @@ BASE = Path(__file__).resolve().parent
 RESULT = BASE / "comprehensive_results.json"
 # 타겟 IP는 환경변수 TARGET_HOST 우선, 없으면 fallback.
 TARGET = os.environ.get("TARGET_HOST", "192.168.0.5")
-REBOOT_WAIT = 300   # reboot 후 SSH 복귀 최대 대기 (초) — 기존 180s는 부족
+REBOOT_WAIT = 450   # reboot 후 SSH 복귀 최대 대기 (초) — 정상 빨리 복귀 시 break 하므로 정상 비용 0
 STABILIZE = 30
 RETRY_EXTRA_WAIT = 90   # 1차 read 실패 시 추가 안정화 대기 (초) 후 재시도
-RETRY_COUNT = 2         # 재시도 횟수 (총 1차 + RETRY_COUNT회)
+RETRY_COUNT = 3         # 재시도 횟수 (총 1차 + RETRY_COUNT회) — 정상 비용 0, retry 발생 시 회복률↑
 STOP_ON_FAIL = False    # 96 시나리오 전수 실행 (cron 깊은 회귀 검증 목적).
 # 2026-05-19 실측: EXCEPTION_TIMEOUT이 ~15% 빈도로 발생(SSH/i2c 일시 hang),
 # 대부분 1회 재시도로 흡수되나 가끔 연속 발생. True면 일회성 timing 이슈로 70 시나리오
@@ -80,7 +80,7 @@ SETTING_TESTS = {
 def ssh(cmd, timeout=15):
     r = subprocess.run(
         ["sshpass", "-p", "root", "ssh", "-o", "StrictHostKeyChecking=no",
-         "-o", "ConnectTimeout=5", f"root@{TARGET}", cmd],
+         "-o", "ConnectTimeout=15", f"root@{TARGET}", cmd],
         capture_output=True, text=True, timeout=timeout,
     )
     return r.returncode, r.stdout.strip(), r.stderr.strip()
