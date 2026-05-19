@@ -5,7 +5,8 @@
 - jq로 edgeconf의 .VHL_CAM.i2c2.ch0.bps = [v, v] 설정
 - killcam으로 gstApp 재시작 (~10s)
 - recording_time만큼 녹화 대기 + 버퍼
-- /dev/shm/recordings/*-ch0.mp4 ffprobe로 bit_rate 측정
+- edgeconf의 final_path/sd_tmp_path/tmp_path에서 *-ch0.mp4 (.part 제외) 찾기
+- ffprobe로 bit_rate 측정
 - 설정값 × 1000 과 ±10% tolerance로 비교
 
 bps 배열 [high, low]: 첫번째(recording) bps만 검증, 두번째(RTSP)는 미지원이라 동일값으로 저장.
@@ -59,9 +60,24 @@ def restart_cam():
 
 
 def find_latest_video(channel):
-    """/dev/shm/recordings/에서 해당 채널의 최신 mp4 경로 반환."""
-    cmd = (f"find /dev/shm/recordings -name '*-ch{channel}.mp4' "
-           f"-printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-")
+    """edgeconf의 final_path/sd_tmp_path/tmp_path 후보에서 해당 채널 최신 mp4 반환.
+
+    경로 결정 (edgeconf .VHL_CAM 키):
+      - final_path  : SD 정상 시 최종 저장 (예: /mnt/sd_cam)
+      - sd_tmp_path : SD 임시 (예: /mnt/sd_cam/tmp) — 이동 중 파일
+      - tmp_path    : RAM 임시 (예: /dev/shm) — SD 미마운트 fallback
+    .part 파일은 녹화 진행 중이라 bit_rate 부정확 → 제외.
+
+    이전 구현은 '/dev/shm/recordings/' (s 있는 경로)만 봤는데 보드에
+    존재하지 않아 NO_VIDEO만 반환되던 회귀를 해결.
+    """
+    cmd = (
+        "PATHS=$(jq -r '.VHL_CAM | .final_path, .sd_tmp_path, .tmp_path' "
+        "/root/shared_v/edgeconf_pim.json 2>/dev/null "
+        "| awk 'NF && $0!=\"null\"'); "
+        f"find $PATHS -name '*-ch{channel}.mp4' ! -name '*.part' "
+        f"-printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-"
+    )
     rc, out, _ = ssh(cmd, timeout=10)
     return out if rc == 0 else ""
 
@@ -167,7 +183,11 @@ def main():
     print("=" * 60)
     print(f"PASS: {p}/{len(results)}")
     print("=" * 60)
+    # exit code: 모두 PASS면 0, 하나라도 미스매치/NO_VIDEO/PROBE_FAIL이면 1.
+    # 기존엔 return 누락으로 항상 exit 0 → GHA가 가짜 success로 마킹되던 회귀.
+    return 0 if p == len(results) else 1
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())
