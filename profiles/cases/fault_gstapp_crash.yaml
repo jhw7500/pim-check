@@ -1,24 +1,35 @@
-# Fault: gstApp 크래시/미실행 감지
-# gstApp가 죽었거나 시작되지 않은 상태
-name: "Fault: gstApp Crash"
-description: "gstApp 프로세스 미실행 또는 크래시 감지"
+# Fault: gstApp 강제 종료 + 시스템 감지/회복 검증
+# inject: pkill -9 gstApp으로 의도적 크래시 유발
+# verify: chk_cam_operate.sh가 감지하고 자동 재시작하는지
+# recovery: 재시작 안 됐을 경우 manual restart로 후처리
+name: "Fault: gstApp Crash (injected)"
+description: "gstApp 강제 kill 후 시스템의 감지 + 자동 회복 능력 검증"
+tags: [fault, injection]
+
+setup:
+  inject_command: "pkill -9 gstApp; sleep 2; echo 'gstApp killed'"
 
 checks:
-  processes:
-    required:
-      - gstApp
-      - chk_cam_operate
-    optional:
-      - ord
-      - vcm
-
   custom_commands:
-    - name: "gstApp core dump"
+    - name: "gstApp respawned within 60s"
+      command: "for i in $(seq 1 12); do pgrep -x gstApp > /dev/null && { echo RESPAWNED:$((i*5))s; exit 0; }; sleep 5; done; echo NOT_RESPAWNED"
+      expected_regex: "^RESPAWNED:"
+      on_fail: "gstApp not respawned within 60s after crash"
+
+    - name: "chk_cam_operate detected and recorded"
+      command: "journalctl -u chk_cam_operate.service --since '2 min ago' 2>/dev/null | grep -iE 'restart|crash|respawn|launch' | wc -l"
+      expected_min: 1
+      on_fail: "chk_cam_operate did not log gstApp crash recovery"
+
+    - name: "cam_state recovers to healthy"
+      command: "for i in $(seq 1 24); do s=$(cat /tmp/cam_state/state 2>/dev/null); [ \"$s\" = \"healthy\" ] && { echo HEALTHY:$((i*5))s; exit 0; }; sleep 5; done; echo NOT_HEALTHY:state=$s"
+      expected_regex: "^HEALTHY:"
+      on_fail: "cam_state did not recover to healthy within 120s"
+
+    - name: "no core dump generated"
       command: "test -n \"$(ls /tmp/core.gstApp* 2>/dev/null)\" && echo FOUND || echo NONE"
       expected: "NONE"
-      on_fail: "gstApp core dump found - process crashed"
+      on_fail: "gstApp core dump generated — unexpected behavior"
 
-    - name: "gstApp restart count"
-      command: "journalctl -t gstApp --since '10 min ago' 2>/dev/null | grep -c 'start\\|init' || echo 0"
-      expected_min: 0
-      on_fail: "gstApp restarting too frequently"
+teardown:
+  recovery_command: "pgrep -x gstApp > /dev/null || systemctl restart chk_cam_operate.service 2>&1; sleep 5; pgrep -x gstApp && echo 'gstApp running' || echo 'manual restart needed'"

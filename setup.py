@@ -270,20 +270,41 @@ class SetupManager:
         # str
         return current.strip('"') == str(expected)
 
+    def _exec_commands(self, commands, label: str) -> None:
+        """inject_command / recovery_command 처리. str 또는 list 허용."""
+        if not commands:
+            return
+        if isinstance(commands, str):
+            commands = [commands]
+        for cmd in commands:
+            print(f"  [{label}] {cmd}")
+            out = self._setup_run(cmd)
+            preview = (out or "")[:120]
+            self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
+
     def run_setup(self, setup_config: dict) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
         지원 키:
           - edgeconf_changes: /root/shared_v/edgeconf_pim.json 변경
           - ord_vcm_changes:  /root/shared_v/ord_vcm_conf.json 변경
+          - inject_command:   reboot/stabilize 후 fault inject용 셸 명령 (str/list).
+                              edgeconf/ord 변경 없이 inject만 있어도 동작.
 
         Returns:
-            True: 설정이 변경되었음 (teardown 필요)
-            False: 이미 일치하여 skip됨 (teardown 불필요)
+            True: 변경 또는 inject가 적용됨 (teardown 필요)
+            False: skip됨
         """
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
+        inject = setup_config.get("inject_command")
+
         if not edge_changes and not ord_changes:
+            # inject-only 모드: edgeconf 변경 없이 fault만 주입
+            if inject:
+                self._local0_log(f"setup INJECT-ONLY mode")
+                self._exec_commands(inject, "INJECT")
+                return True  # teardown에서 recovery 필요
             return False
 
         edge_match = (not edge_changes) or self.check_current(edge_changes, EDGECONF_PATH)
@@ -321,13 +342,31 @@ class SetupManager:
             stabilize_sec = setup_config.get("stabilize_sec", 30)
             self.reboot_and_wait(stabilize_sec=stabilize_sec)
             self._local0_log(f"setup DONE — back online + stabilize {stabilize_sec}s passed")
+
+        # inject_command: reboot/stabilize 후 fault 주입 (실제 검증 직전)
+        if inject:
+            self._local0_log("setup INJECT — applying fault")
+            self._exec_commands(inject, "INJECT")
         return True
 
     def run_teardown(self, setup_config: dict) -> None:
-        """edgeconf/ord_vcm_conf를 원래 설정으로 복원하고 필요시 재부팅한다."""
+        """fault recovery + edgeconf/ord_vcm_conf 복원 + 필요시 재부팅."""
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
+        recovery = setup_config.get("recovery_command")
+        inject = setup_config.get("inject_command")
+
+        if not edge_changes and not ord_changes and not (recovery or inject):
+            return
+
+        # 1) recovery_command 우선 실행 (fault 해제)
+        if recovery:
+            self._local0_log("teardown RECOVERY — clearing fault")
+            self._exec_commands(recovery, "RECOVERY")
+
+        # 2) inject-only 모드 (edge/ord 변경 없음)이면 여기서 종료
         if not edge_changes and not ord_changes:
+            self._local0_log("teardown DONE — inject-only recovery")
             return
 
         self._local0_log(

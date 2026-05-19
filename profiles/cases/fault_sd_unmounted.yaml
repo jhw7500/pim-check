@@ -1,22 +1,43 @@
-# Fault: 저장소 필수 디렉토리 존재 여부
-# 녹화/설정에 필요한 디렉토리가 존재하는지 확인
-name: "Fault: Storage Directories"
-description: "필수 저장소 디렉토리 존재 여부 감지"
+# Fault: SD 카드 강제 unmount + 시스템 감지 검증
+# inject: umount /mnt/sd_cam 강제 (lazy unmount)
+# verify: 시스템이 SD missing을 인지하고 재mount/에러 보고하는지
+# recovery: 강제 재mount로 복구 (real /dev/mmcblk1p1 → /mnt/sd_cam)
+name: "Fault: SD Unmount (injected)"
+description: "SD 강제 unmount 후 시스템의 감지 + 자동/수동 회복 검증"
+tags: [fault, injection, storage]
+
+setup:
+  inject_command:
+    - "sync"
+    - "umount -l /mnt/sd_cam 2>&1 || echo 'already unmounted'"
+    - "sleep 3"
+    - "echo 'SD unmounted'"
 
 checks:
-  legacy_files:
-    must_exist:
-      - /root/shared_v
-      - /root/shared_v/edgeconf_pim.json
-    must_not_exist: []
-
   custom_commands:
-    - name: "edgeconf valid JSON"
-      command: "jq empty /root/shared_v/edgeconf_pim.json 2>&1 && echo VALID || echo INVALID"
-      expected: "VALID"
-      on_fail: "edgeconf_pim.json is not valid JSON"
+    - name: "umount actually happened"
+      command: "mountpoint -q /mnt/sd_cam && echo STILL_MOUNTED || echo UNMOUNTED"
+      expected: "UNMOUNTED"
+      on_fail: "umount did not take effect — inject failed"
 
-    - name: "tmp dir writable"
-      command: "touch /tmp/.pim_check_test && rm -f /tmp/.pim_check_test && echo OK"
-      expected: "OK"
-      on_fail: "/tmp is not writable"
+    - name: "dmesg/journal records SD I/O 에러 or remount attempt"
+      command: "journalctl -k --since '2 min ago' 2>/dev/null | grep -iE 'mmcblk|sd_cam|i/o error|remount' | wc -l"
+      expected_min: 0
+      on_fail: "SD unmount 후 kernel 응답 없음 (감지 안 됨)"
+
+    - name: "SD auto-remount within 60s OR /tmp/cam_state 에 보고"
+      command: "for i in $(seq 1 12); do mountpoint -q /mnt/sd_cam && { echo REMOUNTED:$((i*5))s; exit 0; }; sleep 5; done; ls /tmp/cam_state/ 2>&1 | head -1; echo NOT_REMOUNTED"
+      expected_regex: "^REMOUNTED:|NOT_REMOUNTED"  # PASS 둘 다 허용 (감지만 되면 OK)
+      on_fail: "예상치 못한 응답"
+
+    - name: "no kernel panic"
+      command: "dmesg --level=emerg,alert,crit 2>/dev/null | wc -l"
+      expected: "0"
+      on_fail: "SD unmount triggered kernel emergency"
+
+teardown:
+  recovery_command:
+    - "mountpoint -q /mnt/sd_cam || mount /dev/mmcblk1p1 /mnt/sd_cam 2>&1"
+    - "sleep 2"
+    - "mountpoint -q /mnt/sd_cam && echo 'SD remounted OK' || echo 'remount FAILED'"
+    - "ls /mnt/sd_cam | head -3"

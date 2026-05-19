@@ -1,0 +1,47 @@
+# fault_injection.yaml — 의도적 장애 주입 + 시스템 감지/회복 능력 검증 plan
+#
+# 용도: 단순 monitoring(passive fault detection)이 아니라
+#      실제로 inject_command로 장애를 일으키고 시스템이
+#       (1) 감지하고 (2) 회복하는지 확인하는 active fault test.
+#
+# 실행: python pim_check.py --plan fault_injection --host 192.168.214.100
+#
+# 신규 케이스 추가 기준:
+#   - case yaml에 setup.inject_command + teardown.recovery_command 모두 정의되어 있어야 함
+#   - 회복 실패해도 다음 case에 영향 없는 self-contained inject (rm/dd 같은 영구 파괴 금지)
+#
+# 주의: stop_on_fail=false. 한 fault case가 회복 못 해도 다음 case는 계속 진행
+#       (단, 이전 case의 fault가 잔존하면 후속 case 결과가 오염될 수 있어 inject 영향 분리 보장 필요)
+
+name: "Fault Injection Sanity"
+description: "의도적 fault 주입 후 시스템 자동 감지/회복 능력 검증 (active fault test)"
+version: 1
+
+cases:
+  regression:
+    # 현재 inject_command/recovery_command 적용된 케이스 (수기 명시 — glob 사용 안 함)
+    - fault_gstapp_crash    # pkill -9 gstApp → respawn 검증
+    - fault_sd_unmounted    # umount /mnt/sd_cam → remount 검증
+
+# delta 비워둠 — fault test는 회귀 보호 성격이라 정적 셋만 유지
+
+execution:
+  stop_on_fail: false        # 한 fault 회복 실패해도 다른 fault test는 계속
+  case_retry: 1              # fault inject는 deterministic이라 retry 무의미하지만 SSH 노이즈 보호
+  retry_wait_sec: 60
+  reboot_wait_sec: 300
+  wait_between_cases: 30     # case 사이 30s wait — 이전 inject 영향 소거 보장
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: true
+
+reports:
+  - format: html
+    path: reports/fault_injection/{timestamp}.html
+  - format: junit
+    path: reports/fault_injection/{timestamp}.xml
+  - format: json
+    path: reports/fault_injection/{timestamp}.json
+  - format: markdown_summary
+    path: reports/fault_injection/{timestamp}.md
