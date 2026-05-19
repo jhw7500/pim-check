@@ -1,0 +1,55 @@
+# bps_quick.yaml — script-wrapper plan
+#
+# 이 plan은 plan engine으로 실행하지 않는다.
+# hw-verify-plan workflow가 plan name == "bps_quick"일 때
+# run_bps_quick.py를 직접 호출하도록 분기 처리되어 있다.
+#
+# yaml 자체의 역할:
+#   1. workflow_dispatch UI choice 정합성 (선택지에만 있고 yaml 없으면 lint 실패)
+#   2. metadata 문서화 (사람이 plan 의도/범위 한눈에 파악)
+#   3. plan.load_plan() lint 통과 (workflow의 lint step 호환)
+#
+# 실제 검증 정의: run_bps_quick.py
+#   - ch0(i2c-2 bus)에서 4단계 bps 순차 테스트: 1024 / 2048 / 4096 / 8192 kbps
+#   - jq로 edgeconf의 .VHL_CAM.i2c2.ch0.bps = [v, v] 적용
+#   - killcam 방식으로 gstApp 재시작 (~10s, reboot 없음)
+#   - recording_time + 버퍼 만큼 녹화 대기
+#   - /dev/shm/recordings/*-ch0.mp4를 ffprobe로 측정
+#   - 설정값(kbps) × 1000 과 측정값 비교, ±10% tolerance 안이면 PASS
+#
+# 검증 의도: 인코더 비트레이트 설정이 실제 출력에 정확히 반영되는지
+# 빠르게(reboot 없이) 회귀 감시. 인코더 회귀(nightly bps 24건의 진짜 원인)
+# 검출용 sanity check.
+#
+# 결과 파일 (workflow root 기준):
+#   - bps_quick_results.json
+#
+# 소요: 약 5분 (4 bps × ~60s 녹화 + killcam).
+
+name: "BPS Quick (인코더 비트레이트 빠른 검증)"
+description: |
+  ch0에서 4단계 bps(1024/2048/4096/8192 kbps)를 순차 적용하여
+  실제 인코더 출력 비트레이트를 ffprobe로 측정한다. killcam 방식으로
+  reboot 없이 진행하며 약 5분 내 완료.
+
+  Script-wrapper plan — 실제 실행은 run_bps_quick.py가 담당하며
+  plan engine은 미사용.
+version: 1
+
+cases:
+  regression:
+    # plan engine 미경유 — workflow 분기로 run_bps_quick.py 직접 실행.
+    # 아래 selector는 lint 통과 목적의 placeholder.
+    - _external_run_bps_quick
+
+execution:
+  stop_on_fail: false        # 4 bps 모두 돌려 회귀 패턴 파악
+  case_retry: 0              # 외부 스크립트 내부에서 자체 처리
+  reboot_wait_sec: 60        # killcam은 ~10s, 마진 포함
+
+gate:
+  threshold_pass_rate: 1.0   # 4 bps 모두 ±10% 이내여야 PASS
+  allow_known_issue: false
+
+# reports는 workflow root의 bps_quick_results.json을 그대로 업로드
+# (plan engine 미경유 → reports/bps_quick/ 디렉터리는 생성되지 않음)

@@ -1,0 +1,54 @@
+# mixed_combo.yaml — script-wrapper plan
+#
+# 이 plan은 plan engine으로 실행하지 않는다.
+# hw-verify-plan workflow가 plan name == "mixed_combo"일 때
+# run_mixed_combo_verify.py를 직접 호출하도록 분기 처리되어 있다.
+#
+# yaml 자체의 역할:
+#   1. workflow_dispatch UI choice 정합성 (선택지에만 있고 yaml 없으면 lint 실패)
+#   2. metadata 문서화 (사람이 plan 의도/범위 한눈에 파악)
+#   3. plan.load_plan() lint 통과 (workflow의 lint step 호환)
+#
+# 실제 검증 정의: run_mixed_combo_verify.py:TESTS
+#   - Test 1: ch1+ch3 cross-bus (양 버스 single, 내부 ch1 슬롯 × 2)
+#   - Test 2: ch0+ch2 cross-bus (양 버스 single, 내부 ch0 슬롯 × 2)
+#   - Test 3: ch0+ch1 same-bus i2c-2 dual
+#   - Test 4: quad (모든 4채널, 양 버스 dual)
+# 각 채널마다 서로 다른 (vflip/hflip/ae/awb) combo 동시 주입 →
+# reboot → ISP 레지스터(0x100c ROT, 0x5002 AE, 0x5100 AWB)를 i2c read.
+# 검증 의도: 채널별 설정 격리 + bus mode(single/dual) 정확 진입.
+#
+# 결과 파일 (workflow root 기준):
+#   - mixed_combo_results.json
+#   - mixed_combo*.log
+#
+# 소요: 약 20분 (4 test × 5분 reboot 사이클).
+
+name: "Mixed Combo (ISP 채널 격리 회귀)"
+description: |
+  4가지 채널 조합(cross-bus single × 2, same-bus dual, quad)에서 각 채널에
+  서로 다른 (vflip/hflip/ae/awb) combo를 동시 주입한 뒤 reboot 후
+  ISP 레지스터(ROT 0x100c, AE 0x5002, AWB 0x5100)를 i2c로 직접 읽어
+  채널별 설정 격리 + bus mode 진입을 검증한다.
+
+  Script-wrapper plan — 실제 실행은 run_mixed_combo_verify.py가 담당
+  하며 plan engine은 미사용.
+version: 1
+
+cases:
+  regression:
+    # plan engine 미경유 — workflow 분기로 run_mixed_combo_verify.py 직접 실행.
+    # 아래 selector는 lint 통과 목적의 placeholder.
+    - _external_run_mixed_combo_verify
+
+execution:
+  stop_on_fail: false        # 4 test 모두 끝까지 돌려 패턴 파악
+  case_retry: 0              # 외부 스크립트 내부에서 자체 처리
+  reboot_wait_sec: 300
+
+gate:
+  threshold_pass_rate: 1.0   # 4 test × 10 slot 모두 PASS 요구
+  allow_known_issue: false
+
+# reports는 workflow root의 mixed_combo_results.json / *.log를 그대로 업로드
+# (plan engine 미경유 → reports/mixed_combo/ 디렉터리는 생성되지 않음)
