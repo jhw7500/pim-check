@@ -36,17 +36,17 @@ setup:
     ".VHL_CAM.i2c1.ch3.ae_gain": 512
     ".VHL_CAM.i2c1.ch3.awb": "d75"
     ".VHL_CAM.i2c2.ch0.bps":
-      - 1024
-      - 1024
+      - 8192
+      - 8192
     ".VHL_CAM.i2c2.ch1.bps":
-      - 2048
-      - 2048
+      - 4096
+      - 4096
     ".VHL_CAM.i2c1.ch2.bps":
-      - 4096
-      - 4096
+      - 2048
+      - 2048
     ".VHL_CAM.i2c1.ch3.bps":
-      - 8192
-      - 8192
+      - 1024
+      - 1024
     ".VHL_CAM.i2c2.ch0.led_flash.enable": true
     ".VHL_CAM.i2c2.ch0.led_flash.wiper": 16
     ".VHL_CAM.i2c2.ch0.led_flash.flash_delay": 0
