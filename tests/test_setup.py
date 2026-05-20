@@ -14,10 +14,13 @@ class TestBackupEdgeconf(unittest.TestCase):
         self.mgr = SetupManager(self.ssh)
 
     def test_backup_edgeconf(self):
-        """backup()이 올바른 cp 명령을 실행하는지 확인"""
+        """backup()이 백업 cp 명령을 실행하는지 확인"""
         self.ssh.run.return_value = "OK"
         result = self.mgr.backup()
-        self.ssh.run.assert_called_once_with(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP} && echo OK")
+        self.assertEqual(self.ssh.run.call_count, 1)
+        cmd = self.ssh.run.call_args[0][0]
+        self.assertIn(f"cp {EDGECONF_PATH} {EDGECONF_BACKUP}", cmd)
+        self.assertIn("echo OK", cmd)
         self.assertTrue(result)
 
 
@@ -27,17 +30,30 @@ class TestApplyEdgeconfChanges(unittest.TestCase):
         self.mgr = SetupManager(self.ssh)
 
     def test_apply_edgeconf_changes(self):
-        """apply_changes()가 각 변경에 대해 jq 명령을 실행하는지 확인"""
+        """apply_changes()가 각 변경에 대해 jq write + read-back verify를 실행하는지 확인"""
         changes = {
             ".VHL_CAM.cam_width": 1920,
             ".VHL_CAM.cam_height": 1080,
         }
-        self.mgr.apply_changes(changes)
-        self.assertEqual(self.ssh.run.call_count, 2)
 
-        calls = [str(c) for c in self.ssh.run.call_args_list]
-        # 두 호출 모두 jq 명령을 포함해야 함
-        for c in calls:
+        def side_effect(cmd, **kwargs):
+            # write 명령(> /tmp 포함)은 None, read-back verify는 적용값 반환
+            if "> /tmp" in cmd:
+                return None
+            if "cam_width" in cmd:
+                return "1920"
+            if "cam_height" in cmd:
+                return "1080"
+            return None
+
+        self.ssh.run.side_effect = side_effect
+        self.mgr.apply_changes(changes)
+        # 변경당 write 1회 + read-back verify 1회 = 총 4회
+        self.assertEqual(self.ssh.run.call_count, 4)
+
+        write_calls = [str(c) for c in self.ssh.run.call_args_list if "> /tmp" in str(c)]
+        self.assertEqual(len(write_calls), 2)
+        for c in write_calls:
             self.assertIn("jq", c)
             self.assertIn(EDGECONF_PATH, c)
 
@@ -50,7 +66,9 @@ class TestRestoreEdgeconf(unittest.TestCase):
     def test_restore_edgeconf(self):
         """restore()가 백업 파일을 원래 위치로 복사하는지 확인"""
         self.mgr.restore()
-        self.ssh.run.assert_called_once_with(f"cp {EDGECONF_BACKUP} {EDGECONF_PATH}")
+        self.assertEqual(self.ssh.run.call_count, 1)
+        cmd = self.ssh.run.call_args[0][0]
+        self.assertIn(f"cp {EDGECONF_BACKUP} {EDGECONF_PATH}", cmd)
 
 
 class TestRebootAndWait(unittest.TestCase):
@@ -86,7 +104,7 @@ class TestCheckCurrent(unittest.TestCase):
 
     def test_config_already_matches(self):
         """현재 설정이 목표와 일치하면 True 반환"""
-        def side_effect(cmd):
+        def side_effect(cmd, **kwargs):
             if "cam_width" in cmd:
                 return "1280"
             if "cam_height" in cmd:
@@ -105,7 +123,7 @@ class TestCheckCurrent(unittest.TestCase):
 
     def test_config_differs(self):
         """현재 설정이 목표와 다르면 False 반환"""
-        def side_effect(cmd):
+        def side_effect(cmd, **kwargs):
             if "cam_width" in cmd:
                 return "1920"  # 목표는 1280
             return "720"
