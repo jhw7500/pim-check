@@ -62,9 +62,11 @@ class TestWaitUntilReadyDriver:
         mgr = _mgr()
         order = []
         def s1():
-            order.append("s1"); return True
+            order.append("s1")
+            return True
         def s2():
-            order.append("s2"); return True
+            order.append("s2")
+            return True
         ok = mgr.wait_until_ready(
             [("s1", s1), ("s2", s2)], poll_interval=10, debounce=1,
             timeout=260, _sleep=lambda s: None, _clock=_Clock(),

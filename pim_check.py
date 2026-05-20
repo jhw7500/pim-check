@@ -6,7 +6,6 @@ import glob
 import os
 import signal
 import sys
-import time
 
 
 def _install_graceful_exit_handlers() -> None:

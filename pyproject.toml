@@ -47,6 +47,9 @@ omit = [
     "runner_loop.py",
     "web.py",
     "pim_check.py",
+    # CLI/UI 진입점 — 렌더링·서버 루프라 unit test 커버 대상 아님 (pim_check.py/web.py 와 동급)
+    "pim_viewer.py",
+    "pim_web_viewer.py",
     "color.py",
     "stream.py",
     # 아래는 SSH + 실물 타겟 의존 스크립트/에이전트 — unit test 커버 불가
@@ -58,7 +61,10 @@ omit = [
     "run_bps_quick.py",
     "infer_agent.py",
     "qa_agent.py",
+    "setup.py",
+    "verify_retry.py",
     "tools/*",
+    "scripts/*",
 ]
 
 [tool.coverage.report]

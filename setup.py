@@ -228,7 +228,7 @@ class SetupManager:
             if recovery_attempted:
                 break
             recovery_attempted = True
-            print(f"  Timeout — diagnosing network...")
+            print("  Timeout — diagnosing network...")
             diag = self._diagnose_network()
             print(f"  Diagnosis: {diag}")
             if diag == "host_wlan":
@@ -239,7 +239,7 @@ class SetupManager:
                 print("  unknown failure mode — skipping recovery")
             # Reset elapsed and re-poll
             elapsed = 0
-            print(f"  Recovery attempted, re-polling...")
+            print("  Recovery attempted, re-polling...")
 
         raise TimeoutError(
             f"Target did not come back online within {self.reboot_timeout}s "
@@ -443,7 +443,7 @@ class SetupManager:
         if not edge_changes and not ord_changes:
             # inject-only 모드: edgeconf 변경 없이 fault만 주입
             if inject:
-                self._local0_log(f"setup INJECT-ONLY mode")
+                self._local0_log("setup INJECT-ONLY mode")
                 self._exec_commands(inject, "INJECT")
                 return True  # teardown에서 recovery 필요
             return False
