@@ -7,6 +7,10 @@ checks:
     expected_state: healthy
     max_streak: 0
   custom_commands:
+  - name: config .VHL_CAM.capture.enable == false
+    command: jq '.VHL_CAM.capture.enable' /root/shared_v/edgeconf_pim.json
+    expected: 'false'
+    on_fail: .VHL_CAM.capture.enable 값이 false와 다름
   - name: config .ORD.disk_manage == true
     command: jq '.ORD.disk_manage' /root/shared_v/ord_vcm_conf.json
     expected: 'true'

@@ -3,6 +3,7 @@ name: '[auto] fhd_rec1m'
 description: 'Auto-generated: fhd rec1m'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.cam_width: 1920
     .VHL_CAM.cam_height: 1080
     .VHL_CAM.i2c2.ch1.enable: false

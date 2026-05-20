@@ -3,6 +3,7 @@ name: '[auto] fhd_mux_mp4'
 description: 'Auto-generated: fhd mux_mp4'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.cam_width: 1920
     .VHL_CAM.cam_height: 1080
     .VHL_CAM.muxer: mp4

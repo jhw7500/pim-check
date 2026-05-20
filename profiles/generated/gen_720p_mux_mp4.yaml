@@ -3,6 +3,7 @@ name: '[auto] 720p_mux_mp4'
 description: 'Auto-generated: 720p mux_mp4'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.cam_width: 1280
     .VHL_CAM.cam_height: 720
     .VHL_CAM.muxer: mp4

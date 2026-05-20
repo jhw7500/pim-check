@@ -3,6 +3,7 @@ name: '[auto] fhd_mux_ts'
 description: 'Auto-generated: fhd mux_ts'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.cam_width: 1920
     .VHL_CAM.cam_height: 1080
     .VHL_CAM.muxer: ts

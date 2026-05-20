@@ -73,7 +73,10 @@ def resolve_rule(rules: dict, combo_key: str):
 
 def build_case(combo: tuple, schema: dict, no_reboot: bool = False) -> tuple[dict, str]:
     """조합 하나로부터 YAML 케이스 dict를 생성한다."""
-    edgeconf_changes = {}
+    # capture.enable 기본값 false 명시 — cap_on axis가 true로 override.
+    # 미명시 시 직전 case의 capture=true가 잔존하여 record=false와 결합,
+    # 녹화 파이프라인이 멈추는 버그 방지 (each case가 capture 상태를 완전 정의).
+    edgeconf_changes = {".VHL_CAM.capture.enable": False}
     combo_key_parts = []
     expects = {}
 
