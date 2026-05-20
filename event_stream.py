@@ -48,6 +48,82 @@ def serialize_fail_event(check, reason, *, ts=None, **fields) -> str:
     return json.dumps(record, ensure_ascii=False)
 
 
+def _base_event(event_type: str, run_id: str, plan: str, board: str,
+                elapsed_s: float, ts) -> dict:
+    """모든 lifecycle 이벤트에 공통으로 존재하는 필드 묶음.
+
+    PimEventStream 의 '항상-존재' 필드(event_type, ts, run_id, plan, board,
+    elapsed_s)를 채운다. 각 직렬화기는 여기에 이벤트별 필드를 더한다.
+    """
+    return {
+        "event_type": event_type,
+        "ts": ts if ts is not None else _now_iso(),
+        "run_id": run_id,
+        "plan": plan,
+        "board": board,
+        "elapsed_s": elapsed_s,
+    }
+
+
+def serialize_run_start(*, run_id, plan, board, elapsed_s, cases,
+                        total_cases=None, ts=None) -> str:
+    """run 시작 이벤트. 전체 case 목록과 총 개수를 담는다 (run_start 에만 존재).
+
+    total_cases 미지정 시 ``len(cases)`` 로 채운다.
+    """
+    rec = _base_event("run_start", run_id, plan, board, elapsed_s, ts)
+    rec["cases"] = list(cases)
+    rec["total_cases"] = total_cases if total_cases is not None else len(rec["cases"])
+    return json.dumps(rec, ensure_ascii=False)
+
+
+def serialize_case_start(*, run_id, plan, board, elapsed_s, case_name,
+                         phase, ts=None) -> str:
+    """case 시작 이벤트. 현재 실행 case 식별 + 단계(collect/validate)."""
+    rec = _base_event("case_start", run_id, plan, board, elapsed_s, ts)
+    rec["case_name"] = case_name
+    rec["phase"] = phase
+    return json.dumps(rec, ensure_ascii=False)
+
+
+def serialize_case_end(*, run_id, plan, board, elapsed_s, case_name, phase,
+                       result, completed_cases, pass_count, fail_count,
+                       avg_case_duration_s, reason=None, ts=None) -> str:
+    """case 종료 이벤트. 결과 + 누적 카운트 + ETA 산정용 평균 소요시간.
+
+    reason 은 ``result == "fail"`` 일 때(혹은 명시적으로 전달될 때)만 포함한다.
+    """
+    rec = _base_event("case_end", run_id, plan, board, elapsed_s, ts)
+    rec["case_name"] = case_name
+    rec["phase"] = phase
+    rec["result"] = result
+    rec["completed_cases"] = completed_cases
+    rec["pass_count"] = pass_count
+    rec["fail_count"] = fail_count
+    rec["avg_case_duration_s"] = avg_case_duration_s
+    if reason is not None:
+        rec["reason"] = reason
+    return json.dumps(rec, ensure_ascii=False)
+
+
+def serialize_run_end(*, run_id, plan, board, elapsed_s, completed_cases,
+                      pass_count, fail_count, ts=None) -> str:
+    """run 종료 이벤트. 최종 누적 카운트."""
+    rec = _base_event("run_end", run_id, plan, board, elapsed_s, ts)
+    rec["completed_cases"] = completed_cases
+    rec["pass_count"] = pass_count
+    rec["fail_count"] = fail_count
+    return json.dumps(rec, ensure_ascii=False)
+
+
+def serialize_heartbeat(*, run_id, plan, board, elapsed_s, heartbeat_seq,
+                        ts=None) -> str:
+    """heartbeat 이벤트. producer 생존 신호 — state 복원 시 무시 가능한 noop."""
+    rec = _base_event("heartbeat", run_id, plan, board, elapsed_s, ts)
+    rec["heartbeat_seq"] = heartbeat_seq
+    return json.dumps(rec, ensure_ascii=False)
+
+
 def write_event(handle, line: str) -> None:
     """직렬화된 이벤트 한 줄을 열린 핸들에 append 하고 즉시 flush+fsync 한다.
 
