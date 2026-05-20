@@ -89,7 +89,16 @@ def ssh(cmd, timeout=15):
 def wait_ssh(timeout=REBOOT_WAIT):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        rc, out, _ = ssh("echo ok", timeout=10)
+        try:
+            rc, out, _ = ssh("echo ok", timeout=10)
+        except subprocess.TimeoutExpired:
+            # ssh 연결이 ConnectTimeout 안에 안 끝나 subprocess timeout이 먼저 발동
+            # (보드 부팅 직후 SSH 미준비 시 정상 발생). 예외를 전파하면 run_scenario가
+            # EXCEPTION_TIMEOUT으로 오판 → 재시도 못 하고 시나리오 실패.
+            # 2026-05-19 run#3 0/90 회귀: ConnectTimeout=15 >= subprocess timeout=10이
+            # 되며 이 경로가 EXCEPTION_TIMEOUT으로 터진 것 수정. 여기서 재시도로 흡수.
+            time.sleep(5)
+            continue
         if rc == 0 and "ok" in out:
             return True
         time.sleep(5)
@@ -137,7 +146,13 @@ def reboot_and_wait():
 
 def read_isp(bus: int, addr: int, reg_hi: int, reg_lo: int) -> str:
     cmd = f"i2ctransfer -f -y {bus} w2@0x{addr:02x} 0x{reg_hi:02x} 0x{reg_lo:02x} r2 2>/dev/null | tr -d ' '"
-    rc, out, _ = ssh(cmd)
+    # read_isp는 run_scenario try 밖 + main 루프에도 try 없음 → 여기서 TimeoutExpired가
+    # 새면 스크립트 전체 크래시. ssh timeout(15)==ConnectTimeout(15) 경계라 느린 연결 시
+    # 발생 가능. ""(빈 결과)로 변환하면 run_scenario의 RETRY_COUNT 재시도 로직이 흡수.
+    try:
+        rc, out, _ = ssh(cmd)
+    except subprocess.TimeoutExpired:
+        return ""
     return out if rc == 0 else ""
 
 
