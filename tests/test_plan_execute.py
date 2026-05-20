@@ -173,6 +173,28 @@ class TestExecutePlan(unittest.TestCase):
             ("delta", "case_c"),
         ])
 
+    def test_on_case_start_fires_before_each_case_in_order(self):
+        plan = self._plan({
+            "regression": ["case_a", "case_b"],
+            "delta": ["case_c"],
+        })
+        starts: list = []
+        ends: list = []
+        execute_plan(
+            plan, self.tmpdir,
+            ssh_factory=self._ssh_factory(),
+            setup_factory=self._setup_factory(),
+            engine_factory=self._engine_factory(),
+            progress=lambda idx, total, name, ex: ends.append(name),
+            on_case_start=lambda idx, total, name, section: starts.append((idx, total, name, section)),
+        )
+        # case_start 가 plan 순서대로, 각 case 당 한 번 호출된다.
+        assert [s[2] for s in starts] == ["case_a", "case_b", "case_c"]
+        assert starts[0] == (1, 3, "case_a", "regression")
+        assert starts[-1] == (3, 3, "case_c", "delta")
+        # 각 case 는 start 후 end 가 따른다 (start 가 end 보다 먼저 누적).
+        assert ends == ["case_a", "case_b", "case_c"]
+
     def test_no_ssh_marks_error(self):
         plan = self._plan({"regression": ["case_a"]})
         execs = execute_plan(

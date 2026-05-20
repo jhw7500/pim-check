@@ -525,7 +525,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                  setup_factory: Callable | None = None,
                  engine_factory: Callable | None = None,
                  cli_args: dict | None = None,
-                 progress: Callable | None = None) -> list[CaseExecution]:
+                 progress: Callable | None = None,
+                 on_case_start: Callable | None = None) -> list[CaseExecution]:
     """Plan 실행 — resolve_cases 순서대로 case 단위 실행.
 
     각 case별:
@@ -545,6 +546,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
         engine_factory: callable (ssh, profile) → Engine-like. None이면 기본 Engine 사용.
         cli_args: dict 형태 CLI 오버라이드 (예: {"target": {"host": "..."}})
         progress: callable (idx, total, case_name, exec_result) — case 끝날 때 호출 (선택)
+        on_case_start: callable (idx, total, case_name, section) — case 시작 시 호출 (선택)
 
     Returns:
         list[CaseExecution] — case별 실행 결과. plan에 정의된 순서.
@@ -570,6 +572,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
             t0 = time.monotonic()
+
+            # case 시작 훅 (선택) — 이벤트 스트림의 case_start emit 지점.
+            if on_case_start is not None:
+                on_case_start(idx, total, case_name, section)
 
             # case profile 로드
             try:

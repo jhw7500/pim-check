@@ -236,7 +236,64 @@ def _run_plan(args) -> int:
                   f"({len(baseline.get('executions', []))} prior cases)")
         print()
 
+    # --- 실시간 JSONL 이벤트 스트림 (best-effort; 실패해도 plan 실행 불변) ---
+    # 기존 *_results.json 출력/CLI 동작은 그대로 두고, 관측 레이어만 덧붙인다.
+    from event_session import EventSession
+    from plan import resolve_cases as _resolve_cases
+    import datetime as _dt
+
+    run_id = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+    board = host_for_meta
+
+    def _safe(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception:
+            return None
+
+    try:
+        _all_cases = [c for _sec, c in _resolve_cases(plan, PROFILES_DIR)]
+    except Exception:
+        _all_cases = []
+
+    _stats = {"completed": 0, "pass": 0, "fail": 0, "dur": 0.0}
+
+    def _first_fail_reason(results):
+        for r in results or []:
+            if not r.get("passed") and "known_issue" not in r:
+                return r.get("reason")
+        return None
+
+    sess = None
+    try:
+        sess = EventSession(run_id, args.plan, board)
+        sess.__enter__()
+    except Exception:
+        sess = None
+
+    def on_case_start(idx, total, case_name, section):
+        if sess is not None:
+            _safe(sess.emit_case_start, case_name, "collect")
+
     def on_progress(idx, total, case_name, execution):
+        # 이벤트 emit 은 quiet 와 무관하게 항상 (관측 레이어).
+        if sess is not None:
+            _stats["completed"] = idx
+            if execution.passed:
+                _stats["pass"] += 1
+            else:
+                _stats["fail"] += 1
+            _stats["dur"] += (execution.duration_sec or 0.0)
+            avg = _stats["dur"] / max(_stats["completed"], 1)
+            reason = None
+            if not execution.passed:
+                reason = execution.error or _first_fail_reason(execution.results) or "FAIL"
+            _safe(sess.emit_case_end, case_name, "validate",
+                  "pass" if execution.passed else "fail",
+                  completed_cases=_stats["completed"], pass_count=_stats["pass"],
+                  fail_count=_stats["fail"], avg_case_duration_s=round(avg, 2),
+                  reason=reason)
+        # 콘솔 진행 출력은 quiet 가 아닐 때만.
         if args.quiet:
             return
         mark = "[+]" if execution.passed else "[X]"
@@ -245,14 +302,24 @@ def _run_plan(args) -> int:
         print(f"  [{idx}/{total}] {mark} [{execution.section}] {case_name} "
               f"({execution.duration_sec}s){retry_str}{err_str}")
 
-    executions = execute_plan(
-        plan, PROFILES_DIR,
-        ssh_factory=lambda h, u, p: SshClient(h, u, p),
-        setup_factory=lambda ssh: SetupManager(ssh),
-        engine_factory=lambda ssh, profile: Engine(ssh, profile),
-        cli_args=cli_args or None,
-        progress=on_progress,
-    )
+    try:
+        if sess is not None:
+            _safe(sess.emit_run_start, cases=_all_cases)
+            _safe(sess.start_heartbeat)
+        executions = execute_plan(
+            plan, PROFILES_DIR,
+            ssh_factory=lambda h, u, p: SshClient(h, u, p),
+            setup_factory=lambda ssh: SetupManager(ssh),
+            engine_factory=lambda ssh, profile: Engine(ssh, profile),
+            cli_args=cli_args or None,
+            progress=on_progress,
+            on_case_start=on_case_start,
+        )
+    finally:
+        if sess is not None:
+            _safe(sess.emit_run_end, completed_cases=_stats["completed"],
+                  pass_count=_stats["pass"], fail_count=_stats["fail"])
+            _safe(sess.__exit__, None, None, None)
 
     # Gate 평가
     gate_result = evaluate_gate(plan, executions, baseline=baseline)

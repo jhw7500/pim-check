@@ -23,6 +23,9 @@ build/
 # Coverage artifacts
 .coverage
 
+# Real-time JSONL event stream output (per-run files + current.jsonl symlink)
+events/
+
 # Runtime logs (keep JSON results untracked by default; track selectively)
 *.log
 mixed_combo_results.json
