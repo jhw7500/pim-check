@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=64"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "pim-check"
@@ -20,6 +20,13 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
 [project.scripts]
 pim-check = "pim_check:main"
 pim-check-web = "web:main"
+
+[tool.uv]
+# 이 저장소는 flat-layout(루트에 다수의 최상위 .py 모듈)이라 setuptools 자동
+# 패키지 탐색이 실패한다. 테스트/실행 시 빌드·설치가 필요 없으므로 uv 가 프로젝트를
+# 빌드하지 않도록 한다(의존성만 가상환경에 동기화). 이로써 `uv run pytest` 가
+# 빌드 백엔드 호출 없이 동작한다.
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
