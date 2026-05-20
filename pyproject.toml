@@ -14,12 +14,15 @@ dependencies = [
 
 [project.optional-dependencies]
 windows = ["paramiko>=2.0"]
-all = ["paramiko>=2.0"]
+all = ["paramiko>=2.0", "rich>=13"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
+# pim_viewer TUI 용. 없으면 viewer 는 plain-text 폴백으로 동작한다.
+viewer = ["rich>=13"]
 
 [project.scripts]
 pim-check = "pim_check:main"
 pim-check-web = "web:main"
+pim-viewer = "pim_viewer:main"
 
 [tool.uv]
 # 이 저장소는 flat-layout(루트에 다수의 최상위 .py 모듈)이라 setuptools 자동
