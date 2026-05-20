@@ -3,6 +3,11 @@
 name: "Config: File Integrity"
 description: "설정 파일 JSON 무결성 + 필수 키 존재 + 값 타입 검증"
 
+# point-in-time 점검 — 설정 파일을 한 번 읽으면 끝. 시간 경과 관측이 불필요하므로
+# base.yaml 의 300초 모니터를 단발 snapshot 으로 override (불필요한 5분 대기 제거).
+monitor:
+  duration_sec: 0
+
 checks:
   legacy_files:
     must_exist:
