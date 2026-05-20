@@ -17,7 +17,10 @@ EDGECONF_BACKUP = f"{BACKUP_DIR}/edgeconf_pim.json.bak"
 ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
-DEFAULT_POLL_INTERVAL = 60     # 1분
+DEFAULT_POLL_INTERVAL = 60     # 1분 (리부트 복구 폴링용 — 부팅은 느려 1분 간격이 적절)
+# 안정화 readiness 폴링은 리부트 복구보다 훨씬 짧게 — 준비되면 거의 즉시 진행.
+# 복구 폴링(60초)을 그대로 쓰면 debounce 때문에 단계당 ~60초가 들어 단축효과가 작다.
+READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
 
 # 안정화 3차(영상파일 생성) readiness 탐지 경로 — 양쪽 모드를 포괄.
 #  - SD 정상: json tmp_path→final_path (보드 설정값). 통상 마운트는 /mnt/sd_cam.
@@ -47,6 +50,8 @@ class SetupManager:
         self.ssh = ssh
         self.reboot_timeout = reboot_timeout
         self.poll_interval = poll_interval
+        # 안정화 readiness 전용 폴링 간격 (리부트 복구 poll_interval 과 분리, 더 짧음).
+        self.readiness_poll_interval = READINESS_POLL_INTERVAL
         # 안정화 2차(코어 프로세스) readiness 에 쓰일 required 프로세스 목록.
         # run_setup(ready_processes=...) 로 profile 의 checks.processes.required 가 주입된다.
         self._ready_processes_list: list[str] = []
@@ -346,8 +351,10 @@ class SetupManager:
         stages = self._stabilize_stages()
         names = ", ".join(n for n, _ in stages)
         print(f"Stabilizing (staged readiness, up to {stabilize_sec}s): {names}")
+        # readiness 전용 짧은 간격 사용 — 리부트 복구 poll_interval(60초)이 아니라
+        # readiness_poll_interval(5초)로 디바운스해 준비되면 거의 즉시 진행한다.
         ready = self.wait_until_ready(
-            stages, poll_interval=self.poll_interval, debounce=2,
+            stages, poll_interval=self.readiness_poll_interval, debounce=2,
             timeout=stabilize_sec,
         )
         if ready:

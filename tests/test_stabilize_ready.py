@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from setup import SetupManager
+from setup import SetupManager, READINESS_POLL_INTERVAL
 
 
 def _mgr():
@@ -116,6 +116,33 @@ class TestStage2Processes:
         # run_setup(ready_processes=...) 주입 후: ssh + processes
         mgr._ready_processes_list = ["gstApp"]
         assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "processes"]
+
+
+class TestReadinessPollInterval:
+    def test_stabilize_uses_short_readiness_interval_not_recovery_poll(self):
+        # 리부트 복구 폴링은 60초지만, readiness 디바운스는 짧은 간격을 써야 한다.
+        mgr = SetupManager(MagicMock(), reboot_timeout=300, poll_interval=60)
+        captured = {}
+
+        def fake_wait(stages, *, poll_interval, debounce, timeout, **kw):
+            captured.update(poll_interval=poll_interval, timeout=timeout,
+                            debounce=debounce)
+            return True
+
+        mgr.wait_until_ready = fake_wait
+        mgr._stabilize(260)
+        assert captured["poll_interval"] == READINESS_POLL_INTERVAL
+        assert captured["poll_interval"] < mgr.poll_interval  # 복구 폴링보다 짧음
+        assert captured["timeout"] == 260  # 전체 예산은 stabilize_sec 유지
+
+    def test_readiness_interval_is_overridable(self):
+        mgr = SetupManager(MagicMock(), poll_interval=60)
+        mgr.readiness_poll_interval = 3
+        captured = {}
+        mgr.wait_until_ready = lambda stages, *, poll_interval, **kw: (
+            captured.update(pi=poll_interval) or True)
+        mgr._stabilize(100)
+        assert captured["pi"] == 3
 
 
 class TestStage3Recording:
