@@ -343,5 +343,36 @@ class TestExecutePlan(unittest.TestCase):
         self.assertTrue(execs[0].passed)
 
 
+class TestMonitorCap(unittest.TestCase):
+    """plan-level monitor_cap_sec: 긴 모니터를 cap(min)하되 snapshot(0)은 보존."""
+
+    def _effective_duration(self, case_duration, cap):
+        from unittest.mock import MagicMock, patch
+        from plan import _run_single_case
+        ssh = MagicMock()
+        ssh.check_connectivity.return_value = True
+        profile = {"monitor": {"duration_sec": case_duration}, "checks": {}}
+        with patch("verify_retry.run_verify_with_retry") as mock_rvr:
+            mock_rvr.return_value = ([{"name": "x", "passed": True, "reason": "OK"}], 1, 1)
+            _run_single_case(ssh, profile, "c", lambda s, p: MagicMock(),
+                             None, monitor_cap_sec=cap)
+            # run_verify_with_retry(engine, ssh, effective_duration, log=...)
+            return mock_rvr.call_args[0][2]
+
+    def test_cap_shortens_long_monitor(self):
+        self.assertEqual(self._effective_duration(300, 150), 150)
+
+    def test_cap_preserves_snapshot_zero(self):
+        # snapshot case(0)은 cap이 있어도 0 유지 (min 의미).
+        self.assertEqual(self._effective_duration(0, 150), 0)
+
+    def test_cap_none_leaves_duration_unchanged(self):
+        self.assertEqual(self._effective_duration(300, None), 300)
+
+    def test_cap_does_not_increase_short_monitor(self):
+        # 이미 cap보다 짧으면 그대로 (cap은 상한이지 하한 아님).
+        self.assertEqual(self._effective_duration(100, 150), 100)
+
+
 if __name__ == "__main__":
     unittest.main()

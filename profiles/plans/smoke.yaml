@@ -37,6 +37,9 @@ execution:
   retry_wait_sec: 30
   reboot_wait_sec: 300
   wait_between_cases: 0
+  # smoke는 "5~10분 sanity gate" — 카메라 case의 300초 모니터를 150초로 cap.
+  # snapshot(0) case는 그대로 0 유지. 전수 지속검증은 comprehensive(cap 없음)에서.
+  monitor_cap_sec: 150
 
 gate:
   threshold_pass_rate: 1.0   # smoke는 100% 통과 요구

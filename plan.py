@@ -29,6 +29,10 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     "retry_wait_sec": 0,
     "reboot_wait_sec": 300,
     "wait_between_cases": 0,
+    # plan-level 모니터 상한(초). 설정 시 각 case 의 monitor.duration_sec 을 이 값으로
+    # cap(min) 한다 — case 가 명시한 0(snapshot)은 그대로 0 유지(덮어쓰지 않음).
+    # smoke 같은 sanity gate 에서 카메라 case 모니터를 짧게. None 이면 cap 없음(기존 동작).
+    "monitor_cap_sec": None,
 }
 
 DEFAULT_GATE: dict[str, Any] = {
@@ -474,7 +478,8 @@ class CaseExecution:
 
 def _run_single_case(ssh, profile: dict, case_name: str,
                      engine_factory: Callable,
-                     setup_factory: Callable | None) -> tuple[list, bool, str | None]:
+                     setup_factory: Callable | None,
+                     monitor_cap_sec: int | None = None) -> tuple[list, bool, str | None]:
     """단일 case의 setup → engine.run_snapshot → known_issue 처리 한 번 실행.
 
     Returns: (results, passed, error). error는 None or "NO_SSH"/"SETUP_TIMEOUT"/"EXCEPTION:..."
@@ -506,6 +511,9 @@ def _run_single_case(ssh, profile: dict, case_name: str,
         engine = engine_factory(ssh, profile)
         from verify_retry import run_verify_with_retry
         effective_duration = (profile.get("monitor") or {}).get("duration_sec", 0) or 0
+        # plan-level cap(min): case 가 0(snapshot)이면 0 유지, 긴 모니터만 짧게 자른다.
+        if monitor_cap_sec is not None and effective_duration > monitor_cap_sec:
+            effective_duration = monitor_cap_sec
         results, _coll, _total = run_verify_with_retry(
             engine, ssh, effective_duration, log=print,
         )
@@ -621,6 +629,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 last_setup_cfg = runtime.get("setup")
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
+                    monitor_cap_sec=plan.execution.get("monitor_cap_sec"),
                 )
                 retries_used = attempt
                 if passed:
