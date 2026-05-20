@@ -19,6 +19,12 @@ ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
 DEFAULT_POLL_INTERVAL = 60     # 1분
 
+# 안정화 3차(영상파일 생성) readiness 탐지 경로 — 양쪽 모드를 포괄.
+#  - SD 정상: json tmp_path→final_path (보드 설정값). 통상 마운트는 /mnt/sd_cam.
+#  - SD 비정상(RAM fallback): /dev/shm(최초)→/dev/shm/recording(보관) 고정.
+RECORDING_DIRS = ["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"]
+RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
+
 # Setup 단계 SSH retry — 정책은 verify_retry 중앙 모듈에서 가져와
 # verify_retry 환경변수(PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT)
 # 한 곳에서 setup/verify 양쪽 retry 정책을 조정한다.
@@ -44,6 +50,9 @@ class SetupManager:
         # 안정화 2차(코어 프로세스) readiness 에 쓰일 required 프로세스 목록.
         # run_setup(ready_processes=...) 로 profile 의 checks.processes.required 가 주입된다.
         self._ready_processes_list: list[str] = []
+        # 안정화 3차(영상파일 생성) readiness 에 쓰일 녹화 경로 목록.
+        # run_setup(ready_recording_paths=...) 로 주입 (기본 OFF → 미주입 시 단계 skip).
+        self._ready_recording_paths: list[str] = []
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -257,15 +266,34 @@ class SetupManager:
                 return False
         return True
 
+    def _ready_recording(self, paths: list, mmin: int = 2) -> bool:
+        """3차: 최근(mmin분 내) 영상파일이 생성됐는지 — 녹화 파이프라인이 실제로
+        쓰기 시작했는지 확인. .part/.srt(진행 중) 또는 .mp4/.ts(완료)가 하나라도
+        최근 생성됐으면 True. 경로가 없거나 비면 False."""
+        if not paths:
+            return False
+        name_expr = " -o ".join(f"-name '{pat}'" for pat in RECORDING_PATTERNS)
+        dirs = " ".join(paths)
+        cmd = (f"find {dirs} -type f \\( {name_expr} \\) -mmin -{mmin} "
+               f"2>/dev/null | head -1")
+        try:
+            out = self.ssh.run(cmd)
+        except Exception:
+            return False
+        return bool(out and out.strip())
+
     def _stabilize_stages(self) -> list:
         """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장.
 
-        2차(코어 프로세스)는 run_setup 으로 required 프로세스가 주입된 경우에만 추가된다
-        (profile 의 checks.processes.required 단일 출처 — setup 에 하드코딩하지 않음)."""
+        2차(코어 프로세스)·3차(영상파일 생성)는 run_setup 으로 각각 주입된 경우에만
+        추가된다 (profile/인프라 단일 출처 — setup 에 하드코딩하지 않음)."""
         stages = [("ssh", self._ready_ssh)]
         procs = list(self._ready_processes_list)
         if procs:
             stages.append(("processes", lambda: self._ready_processes(procs)))
+        rec_paths = list(self._ready_recording_paths)
+        if rec_paths:
+            stages.append(("recording", lambda: self._ready_recording(rec_paths)))
         return stages
 
     def wait_until_ready(self, stages, *, poll_interval: int = 10,
@@ -380,7 +408,8 @@ class SetupManager:
             preview = (out or "")[:120]
             self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
 
-    def run_setup(self, setup_config: dict, ready_processes=None) -> bool:
+    def run_setup(self, setup_config: dict, ready_processes=None,
+                  ready_recording_paths=None) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
         지원 키:
@@ -399,6 +428,7 @@ class SetupManager:
         """
         # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
         self._ready_processes_list = list(ready_processes or [])
+        self._ready_recording_paths = list(ready_recording_paths or [])
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")

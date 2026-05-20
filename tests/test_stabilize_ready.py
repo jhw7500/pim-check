@@ -116,3 +116,35 @@ class TestStage2Processes:
         # run_setup(ready_processes=...) 주입 후: ssh + processes
         mgr._ready_processes_list = ["gstApp"]
         assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "processes"]
+
+
+class TestStage3Recording:
+    def test_recent_recording_file_is_ready(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "/dev/shm/2026-ch0.mp4.part"  # find 가 파일 반환
+        assert mgr._ready_recording(["/dev/shm", "/mnt/sd_cam"]) is True
+
+    def test_no_recent_file_is_not_ready(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = ""  # find 결과 없음
+        assert mgr._ready_recording(["/dev/shm"]) is False
+
+    def test_find_command_covers_paths_and_patterns(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "x.part"
+        mgr._ready_recording(["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"])
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert "find /dev/shm /dev/shm/recording /mnt/sd_cam" in cmd
+        for pat in ("*.part", "*.srt", "*.mp4", "*.ts"):
+            assert pat in cmd
+        assert "-mmin -2" in cmd
+
+    def test_empty_paths_is_not_ready(self):
+        mgr = _mgr()
+        assert mgr._ready_recording([]) is False
+
+    def test_recording_stage_added_when_paths_injected(self):
+        mgr = _mgr()
+        mgr._ready_processes_list = ["gstApp"]
+        mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
+        assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "processes", "recording"]
