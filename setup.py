@@ -201,8 +201,7 @@ class SetupManager:
                 if self.ssh.check_connectivity():
                     print(f"Target back online (after {elapsed}s)")
                     if stabilize_sec > 0:
-                        print(f"Stabilizing for {stabilize_sec}s...")
-                        time.sleep(stabilize_sec)
+                        self._stabilize(stabilize_sec)
                     return
                 print(f"  waiting... ({elapsed}/{self.reboot_timeout}s)")
                 time.sleep(self.poll_interval)
@@ -229,6 +228,84 @@ class SetupManager:
             f"Target did not come back online within {self.reboot_timeout}s "
             f"(post-recovery)"
         )
+
+    # === 단계별 readiness 기반 안정화 (고정 sleep 대체) ===
+    # 리부트 후 "고정 stabilize_sec 블라인드 대기" 대신, 단계별 조건을 폴링해
+    # 준비되면 즉시 진행한다. best-case 큰 단축, worst-case 기존 안전마진(=timeout) 유지.
+    # 단계 순서(증분 확장): 1차 SSH → 2차 코어 프로세스 → 3차 영상파일 생성 → (4차 보관 이동)
+
+    def _ready_ssh(self) -> bool:
+        """1차: SSH 접속 가능 — 이게 돼야 이후 단계 확인이 가능하다."""
+        try:
+            return self.ssh.check_connectivity()
+        except Exception:
+            return False
+
+    def _stabilize_stages(self) -> list:
+        """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장."""
+        return [
+            ("ssh", self._ready_ssh),
+        ]
+
+    def wait_until_ready(self, stages, *, poll_interval: int = 10,
+                         debounce: int = 2, timeout: int = 260,
+                         _sleep=None, _clock=None) -> bool:
+        """단계별 readiness 게이트.
+
+        stages 를 순서대로 평가하고, 각 단계가 ``debounce`` 회 연속 충족되면 다음
+        단계로 넘어간다. 전체 경과가 ``timeout`` 을 넘으면 False 를 반환한다(미준비).
+        시간 의존을 주입(_sleep/_clock)할 수 있어 단위 테스트가 가능하다.
+
+        Args:
+            stages: (이름, predicate) 튜플 목록. predicate 는 bool 반환.
+            poll_interval: 폴링 간격(초).
+            debounce: 단계 충족으로 인정할 연속 성공 횟수(흔들림 방지).
+            timeout: 전체 readiness 예산(초).
+
+        Returns:
+            모든 단계가 시간 내 충족되면 True, 아니면 False.
+        """
+        sleep = _sleep or time.sleep
+        clock = _clock or time.monotonic
+        start = clock()
+        for name, predicate in stages:
+            hits = 0
+            while True:
+                ok = False
+                try:
+                    ok = bool(predicate())
+                except Exception:
+                    ok = False
+                if ok:
+                    hits += 1
+                    if hits >= debounce:
+                        print(f"  [ready] {name}")
+                        break
+                else:
+                    hits = 0
+                if clock() - start >= timeout:
+                    print(f"  [timeout] {name} 미준비 ({timeout}s 초과)")
+                    return False
+                sleep(poll_interval)
+        return True
+
+    def _stabilize(self, stabilize_sec: int) -> None:
+        """리부트 후 단계별 readiness 폴링으로 안정화 대기 (고정 sleep 대체).
+
+        준비되면 즉시 진행하고, stabilize_sec 내에 미준비면 경고 후 진행한다
+        (이후 monitor 단계가 실제 안정성을 최종 검증하므로 여기서 fail 시키지 않음)."""
+        stages = self._stabilize_stages()
+        names = ", ".join(n for n, _ in stages)
+        print(f"Stabilizing (staged readiness, up to {stabilize_sec}s): {names}")
+        ready = self.wait_until_ready(
+            stages, poll_interval=self.poll_interval, debounce=2,
+            timeout=stabilize_sec,
+        )
+        if ready:
+            print("  readiness confirmed — proceeding")
+        else:
+            print(f"  readiness not confirmed within {stabilize_sec}s — "
+                  f"proceeding (monitor will validate)")
 
     def reboot_and_wait(self, stabilize_sec: int = 30) -> None:
         """타겟을 재부팅하고 온라인 복귀를 기다린다."""

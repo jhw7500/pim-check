@@ -78,13 +78,15 @@ class TestRebootAndWait(unittest.TestCase):
 
     @patch("setup.time.sleep")
     def test_reboot_and_wait(self, mock_sleep):
-        """check_connectivity가 False 두 번 후 True 반환 시 정상 완료 확인"""
-        self.ssh.check_connectivity.side_effect = [False, False, True]
+        """check_connectivity가 False 두 번 후 True 반환 시 정상 완료 확인.
+        복귀 후 단계별 stabilize(1차 SSH readiness)도 connectivity 를 재폴링한다."""
+        states = iter([False, False])
+        self.ssh.check_connectivity.side_effect = lambda: next(states, True)
         self.mgr.reboot_and_wait(stabilize_sec=5)
         # reboot 명령이 호출되었는지 확인
         self.ssh.run.assert_called_once_with("reboot")
-        # check_connectivity가 세 번 호출되었는지 확인
-        self.assertEqual(self.ssh.check_connectivity.call_count, 3)
+        # 복귀 폴링(F,F,T = 3회) + stabilize 단계의 SSH readiness 재폴링 → 3회 이상
+        self.assertGreaterEqual(self.ssh.check_connectivity.call_count, 3)
         # sleep이 호출되었는지 확인 (초기 5초 + 폴링 간격 + stabilize)
         self.assertTrue(mock_sleep.called)
 
