@@ -179,10 +179,14 @@ class TestGenerateCases(unittest.TestCase):
             self.assertTrue(os.path.exists(path))
 
     def test_skips_manual_case(self):
-        # 수동 케이스 추가 (720p+2ch와 동일 edgeconf_changes)
+        # 수동 케이스 추가 (720p+2ch와 동일 edgeconf_changes).
+        # build_case 가 모든 generated case 에 capture.enable=false 기본값을 넣으므로
+        # 수동 케이스도 동일하게 포함해야 dedup(중복 스킵)이 성립한다.
         manual = {
             "name": "manual",
-            "setup": {"edgeconf_changes": {".w": 1280, ".ch2": False}},
+            "setup": {"edgeconf_changes": {
+                ".VHL_CAM.capture.enable": False, ".w": 1280, ".ch2": False,
+            }},
         }
         with open(os.path.join(self.profiles_dir, "cases", "manual_720p.yaml"), "w") as f:
             yaml.dump(manual, f)

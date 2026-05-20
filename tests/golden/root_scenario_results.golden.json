@@ -1,0 +1,18 @@
+[
+  {
+    "name": "p2_quad_720p_ch0_vflip",
+    "result": "PASS",
+    "expected_hex": "0x000x02",
+    "actual": "0x000x02",
+    "retries_used": 0,
+    "elapsed": 64.0
+  },
+  {
+    "name": "p2_quad_720p_ch0_hflip",
+    "result": "FAIL",
+    "expected_hex": "0x000x01",
+    "actual": "(no response)",
+    "retries_used": 3,
+    "elapsed": 270.5
+  }
+]

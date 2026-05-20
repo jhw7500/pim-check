@@ -17,7 +17,16 @@ EDGECONF_BACKUP = f"{BACKUP_DIR}/edgeconf_pim.json.bak"
 ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
-DEFAULT_POLL_INTERVAL = 60     # 1분
+DEFAULT_POLL_INTERVAL = 60     # 1분 (리부트 복구 폴링용 — 부팅은 느려 1분 간격이 적절)
+# 안정화 readiness 폴링은 리부트 복구보다 훨씬 짧게 — 준비되면 거의 즉시 진행.
+# 복구 폴링(60초)을 그대로 쓰면 debounce 때문에 단계당 ~60초가 들어 단축효과가 작다.
+READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
+
+# 안정화 3차(영상파일 생성) readiness 탐지 경로 — 양쪽 모드를 포괄.
+#  - SD 정상: json tmp_path→final_path (보드 설정값). 통상 마운트는 /mnt/sd_cam.
+#  - SD 비정상(RAM fallback): /dev/shm(최초)→/dev/shm/recording(보관) 고정.
+RECORDING_DIRS = ["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"]
+RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 
 # Setup 단계 SSH retry — 정책은 verify_retry 중앙 모듈에서 가져와
 # verify_retry 환경변수(PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT)
@@ -41,6 +50,14 @@ class SetupManager:
         self.ssh = ssh
         self.reboot_timeout = reboot_timeout
         self.poll_interval = poll_interval
+        # 안정화 readiness 전용 폴링 간격 (리부트 복구 poll_interval 과 분리, 더 짧음).
+        self.readiness_poll_interval = READINESS_POLL_INTERVAL
+        # 안정화 2차(코어 프로세스) readiness 에 쓰일 required 프로세스 목록.
+        # run_setup(ready_processes=...) 로 profile 의 checks.processes.required 가 주입된다.
+        self._ready_processes_list: list[str] = []
+        # 안정화 3차(영상파일 생성) readiness 에 쓰일 녹화 경로 목록.
+        # run_setup(ready_recording_paths=...) 로 주입 (기본 OFF → 미주입 시 단계 skip).
+        self._ready_recording_paths: list[str] = []
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -201,8 +218,7 @@ class SetupManager:
                 if self.ssh.check_connectivity():
                     print(f"Target back online (after {elapsed}s)")
                     if stabilize_sec > 0:
-                        print(f"Stabilizing for {stabilize_sec}s...")
-                        time.sleep(stabilize_sec)
+                        self._stabilize(stabilize_sec)
                     return
                 print(f"  waiting... ({elapsed}/{self.reboot_timeout}s)")
                 time.sleep(self.poll_interval)
@@ -212,7 +228,7 @@ class SetupManager:
             if recovery_attempted:
                 break
             recovery_attempted = True
-            print(f"  Timeout — diagnosing network...")
+            print("  Timeout — diagnosing network...")
             diag = self._diagnose_network()
             print(f"  Diagnosis: {diag}")
             if diag == "host_wlan":
@@ -223,12 +239,129 @@ class SetupManager:
                 print("  unknown failure mode — skipping recovery")
             # Reset elapsed and re-poll
             elapsed = 0
-            print(f"  Recovery attempted, re-polling...")
+            print("  Recovery attempted, re-polling...")
 
         raise TimeoutError(
             f"Target did not come back online within {self.reboot_timeout}s "
             f"(post-recovery)"
         )
+
+    # === 단계별 readiness 기반 안정화 (고정 sleep 대체) ===
+    # 리부트 후 "고정 stabilize_sec 블라인드 대기" 대신, 단계별 조건을 폴링해
+    # 준비되면 즉시 진행한다. best-case 큰 단축, worst-case 기존 안전마진(=timeout) 유지.
+    # 단계 순서(증분 확장): 1차 SSH → 2차 코어 프로세스 → 3차 영상파일 생성 → (4차 보관 이동)
+
+    def _ready_ssh(self) -> bool:
+        """1차: SSH 접속 가능 — 이게 돼야 이후 단계 확인이 가능하다."""
+        try:
+            return self.ssh.check_connectivity()
+        except Exception:
+            return False
+
+    def _ready_processes(self, procs: list) -> bool:
+        """2차: 코어 프로세스가 모두 떠 있는지 — pgrep -x(정확) → pgrep -f(폴백).
+
+        하나라도 없으면 False. procs 가 비면 (주입 안 됨) 항상 True (단계 skip 효과)."""
+        for proc in procs:
+            try:
+                hit = self.ssh.run(f"pgrep -x {proc}") or self.ssh.run(f"pgrep -f {proc}")
+            except Exception:
+                hit = None
+            if not hit:
+                return False
+        return True
+
+    def _ready_recording(self, paths: list, mmin: int = 2) -> bool:
+        """3차: 최근(mmin분 내) 영상파일이 생성됐는지 — 녹화 파이프라인이 실제로
+        쓰기 시작했는지 확인. .part/.srt(진행 중) 또는 .mp4/.ts(완료)가 하나라도
+        최근 생성됐으면 True. 경로가 없거나 비면 False."""
+        if not paths:
+            return False
+        name_expr = " -o ".join(f"-name '{pat}'" for pat in RECORDING_PATTERNS)
+        dirs = " ".join(paths)
+        cmd = (f"find {dirs} -type f \\( {name_expr} \\) -mmin -{mmin} "
+               f"2>/dev/null | head -1")
+        try:
+            out = self.ssh.run(cmd)
+        except Exception:
+            return False
+        return bool(out and out.strip())
+
+    def _stabilize_stages(self) -> list:
+        """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장.
+
+        2차(코어 프로세스)·3차(영상파일 생성)는 run_setup 으로 각각 주입된 경우에만
+        추가된다 (profile/인프라 단일 출처 — setup 에 하드코딩하지 않음)."""
+        stages = [("ssh", self._ready_ssh)]
+        procs = list(self._ready_processes_list)
+        if procs:
+            stages.append(("processes", lambda: self._ready_processes(procs)))
+        rec_paths = list(self._ready_recording_paths)
+        if rec_paths:
+            stages.append(("recording", lambda: self._ready_recording(rec_paths)))
+        return stages
+
+    def wait_until_ready(self, stages, *, poll_interval: int = 10,
+                         debounce: int = 2, timeout: int = 260,
+                         _sleep=None, _clock=None) -> bool:
+        """단계별 readiness 게이트.
+
+        stages 를 순서대로 평가하고, 각 단계가 ``debounce`` 회 연속 충족되면 다음
+        단계로 넘어간다. 전체 경과가 ``timeout`` 을 넘으면 False 를 반환한다(미준비).
+        시간 의존을 주입(_sleep/_clock)할 수 있어 단위 테스트가 가능하다.
+
+        Args:
+            stages: (이름, predicate) 튜플 목록. predicate 는 bool 반환.
+            poll_interval: 폴링 간격(초).
+            debounce: 단계 충족으로 인정할 연속 성공 횟수(흔들림 방지).
+            timeout: 전체 readiness 예산(초).
+
+        Returns:
+            모든 단계가 시간 내 충족되면 True, 아니면 False.
+        """
+        sleep = _sleep or time.sleep
+        clock = _clock or time.monotonic
+        start = clock()
+        for name, predicate in stages:
+            hits = 0
+            while True:
+                ok = False
+                try:
+                    ok = bool(predicate())
+                except Exception:
+                    ok = False
+                if ok:
+                    hits += 1
+                    if hits >= debounce:
+                        print(f"  [ready] {name}")
+                        break
+                else:
+                    hits = 0
+                if clock() - start >= timeout:
+                    print(f"  [timeout] {name} 미준비 ({timeout}s 초과)")
+                    return False
+                sleep(poll_interval)
+        return True
+
+    def _stabilize(self, stabilize_sec: int) -> None:
+        """리부트 후 단계별 readiness 폴링으로 안정화 대기 (고정 sleep 대체).
+
+        준비되면 즉시 진행하고, stabilize_sec 내에 미준비면 경고 후 진행한다
+        (이후 monitor 단계가 실제 안정성을 최종 검증하므로 여기서 fail 시키지 않음)."""
+        stages = self._stabilize_stages()
+        names = ", ".join(n for n, _ in stages)
+        print(f"Stabilizing (staged readiness, up to {stabilize_sec}s): {names}")
+        # readiness 전용 짧은 간격 사용 — 리부트 복구 poll_interval(60초)이 아니라
+        # readiness_poll_interval(5초)로 디바운스해 준비되면 거의 즉시 진행한다.
+        ready = self.wait_until_ready(
+            stages, poll_interval=self.readiness_poll_interval, debounce=2,
+            timeout=stabilize_sec,
+        )
+        if ready:
+            print("  readiness confirmed — proceeding")
+        else:
+            print(f"  readiness not confirmed within {stabilize_sec}s — "
+                  f"proceeding (monitor will validate)")
 
     def reboot_and_wait(self, stabilize_sec: int = 30) -> None:
         """타겟을 재부팅하고 온라인 복귀를 기다린다."""
@@ -282,7 +415,8 @@ class SetupManager:
             preview = (out or "")[:120]
             self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
 
-    def run_setup(self, setup_config: dict) -> bool:
+    def run_setup(self, setup_config: dict, ready_processes=None,
+                  ready_recording_paths=None) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
         지원 키:
@@ -291,10 +425,17 @@ class SetupManager:
           - inject_command:   reboot/stabilize 후 fault inject용 셸 명령 (str/list).
                               edgeconf/ord 변경 없이 inject만 있어도 동작.
 
+        Args:
+            ready_processes: 리부트 후 안정화 2차에서 생존을 확인할 코어 프로세스 목록
+                (profile 의 checks.processes.required). None 이면 2차 단계 skip.
+
         Returns:
             True: 변경 또는 inject가 적용됨 (teardown 필요)
             False: skip됨
         """
+        # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
+        self._ready_processes_list = list(ready_processes or [])
+        self._ready_recording_paths = list(ready_recording_paths or [])
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")
@@ -302,7 +443,7 @@ class SetupManager:
         if not edge_changes and not ord_changes:
             # inject-only 모드: edgeconf 변경 없이 fault만 주입
             if inject:
-                self._local0_log(f"setup INJECT-ONLY mode")
+                self._local0_log("setup INJECT-ONLY mode")
                 self._exec_commands(inject, "INJECT")
                 return True  # teardown에서 recovery 필요
             return False

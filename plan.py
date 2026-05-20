@@ -29,6 +29,10 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     "retry_wait_sec": 0,
     "reboot_wait_sec": 300,
     "wait_between_cases": 0,
+    # plan-level 모니터 상한(초). 설정 시 각 case 의 monitor.duration_sec 을 이 값으로
+    # cap(min) 한다 — case 가 명시한 0(snapshot)은 그대로 0 유지(덮어쓰지 않음).
+    # smoke 같은 sanity gate 에서 카메라 case 모니터를 짧게. None 이면 cap 없음(기존 동작).
+    "monitor_cap_sec": None,
 }
 
 DEFAULT_GATE: dict[str, Any] = {
@@ -474,7 +478,8 @@ class CaseExecution:
 
 def _run_single_case(ssh, profile: dict, case_name: str,
                      engine_factory: Callable,
-                     setup_factory: Callable | None) -> tuple[list, bool, str | None]:
+                     setup_factory: Callable | None,
+                     monitor_cap_sec: int | None = None) -> tuple[list, bool, str | None]:
     """단일 case의 setup → engine.run_snapshot → known_issue 처리 한 번 실행.
 
     Returns: (results, passed, error). error는 None or "NO_SSH"/"SETUP_TIMEOUT"/"EXCEPTION:..."
@@ -485,9 +490,16 @@ def _run_single_case(ssh, profile: dict, case_name: str,
     # Setup (edgeconf 변경 + reboot, 있으면)
     setup_cfg = profile.get("setup")
     if setup_cfg and setup_factory is not None:
+        # 리부트 후 안정화 readiness 주입:
+        #  - 2차(코어 프로세스): profile 의 checks.processes.required (단일 출처)
+        #  - 3차(영상파일 생성): 고정 인프라 경로 RECORDING_DIRS (RAM fallback + SD)
+        required_procs = (((profile.get("checks") or {}).get("processes") or {})
+                          .get("required") or [])
+        from setup import RECORDING_DIRS
         try:
             setup_mgr = setup_factory(ssh)
-            setup_mgr.run_setup(setup_cfg)
+            setup_mgr.run_setup(setup_cfg, ready_processes=required_procs,
+                                ready_recording_paths=RECORDING_DIRS)
         except TimeoutError as exc:
             return [], False, f"SETUP_TIMEOUT: {exc}"
         except Exception as exc:
@@ -499,6 +511,9 @@ def _run_single_case(ssh, profile: dict, case_name: str,
         engine = engine_factory(ssh, profile)
         from verify_retry import run_verify_with_retry
         effective_duration = (profile.get("monitor") or {}).get("duration_sec", 0) or 0
+        # plan-level cap(min): case 가 0(snapshot)이면 0 유지, 긴 모니터만 짧게 자른다.
+        if monitor_cap_sec is not None and effective_duration > monitor_cap_sec:
+            effective_duration = monitor_cap_sec
         results, _coll, _total = run_verify_with_retry(
             engine, ssh, effective_duration, log=print,
         )
@@ -525,7 +540,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                  setup_factory: Callable | None = None,
                  engine_factory: Callable | None = None,
                  cli_args: dict | None = None,
-                 progress: Callable | None = None) -> list[CaseExecution]:
+                 progress: Callable | None = None,
+                 on_case_start: Callable | None = None) -> list[CaseExecution]:
     """Plan 실행 — resolve_cases 순서대로 case 단위 실행.
 
     각 case별:
@@ -545,6 +561,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
         engine_factory: callable (ssh, profile) → Engine-like. None이면 기본 Engine 사용.
         cli_args: dict 형태 CLI 오버라이드 (예: {"target": {"host": "..."}})
         progress: callable (idx, total, case_name, exec_result) — case 끝날 때 호출 (선택)
+        on_case_start: callable (idx, total, case_name, section) — case 시작 시 호출 (선택)
 
     Returns:
         list[CaseExecution] — case별 실행 결과. plan에 정의된 순서.
@@ -570,6 +587,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
             t0 = time.monotonic()
+
+            # case 시작 훅 (선택) — 이벤트 스트림의 case_start emit 지점.
+            if on_case_start is not None:
+                on_case_start(idx, total, case_name, section)
 
             # case profile 로드
             try:
@@ -608,6 +629,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 last_setup_cfg = runtime.get("setup")
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
+                    monitor_cap_sec=plan.execution.get("monitor_cap_sec"),
                 )
                 retries_used = attempt
                 if passed:

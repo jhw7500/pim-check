@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=64"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "pim-check"
@@ -14,12 +14,22 @@ dependencies = [
 
 [project.optional-dependencies]
 windows = ["paramiko>=2.0"]
-all = ["paramiko>=2.0"]
+all = ["paramiko>=2.0", "rich>=13"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
+# pim_viewer TUI 용. 없으면 viewer 는 plain-text 폴백으로 동작한다.
+viewer = ["rich>=13"]
 
 [project.scripts]
 pim-check = "pim_check:main"
 pim-check-web = "web:main"
+pim-viewer = "pim_viewer:main"
+
+[tool.uv]
+# 이 저장소는 flat-layout(루트에 다수의 최상위 .py 모듈)이라 setuptools 자동
+# 패키지 탐색이 실패한다. 테스트/실행 시 빌드·설치가 필요 없으므로 uv 가 프로젝트를
+# 빌드하지 않도록 한다(의존성만 가상환경에 동기화). 이로써 `uv run pytest` 가
+# 빌드 백엔드 호출 없이 동작한다.
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -37,6 +47,9 @@ omit = [
     "runner_loop.py",
     "web.py",
     "pim_check.py",
+    # CLI/UI 진입점 — 렌더링·서버 루프라 unit test 커버 대상 아님 (pim_check.py/web.py 와 동급)
+    "pim_viewer.py",
+    "pim_web_viewer.py",
     "color.py",
     "stream.py",
     # 아래는 SSH + 실물 타겟 의존 스크립트/에이전트 — unit test 커버 불가
@@ -48,7 +61,10 @@ omit = [
     "run_bps_quick.py",
     "infer_agent.py",
     "qa_agent.py",
+    "setup.py",
+    "verify_retry.py",
     "tools/*",
+    "scripts/*",
 ]
 
 [tool.coverage.report]
