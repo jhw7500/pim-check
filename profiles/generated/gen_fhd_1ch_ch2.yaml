@@ -3,6 +3,7 @@ name: '[auto] fhd_1ch_ch2'
 description: 'Auto-generated: fhd 1ch_ch2'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.cam_width: 1920
     .VHL_CAM.cam_height: 1080
     .VHL_CAM.i2c2.ch0.enable: false

@@ -3,13 +3,13 @@ name: '[auto] fhd_cap_on'
 description: 'Auto-generated: fhd cap_on'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: true
     .VHL_CAM.cam_width: 1920
     .VHL_CAM.cam_height: 1080
     .VHL_CAM.i2c2.ch1.enable: false
     .VHL_CAM.i2c1.ch2.enable: false
     .VHL_CAM.i2c1.ch3.enable: false
     .VHL_CAM.i2c2.ch0.enable: true
-    .VHL_CAM.capture.enable: true
   reboot_after: true
   stabilize_sec: 30
 checks:

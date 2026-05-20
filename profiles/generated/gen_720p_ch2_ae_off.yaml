@@ -3,6 +3,7 @@ name: '[auto] 720p_ae_off'
 description: 'Auto-generated: 720p ae_off'
 setup:
   edgeconf_changes:
+    .VHL_CAM.capture.enable: false
     .VHL_CAM.cam_width: 1280
     .VHL_CAM.cam_height: 720
     .VHL_CAM.i2c2.ch0.enable: false
