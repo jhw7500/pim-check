@@ -111,6 +111,64 @@ def test_run_plan_emits_full_event_stream(tmp_path, monkeypatch):
     assert run_end["completed_cases"] == 2
 
 
+def test_run_plan_engine_factory_emits_realtime_check_fail(tmp_path, monkeypatch):
+    """_engine_factory 가 만든 Engine 이 validate Fail 순간 fail 이벤트를
+    current.jsonl 에 실시간으로 (case_end 전에) 기록하는지 end-to-end 확인."""
+    from unittest.mock import MagicMock
+    from checks.base_check import BaseCheck
+
+    class _FailCheck(BaseCheck):
+        name = "process"
+
+        def collect(self, ssh, config):
+            return {}
+
+        def validate(self, data, config):
+            return (False, "gstApp 죽음")
+
+    events_dir = str(tmp_path / "events")
+    monkeypatch.setattr(run_stream, "default_events_dir", lambda: events_dir)
+
+    fake_plan = types.SimpleNamespace(
+        name="comprehensive", description="d",
+        execution={"stop_on_fail": False, "case_retry": 0}, gate={})
+    monkeypatch.setattr(plan_mod, "load_plan", lambda path: fake_plan)
+    monkeypatch.setattr(plan_mod, "load_baseline", lambda ref, root: (None, None))
+    monkeypatch.setattr(plan_mod, "evaluate_gate", lambda *a, **k: _Gate())
+    monkeypatch.setattr(plan_mod, "render_reports", lambda *a, **k: [])
+    monkeypatch.setattr(plan_mod, "resolve_cases",
+                        lambda plan, profiles_dir: [("regression", "c1")])
+
+    def fake_execute_plan(plan, profiles_dir, *, ssh_factory, setup_factory,
+                          engine_factory, cli_args, progress, on_case_start):
+        on_case_start(1, 1, "c1", "regression")
+        # 실제 _engine_factory 로 Engine 생성 → emitter/emit_context 주입됨.
+        eng = engine_factory(MagicMock(), {"checks": {}})
+        eng.checks = [_FailCheck()]
+        eng.run_snapshot()  # validate Fail → 실시간 fail 이벤트 emit
+        ex = _Exec("regression", "c1", False,
+                   [{"name": "process", "passed": False, "reason": "gstApp 죽음"}])
+        progress(1, 1, "c1", ex)
+        return [ex]
+
+    monkeypatch.setattr(plan_mod, "execute_plan", fake_execute_plan)
+
+    args = argparse.Namespace(plan="comprehensive", host="192.168.0.5",
+                              user=None, password=None, duration=None, quiet=True)
+    pim_check._run_plan(args)
+
+    recs = _read(os.path.join(events_dir, "current.jsonl"))
+    fails = [r for r in recs if r["event_type"] == "fail"]
+    assert len(fails) == 1
+    assert fails[0]["check"] == "process"
+    assert fails[0]["reason"] == "gstApp 죽음"
+    assert fails[0]["case_name"] == "c1"
+    assert fails[0]["run_id"]
+    # 실시간 fail 이 case_end 보다 먼저 스트림에 들어간다.
+    kinds = [r["event_type"] for r in recs]
+    assert kinds.index("fail") < kinds.index("case_end")
+
+
 def test_run_plan_runs_even_if_event_layer_fails(tmp_path, monkeypatch):
     # EventSession 생성이 실패해도 plan 실행/리턴은 정상이어야 한다 (best-effort).
     def boom(*a, **k):

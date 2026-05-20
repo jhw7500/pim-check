@@ -13,10 +13,16 @@ DEFAULT_SHUTDOWN_POLL = 60      # 1분
 class Engine:
     """QA 체크 엔진 — 스냅샷 수집 및 모니터 루프."""
 
-    def __init__(self, ssh: SshClient, profile: dict) -> None:
+    def __init__(self, ssh: SshClient, profile: dict,
+                 emitter=None, emit_context: dict | None = None) -> None:
         self.ssh = ssh
         self.profile = profile
         self.checks = list(ALL_CHECKS)
+        # 실시간 이벤트 emit (선택). emitter 가 있으면 validate Fail 순간 단일 fail
+        # 이벤트를 emit_context(run_id/plan/board/case_name 등)와 함께 내보낸다.
+        # None 이면 기존 validate 경로 그대로 (back-compat).
+        self.emitter = emitter
+        self.emit_context = emit_context or {}
 
     def run_snapshot(self, retries: int = 1) -> list:
         """모든 체크를 한 번 실행하고 결과 목록을 반환한다.
@@ -38,7 +44,13 @@ class Engine:
             for attempt in range(1 + check_retries):
                 try:
                     data = check.collect(self.ssh, config)
-                    passed, reason = check.validate(data, config)
+                    if self.emitter is not None and hasattr(check, "validate_and_emit"):
+                        # validate Fail 순간 단일 fail 이벤트를 실시간 emit.
+                        passed, reason = check.validate_and_emit(
+                            data, config, emitter=self.emitter, **self.emit_context,
+                        )
+                    else:
+                        passed, reason = check.validate(data, config)
                     break
                 except (SshTimeoutError, SshConnectionError) as exc:
                     if attempt < check_retries:

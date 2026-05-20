@@ -81,7 +81,14 @@ class ViewerState:
             seq = event.get("heartbeat_seq")
             if isinstance(seq, int):
                 self.last_heartbeat_seq = max(self.last_heartbeat_seq, seq)
-        # 알 수 없는 event_type / check-level "fail" 은 case 상태에 영향 없음 → 무시.
+        elif et == "fail":
+            # 체크 단위 실시간 fail — case_end 전에 fault 를 즉시 표면화한다.
+            # 카운트/상태는 case_end 가 권위이므로 여기선 reason 만 기록(첫 발생 우선).
+            name = event.get("case_name")
+            if name is not None and name not in self._fail_summaries:
+                reason = event.get("reason")
+                self._fail_summaries[name] = reason if reason is not None else ""
+        # 그 외 알 수 없는 event_type 은 무시.
 
     @classmethod
     def from_lines(cls, lines: Iterable[str]) -> "ViewerState":

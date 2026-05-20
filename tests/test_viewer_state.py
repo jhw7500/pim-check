@@ -113,3 +113,27 @@ class TestRobustness:
         st = ViewerState()
         st.apply({"event_type": "future_thing", "elapsed_s": 1.0})
         assert st.completed_cases == 0
+
+
+class TestRealtimeCheckFail:
+    def test_check_fail_surfaces_fault_before_case_end(self):
+        st = ViewerState()
+        st.apply({"event_type": "run_start", "elapsed_s": 0.0,
+                  "cases": ["c1"], "total_cases": 1})
+        st.apply({"event_type": "case_start", "elapsed_s": 0.1,
+                  "case_name": "c1", "phase": "collect"})
+        # 체크 단위 fail — case_end 가 아직 안 왔는데도 fault 가 즉시 보인다.
+        st.apply({"event_type": "fail", "elapsed_s": 0.5,
+                  "check": "process", "reason": "gstApp 죽음", "case_name": "c1"})
+        assert st.fail_summaries == {"c1": "gstApp 죽음"}
+        # 카운트는 case_end 전이므로 아직 0 (fail 이벤트가 카운트를 건드리지 않음).
+        assert st.completed_cases == 0
+        assert st.fail_count == 0
+        # case 는 여전히 running.
+        assert st.case_status["c1"] == "running"
+
+    def test_fail_without_case_name_is_ignored_for_summary(self):
+        st = ViewerState()
+        st.apply({"event_type": "fail", "elapsed_s": 0.5,
+                  "check": "process", "reason": "x"})
+        assert st.fail_summaries == {}

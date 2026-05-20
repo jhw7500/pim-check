@@ -257,6 +257,7 @@ def _run_plan(args) -> int:
         _all_cases = []
 
     _stats = {"completed": 0, "pass": 0, "fail": 0, "dur": 0.0}
+    _cur = {"case": None}  # 현재 실행 중 case — 실시간 fail 이벤트 컨텍스트용.
 
     def _first_fail_reason(results):
         for r in results or []:
@@ -272,8 +273,20 @@ def _run_plan(args) -> int:
         sess = None
 
     def on_case_start(idx, total, case_name, section):
+        _cur["case"] = case_name
         if sess is not None:
             _safe(sess.emit_case_start, case_name, "collect")
+
+    def _engine_factory(ssh, profile):
+        eng = Engine(ssh, profile)
+        # 실시간 체크 단위 fail 이벤트: validate Fail 순간 즉시 JSONL flush.
+        if sess is not None:
+            eng.emitter = lambda line: _safe(sess.emit, line)
+            eng.emit_context = {
+                "run_id": run_id, "plan": args.plan, "board": board,
+                "case_name": _cur["case"],
+            }
+        return eng
 
     def on_progress(idx, total, case_name, execution):
         # 이벤트 emit 은 quiet 와 무관하게 항상 (관측 레이어).
@@ -310,7 +323,7 @@ def _run_plan(args) -> int:
             plan, PROFILES_DIR,
             ssh_factory=lambda h, u, p: SshClient(h, u, p),
             setup_factory=lambda ssh: SetupManager(ssh),
-            engine_factory=lambda ssh, profile: Engine(ssh, profile),
+            engine_factory=_engine_factory,
             cli_args=cli_args or None,
             progress=on_progress,
             on_case_start=on_case_start,
