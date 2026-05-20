@@ -41,6 +41,9 @@ class SetupManager:
         self.ssh = ssh
         self.reboot_timeout = reboot_timeout
         self.poll_interval = poll_interval
+        # 안정화 2차(코어 프로세스) readiness 에 쓰일 required 프로세스 목록.
+        # run_setup(ready_processes=...) 로 profile 의 checks.processes.required 가 주입된다.
+        self._ready_processes_list: list[str] = []
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -241,11 +244,29 @@ class SetupManager:
         except Exception:
             return False
 
+    def _ready_processes(self, procs: list) -> bool:
+        """2차: 코어 프로세스가 모두 떠 있는지 — pgrep -x(정확) → pgrep -f(폴백).
+
+        하나라도 없으면 False. procs 가 비면 (주입 안 됨) 항상 True (단계 skip 효과)."""
+        for proc in procs:
+            try:
+                hit = self.ssh.run(f"pgrep -x {proc}") or self.ssh.run(f"pgrep -f {proc}")
+            except Exception:
+                hit = None
+            if not hit:
+                return False
+        return True
+
     def _stabilize_stages(self) -> list:
-        """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장."""
-        return [
-            ("ssh", self._ready_ssh),
-        ]
+        """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장.
+
+        2차(코어 프로세스)는 run_setup 으로 required 프로세스가 주입된 경우에만 추가된다
+        (profile 의 checks.processes.required 단일 출처 — setup 에 하드코딩하지 않음)."""
+        stages = [("ssh", self._ready_ssh)]
+        procs = list(self._ready_processes_list)
+        if procs:
+            stages.append(("processes", lambda: self._ready_processes(procs)))
+        return stages
 
     def wait_until_ready(self, stages, *, poll_interval: int = 10,
                          debounce: int = 2, timeout: int = 260,
@@ -359,7 +380,7 @@ class SetupManager:
             preview = (out or "")[:120]
             self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
 
-    def run_setup(self, setup_config: dict) -> bool:
+    def run_setup(self, setup_config: dict, ready_processes=None) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
         지원 키:
@@ -368,10 +389,16 @@ class SetupManager:
           - inject_command:   reboot/stabilize 후 fault inject용 셸 명령 (str/list).
                               edgeconf/ord 변경 없이 inject만 있어도 동작.
 
+        Args:
+            ready_processes: 리부트 후 안정화 2차에서 생존을 확인할 코어 프로세스 목록
+                (profile 의 checks.processes.required). None 이면 2차 단계 skip.
+
         Returns:
             True: 변경 또는 inject가 적용됨 (teardown 필요)
             False: skip됨
         """
+        # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
+        self._ready_processes_list = list(ready_processes or [])
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")

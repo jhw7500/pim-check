@@ -85,3 +85,34 @@ class TestStage1Ssh:
         mgr = _mgr()
         mgr.ssh.check_connectivity.return_value = False
         assert mgr._ready_ssh() is False
+
+
+class TestStage2Processes:
+    def test_all_processes_up_is_ready(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "1234"  # pgrep 가 PID 반환
+        assert mgr._ready_processes(["gstApp", "BG_Check_for_pim"]) is True
+
+    def test_missing_process_is_not_ready(self):
+        mgr = _mgr()
+        # gstApp 만 떠 있고 나머지는 없음 (pgrep -x, -f 모두 빈 결과)
+        def run(cmd, *a, **k):
+            return "1234" if "gstApp" in cmd else None
+        mgr.ssh.run.side_effect = run
+        assert mgr._ready_processes(["gstApp", "chk_cam_operate"]) is False
+
+    def test_pgrep_f_fallback_when_x_misses(self):
+        mgr = _mgr()
+        # pgrep -x 는 빈 결과, pgrep -f 가 매칭 (셸 스크립트형 프로세스)
+        def run(cmd, *a, **k):
+            return "999" if cmd.startswith("pgrep -f") else None
+        mgr.ssh.run.side_effect = run
+        assert mgr._ready_processes(["chk_cam_operate"]) is True
+
+    def test_stage_added_only_when_processes_injected(self):
+        mgr = _mgr()
+        # 주입 전: ssh 단계만
+        assert [n for n, _ in mgr._stabilize_stages()] == ["ssh"]
+        # run_setup(ready_processes=...) 주입 후: ssh + processes
+        mgr._ready_processes_list = ["gstApp"]
+        assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "processes"]
