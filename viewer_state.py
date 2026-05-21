@@ -115,6 +115,9 @@ class ViewerState:
                     "ts": event.get("ts"),
                     "elapsed_s": event.get("elapsed_s"),
                 })
+                # 실제 fault 가 떴으면 더 이상 '준비 중' 아님 — pending 해제
+                # (안 그러면 드릴다운이 ⚠ FAULT 와 ⏳ 준비 중 을 동시 표시).
+                self._case_pending.pop(name, None)
         elif et == "pending":
             # 안정화 미달(준비 중) — fault 아님. 카운트/분류에 영향 주지 않고
             # 현재 케이스가 '준비 중'임을 표시하는 용도로만 마지막 reason 을 보존한다.
