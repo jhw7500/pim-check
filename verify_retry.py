@@ -27,6 +27,11 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
     "SETUP_EXCEPTION",
     "SshConnection",
     "SshTimeout",
+    # 부팅/케이스 전환 직후 코어 프로세스가 아직 안 떴을 수 있다 — '준비 중'으로
+    # 보고 재시도한다. 영속적으로 죽어 있으면 재시도 소진 후 최종 fail 로 남는다.
+    # (process 체크 실패 형식: "<proc> is not running" — 앞 공백으로 'is_not_running'
+    #  같은 프로세스명과의 오매칭 방지)
+    " is not running",
 )
 
 

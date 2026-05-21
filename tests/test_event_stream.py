@@ -36,6 +36,10 @@ class TestStabilizationReason(unittest.TestCase):
         self.assertTrue(is_stabilization_reason("FAIL:NEED_2_FINALIZES_AFTER_BOOT"))
         self.assertTrue(is_stabilization_reason("recovering..."))
         self.assertTrue(is_stabilization_reason("i2c failed (got: )"))
+        # 부팅/케이스 전환 직후 코어 프로세스 미기동도 '준비 중'(retry 대상).
+        self.assertTrue(is_stabilization_reason("BG_Check_for_pim is not running"))
+        # 앞 공백 매칭 — 'is_not_running' 같은 프로세스명 자체는 오매칭하지 않는다.
+        self.assertFalse(is_stabilization_reason("is_not_running_service CPU 99% out of range"))
         self.assertFalse(is_stabilization_reason("FAIL:30.1_ex=15"))
         self.assertFalse(is_stabilization_reason("gstApp 죽음"))
         self.assertFalse(is_stabilization_reason(""))
@@ -183,7 +187,8 @@ class TestValidateAndEmit(unittest.TestCase):
 
     def test_emitter_receives_fail_event_payload(self):
         emitter = MagicMock()
-        check = _StubCheck((False, "gstApp is not running"))
+        # 실제 fault(안정화 미달 아님) → fail 이벤트.
+        check = _StubCheck((False, "gstApp CPU 412% out of range [0, 400]"))
 
         check.validate_and_emit(
             {}, {}, emitter=emitter, run_id="run-123", case_name="fault_gstapp_crash"
@@ -195,7 +200,7 @@ class TestValidateAndEmit(unittest.TestCase):
         record = json.loads(line)
         self.assertEqual(record["event_type"], "fail")
         self.assertEqual(record["check"], "stub")
-        self.assertEqual(record["reason"], "gstApp is not running")
+        self.assertEqual(record["reason"], "gstApp CPU 412% out of range [0, 400]")
         # context 필드가 Fail 이벤트에 전달되어야 한다.
         self.assertEqual(record["run_id"], "run-123")
         self.assertEqual(record["case_name"], "fault_gstapp_crash")
@@ -232,7 +237,7 @@ class TestValidateFailProducesOneJsonlLine(unittest.TestCase):
         return functools.partial(write_event, handle)
 
     def test_fail_validate_writes_exactly_one_fail_line(self):
-        check = _StubCheck((False, "gstApp is not running"))
+        check = _StubCheck((False, "gstApp CPU 412% out of range [0, 400]"))
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "events.jsonl")
             with open(path, "a", encoding="utf-8") as handle:
@@ -246,7 +251,7 @@ class TestValidateFailProducesOneJsonlLine(unittest.TestCase):
                 )
             # (passed, reason) 계약은 변하지 않는다.
             self.assertFalse(passed)
-            self.assertEqual(reason, "gstApp is not running")
+            self.assertEqual(reason, "gstApp CPU 412% out of range [0, 400]")
             # JSONL 출력에 정확히 한 줄의 fail 이벤트가 있어야 한다.
             with open(path, "r", encoding="utf-8") as reader:
                 lines = reader.read().splitlines()
@@ -254,7 +259,7 @@ class TestValidateFailProducesOneJsonlLine(unittest.TestCase):
             record = json.loads(lines[0])
             self.assertEqual(record["event_type"], "fail")
             self.assertEqual(record["check"], "stub")
-            self.assertEqual(record["reason"], "gstApp is not running")
+            self.assertEqual(record["reason"], "gstApp CPU 412% out of range [0, 400]")
             self.assertEqual(record["case_name"], "fault_gstapp_crash")
 
     def test_pass_validate_writes_no_line(self):
