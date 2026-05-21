@@ -80,10 +80,12 @@ class EventSession:
             cases=cases, total_cases=total_cases,
         ))
 
-    def emit_case_start(self, case_name: str, phase: str) -> None:
+    def emit_case_start(self, case_name: str, phase: str,
+                        case_desc=None, checklist=None) -> None:
         self.emit(es.serialize_case_start(
             **self._common(), elapsed_s=self.elapsed_s(),
             case_name=case_name, phase=phase,
+            case_desc=case_desc, checklist=checklist,
         ))
 
     def emit_case_end(self, case_name: str, phase: str, result: str, *,

@@ -30,6 +30,29 @@ class TestSerializePendingEvent(unittest.TestCase):
         self.assertNotIn("board", rec)
 
 
+class TestSerializeCaseStartPlan(unittest.TestCase):
+    def test_case_start_carries_desc_and_checklist(self):
+        from event_stream import serialize_case_start
+        line = serialize_case_start(
+            run_id="r", plan="smoke", board="b", elapsed_s=0.1,
+            case_name="720p_2ch", phase="collect",
+            case_desc="카메라 검증",
+            checklist=[{"name": "fps", "command": "ffprobe", "expected": "OK"}],
+        )
+        rec = json.loads(line)
+        self.assertEqual(rec["event_type"], "case_start")
+        self.assertEqual(rec["case_desc"], "카메라 검증")
+        self.assertEqual(rec["checklist"][0]["name"], "fps")
+
+    def test_case_start_omits_plan_when_absent(self):
+        from event_stream import serialize_case_start
+        rec = json.loads(serialize_case_start(
+            run_id="r", plan="p", board="b", elapsed_s=0.0,
+            case_name="c1", phase="collect"))
+        self.assertNotIn("case_desc", rec)
+        self.assertNotIn("checklist", rec)
+
+
 class TestStabilizationReason(unittest.TestCase):
     def test_classifies_not_ready_vs_real_fault(self):
         from verify_retry import is_stabilization_reason

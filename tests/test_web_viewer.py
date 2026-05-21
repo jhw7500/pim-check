@@ -100,6 +100,27 @@ def test_pending_exposed_and_not_a_fault(tmp_path):
     assert s["fail"] == 0
 
 
+def test_case_checklist_exposed_in_detail(tmp_path):
+    # case_start 의 설명 + 체크리스트가 case_detail 에 노출되고 결과로 상태 유도.
+    p = str(tmp_path / "e.jsonl")
+    _write(p, [
+        {"event_type": "run_start", "plan": "smoke", "board": "b", "elapsed_s": 0,
+         "cases": ["c1"], "total_cases": 1},
+        {"event_type": "case_start", "case_name": "c1", "phase": "collect", "elapsed_s": 0.1,
+         "case_desc": "설명", "checklist": [
+             {"name": "fps", "command": "cmd1", "expected": "OK"},
+             {"name": "bps", "command": "cmd2", "expected": "OK"}]},
+        {"event_type": "case_end", "case_name": "c1", "phase": "validate", "result": "fail",
+         "completed_cases": 1, "pass_count": 0, "fail_count": 1, "avg_case_duration_s": 5.0,
+         "reason": "fps: mismatch (got: 30)", "elapsed_s": 5},
+    ])
+    cd = build_state(p)["case_detail"]["c1"]
+    assert cd["desc"] == "설명"
+    assert cd["checks_total"] == 2 and cd["checks_passed"] == 1
+    assert {i["name"]: i["status"] for i in cd["checklist"]} == {"fps": "fail", "bps": "pass"}
+    assert cd["checklist"][0]["command"] == "cmd1"
+
+
 def test_elapsed_s_exposed_for_live_clock(tmp_path):
     # 웹 라이브 경과 시계용: build_state 가 run elapsed_s 를 노출한다.
     p = str(tmp_path / "e.jsonl")

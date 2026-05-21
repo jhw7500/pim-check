@@ -273,8 +273,28 @@ def _run_plan(args) -> int:
 
     def on_case_start(idx, total, case_name, section):
         _cur["case"] = case_name
-        if sess is not None:
-            _safe(sess.emit_case_start, case_name, "collect")
+        if sess is None:
+            return
+        # 케이스 설명 + 검증 항목(custom_commands: 이름/command/expected)을 case_start
+        # 에 실어 뷰어가 "무엇을·어떻게 검증하는지"를 보여줄 수 있게 한다 (best-effort).
+        desc, checklist = None, None
+        try:
+            prof = load_profile(PROFILES_DIR, case=case_name)
+            desc = prof.get("description") or prof.get("name")
+            items = []
+            for c in ((prof.get("checks") or {}).get("custom_commands") or []):
+                exp = c.get("expected")
+                if exp is None and c.get("expected_min") is not None:
+                    exp = f">= {c.get('expected_min')}"
+                items.append({
+                    "name": c.get("name", "unnamed"),
+                    "command": c.get("command", ""),
+                    "expected": exp,
+                })
+            checklist = items or None
+        except Exception:
+            desc, checklist = None, None
+        _safe(sess.emit_case_start, case_name, "collect", desc, checklist)
 
     def _engine_factory(ssh, profile):
         eng = Engine(ssh, profile)

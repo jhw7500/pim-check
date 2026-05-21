@@ -238,6 +238,68 @@ class TestCaseDetails:
         assert det["c4"]["status"] == "pending"
 
 
+class TestChecklist:
+    """case_start 의 설명 + 검증 항목(checklist) 캡처 및 항목별 상태 유도."""
+
+    CHECKLIST = [
+        {"name": "fps check", "command": "ffprobe ...", "expected": "OK"},
+        {"name": "bps check", "command": "ffprobe ...", "expected": "OK"},
+    ]
+
+    def _events(self, end=None):
+        evs = [
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1, "case_name": "c1",
+                   "phase": "collect", "case_desc": "카메라 검증",
+                   "checklist": self.CHECKLIST}),
+        ]
+        if end is not None:
+            evs.append(_line(end))
+        return ViewerState.from_lines(evs)
+
+    def test_running_captures_desc_and_checklist_pending(self):
+        st = self._events()
+        det = st.case_details["c1"]
+        assert det["desc"] == "카메라 검증"
+        assert det["checks_total"] == 2
+        assert det["checks_passed"] == 0
+        assert [i["status"] for i in det["checklist"]] == ["running", "running"]
+        assert det["checklist"][0]["command"] == "ffprobe ..."
+        assert det["checklist"][0]["expected"] == "OK"
+
+    def test_pass_marks_all_items_pass(self):
+        st = self._events({"event_type": "case_end", "elapsed_s": 5.0,
+                           "case_name": "c1", "phase": "validate", "result": "pass",
+                           "completed_cases": 1, "pass_count": 1, "fail_count": 0,
+                           "avg_case_duration_s": 5.0})
+        det = st.case_details["c1"]
+        assert det["checks_passed"] == 2
+        assert all(i["status"] == "pass" for i in det["checklist"])
+
+    def test_fail_marks_only_matched_item(self):
+        st = self._events({"event_type": "case_end", "elapsed_s": 5.0,
+                           "case_name": "c1", "phase": "validate", "result": "fail",
+                           "completed_cases": 1, "pass_count": 0, "fail_count": 1,
+                           "avg_case_duration_s": 5.0,
+                           "reason": "fps check: mismatch (got: 30)"})
+        det = st.case_details["c1"]
+        by = {i["name"]: i["status"] for i in det["checklist"]}
+        assert by == {"fps check": "fail", "bps check": "pass"}
+        assert det["checks_passed"] == 1
+
+    def test_no_checklist_when_absent(self):
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+        ])
+        det = st.case_details["c1"]
+        assert det["checklist"] == [] and det["checks_total"] == 0
+        assert det["desc"] is None
+
+
 class TestPendingEvents:
     """pending(준비 중) 이벤트는 fault 가 아님 — 분류/카운트에 영향 없음."""
 

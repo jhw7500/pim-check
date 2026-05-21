@@ -97,11 +97,20 @@ def serialize_run_start(*, run_id, plan, board, elapsed_s, cases,
 
 
 def serialize_case_start(*, run_id, plan, board, elapsed_s, case_name,
-                         phase, ts=None) -> str:
-    """case 시작 이벤트. 현재 실행 case 식별 + 단계(collect/validate)."""
+                         phase, case_desc=None, checklist=None, ts=None) -> str:
+    """case 시작 이벤트. 현재 실행 case 식별 + 단계(collect/validate).
+
+    case_desc/checklist 가 주어지면 뷰어가 "이 케이스가 무엇을·어떻게 검증하는지"
+    를 보여줄 수 있도록 함께 싣는다(드릴다운 체크리스트 + 검증 방법). 둘 다 선택.
+    checklist 항목: {"name": ..., "command": ..., "expected": ...}.
+    """
     rec = _base_event("case_start", run_id, plan, board, elapsed_s, ts)
     rec["case_name"] = case_name
     rec["phase"] = phase
+    if case_desc is not None:
+        rec["case_desc"] = case_desc
+    if checklist is not None:
+        rec["checklist"] = checklist
     return json.dumps(rec, ensure_ascii=False)
 
 

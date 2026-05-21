@@ -109,6 +109,19 @@ INDEX_HTML = """<!doctype html>
   .detail .fl .t { color:#7aa2f7; } .detail .fl .ck { color:#cbd5e1; }
   .detail .fl.r .rs { color:#86efac; } .detail .fl.c .rs { color:#fca5a5; }
   .detail .none { color:#5b647a; font-size:12px; }
+  .detail .pendbox { margin:6px 0; padding:9px 12px; border-radius:8px; background:#1f1810; border:1px solid #3d2f12; }
+  .detail .pendbox .ph { color:#fbbf24; font-weight:700; font-size:13px; }
+  .detail .pendbox .ps { color:#caa55a; font-size:11px; margin-top:3px; }
+  .detail .desc { color:#9fb0c8; font-size:12px; margin:0 0 8px; }
+  .detail .prog { color:#9ad; font-size:12px; font-weight:600; margin:8px 0 2px; }
+  .detail .chk { font-size:12px; padding:3px 0; border-top:1px solid #1c2433; cursor:pointer; }
+  .detail .chk:hover { background:#141925; }
+  .detail .chk .ci { width:16px; display:inline-block; text-align:center; }
+  .chk-pass .ci { color:#4ade80; } .chk-fail .ci { color:#f87171; } .chk-run .ci { color:#fbbf24; }
+  .detail .method { margin:2px 0 6px 22px; font-size:11px; display:none; }
+  .detail .method.open { display:block; }
+  .detail .method .mc { color:#9ecbff; word-break:break-all; }
+  .detail .method .me { color:#86efac; margin-top:2px; }
   .detail .x { margin-left:auto; cursor:pointer; color:#8a93a6; border:1px solid #283246; border-radius:5px; padding:1px 8px; }
   .hint { color:#5b647a; font-size:11px; margin-top:4px; }
   .foot { color:#5b647a; font-size:11px; margin-top:14px; }
@@ -160,6 +173,7 @@ INDEX_HTML = """<!doctype html>
 <script>
 let SEL = null;     // 선택된 케이스 (드릴다운)
 let LAST = null;    // 마지막 /state 응답
+let OPEN = new Set();  // 검증 방법(toggle)이 펼쳐진 체크리스트 항목 키 (재렌더 사이 유지)
 let SRV = {elapsed:0, at:0, ended:false, lost:false, exists:false};  // 시계 보간 기준점
 let CUR_START = null;  // 현재 케이스 시작 elapsed_s
 function fmtEta(s){ s=Math.max(0,Math.round(s||0)); return s<60?("~"+s+"s"):("~"+Math.floor(s/60)+"m "+(s%60)+"s"); }
@@ -252,14 +266,55 @@ function renderDetail(d){
   else if(cd.classification==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ 진행 중 fault'; hd.appendChild(c); }
   const x=document.createElement('span'); x.className='x'; x.textContent='✕ 닫기'; x.onclick=()=>{ SEL=null; renderCases(LAST); renderDetail(LAST); }; hd.appendChild(x);
   box.appendChild(hd);
+  if(cd.desc){ const ds=document.createElement('div'); ds.className='desc'; ds.textContent=cd.desc; box.appendChild(ds); }
   const meta=document.createElement('div'); meta.className='meta';
-  meta.textContent='phase='+(cd.phase||'—')+'   소요='+fmtDur(cd.duration_s)+'   fail 이벤트='+(cd.fail_count||0)+'건';
+  const running=(cd.status==='running');
+  // 실행 중이면 라이브 경과, 종료됐으면 최종 소요.
+  const timeTxt = (running && cd.started_s!=null)
+    ? ('경과 '+fmtClock(Math.max(0, liveElapsed()-cd.started_s)))
+    : ('소요 '+fmtDur(cd.duration_s));
+  let metaTxt = 'phase '+(cd.phase||'—')+'  ·  '+timeTxt;
+  if(cd.checks_total){ metaTxt += '  ·  검증 '+cd.checks_passed+'/'+cd.checks_total; }
+  if(cd.fail_count){ metaTxt += '  ·  fault 이벤트 '+cd.fail_count+'건'; }
+  meta.textContent = metaTxt;
   box.appendChild(meta);
-  if(cd.pending && cd.status==='running'){
-    const p=document.createElement('div'); p.className='none'; p.textContent='⏳ 준비 중 (검증 대기) — 아직 장애 아님'; box.appendChild(p);
+  // 검증 항목 체크리스트 (항목 클릭 시 command/expected 검증 방법 toggle)
+  const cl=cd.checklist||[];
+  if(cl.length){
+    const ct=document.createElement('div'); ct.className='prog';
+    ct.textContent='검증 항목 ('+cd.checks_passed+'/'+cd.checks_total+' 통과)'; box.appendChild(ct);
+    cl.forEach(it=>{
+      const icon = it.status==='pass'?'✓':(it.status==='fail'?'✗':'⏳');
+      const klass = it.status==='pass'?'chk-pass':(it.status==='fail'?'chk-fail':'chk-run');
+      const row=document.createElement('div'); row.className='chk '+klass;
+      const ci=document.createElement('span'); ci.className='ci'; ci.textContent=icon; row.appendChild(ci);
+      row.appendChild(document.createTextNode(' '+(it.name||'')));
+      const m=document.createElement('div'); m.className='method';
+      const mc=document.createElement('div'); mc.className='mc'; mc.textContent='$ '+(it.command||''); m.appendChild(mc);
+      if(it.expected!=null && it.expected!==''){ const me=document.createElement('div'); me.className='me'; me.textContent='기대값: '+it.expected; m.appendChild(me); }
+      const key=SEL+'|'+(it.name||'');
+      if(OPEN.has(key)) m.classList.add('open');
+      row.onclick=()=>{ if(OPEN.has(key)) OPEN.delete(key); else OPEN.add(key); m.classList.toggle('open'); };
+      box.appendChild(row); box.appendChild(m);
+    });
+  }
+  if(cd.pending && running){
+    const p=document.createElement('div'); p.className='pendbox';
+    const h=document.createElement('div'); h.className='ph'; h.textContent='⏳ 준비 중 — 검증 대기';
+    const s=document.createElement('div'); s.className='ps';
+    s.textContent='아직 장애 아님. finalize 등 조건이 갖춰지면 자동으로 통과 처리됩니다.';
+    p.appendChild(h); p.appendChild(s); box.appendChild(p);
   }
   const fails=cd.fails||[];
-  if(!fails.length){ const n=document.createElement('div'); n.className='none'; n.textContent=(cd.status==='pass'?'fault 없이 통과':'fault 이벤트 없음'); box.appendChild(n); return; }
+  if(!fails.length){
+    // 준비 중 박스가 이미 있으면 'fault 없음' 중복 줄은 생략.
+    if(!(cd.pending && running)){
+      const n=document.createElement('div'); n.className='none';
+      n.textContent=(cd.status==='pass'?'✓ fault 없이 통과':'fault 이벤트 없음');
+      box.appendChild(n);
+    }
+    return;
+  }
   const resolved=(cd.classification==='resolved');
   fails.forEach(f=>{
     // reason 줄을 row(.fl r/c) 안에 넣어야 .detail .fl.r/.fl.c .rs 색상 셀렉터가 매칭된다.
