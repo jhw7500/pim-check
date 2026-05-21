@@ -73,6 +73,12 @@ def format_dashboard(state: ViewerState, *, producer_lost: bool = False) -> str:
             for name in resolved:
                 out.append(f"  ↻ {name}")
 
+    pending = state.pending_summaries
+    if pending:
+        out.append("Warming up (준비 중, not a fault):")
+        for name in pending:
+            out.append(f"  ⏳ {name}")
+
     out.append("Cases:")
     for name in state.cases:
         marker = _MARK.get(state.case_status.get(name, "pending"), "⏳")

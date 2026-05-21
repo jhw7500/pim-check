@@ -10,7 +10,35 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 from checks.base_check import BaseCheck
-from event_stream import serialize_fail_event, write_event
+from event_stream import serialize_fail_event, serialize_pending_event, write_event
+
+
+class TestSerializePendingEvent(unittest.TestCase):
+    def test_pending_event_shape(self):
+        line = serialize_pending_event(
+            "recording", "FAIL:NEED_2_FINALIZES_AFTER_BOOT",
+            run_id="r", case_name="c1", board=None,
+        )
+        self.assertNotIn("\n", line)
+        rec = json.loads(line)
+        self.assertEqual(rec["event_type"], "pending")
+        self.assertEqual(rec["check"], "recording")
+        self.assertEqual(rec["reason"], "FAIL:NEED_2_FINALIZES_AFTER_BOOT")
+        self.assertEqual(rec["case_name"], "c1")
+        self.assertIn("ts", rec)
+        # None 값 필드는 제외된다 (fail 이벤트와 동일 규약).
+        self.assertNotIn("board", rec)
+
+
+class TestStabilizationReason(unittest.TestCase):
+    def test_classifies_not_ready_vs_real_fault(self):
+        from verify_retry import is_stabilization_reason
+        self.assertTrue(is_stabilization_reason("FAIL:NEED_2_FINALIZES_AFTER_BOOT"))
+        self.assertTrue(is_stabilization_reason("recovering..."))
+        self.assertTrue(is_stabilization_reason("i2c failed (got: )"))
+        self.assertFalse(is_stabilization_reason("FAIL:30.1_ex=15"))
+        self.assertFalse(is_stabilization_reason("gstApp 죽음"))
+        self.assertFalse(is_stabilization_reason(""))
 
 
 class TestSerializeFailEvent(unittest.TestCase):

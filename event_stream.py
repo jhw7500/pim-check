@@ -48,6 +48,25 @@ def serialize_fail_event(check, reason, *, ts=None, **fields) -> str:
     return json.dumps(record, ensure_ascii=False)
 
 
+def serialize_pending_event(check, reason, *, ts=None, **fields) -> str:
+    """안정화 미달(준비 중) 상태를 단일 한 줄 JSONL ``pending`` 이벤트로 직렬화한다.
+
+    ``fail`` 과 동일한 구조지만 ``event_type`` == "pending". NEED_2_FINALIZES 처럼
+    "장애가 아니라 아직 준비 안 됨"인 결과를 fault 와 구분해 표면화하기 위한 것.
+    뷰어는 이를 fault 로 세지 않고 "준비 중"으로만 표시한다.
+    """
+    record = {
+        "event_type": "pending",
+        "ts": ts if ts is not None else _now_iso(),
+        "check": check,
+        "reason": reason,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            record[key] = value
+    return json.dumps(record, ensure_ascii=False)
+
+
 def _base_event(event_type: str, run_id: str, plan: str, board: str,
                 elapsed_s: float, ts) -> dict:
     """모든 lifecycle 이벤트에 공통으로 존재하는 필드 묶음.

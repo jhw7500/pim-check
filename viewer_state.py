@@ -33,6 +33,7 @@ class ViewerState:
         self._case_phase: dict[str, str] = {}          # name -> 마지막 phase
         self._case_started_s: dict[str, float] = {}    # name -> 첫 case_start elapsed_s
         self._case_ended_s: dict[str, float] = {}      # name -> 마지막 case_end elapsed_s
+        self._case_pending: dict[str, str] = {}        # name -> 마지막 '준비 중' reason (fault 아님)
 
     # --- folding -----------------------------------------------------------
     def apply(self, event: dict) -> None:
@@ -78,6 +79,8 @@ class ViewerState:
                     self._case_phase[name] = phase
                 if isinstance(es, (int, float)):
                     self._case_ended_s[name] = float(es)
+                # 케이스 종료 → 더 이상 '준비 중' 아님.
+                self._case_pending.pop(name, None)
                 if self.current_case == name:
                     self.current_case = None
             self.completed_cases = event.get("completed_cases", self.completed_cases)
@@ -112,6 +115,12 @@ class ViewerState:
                     "ts": event.get("ts"),
                     "elapsed_s": event.get("elapsed_s"),
                 })
+        elif et == "pending":
+            # 안정화 미달(준비 중) — fault 아님. 카운트/분류에 영향 주지 않고
+            # 현재 케이스가 '준비 중'임을 표시하는 용도로만 마지막 reason 을 보존한다.
+            name = event.get("case_name")
+            if name is not None:
+                self._case_pending[name] = event.get("reason") or ""
         # 그 외 알 수 없는 event_type 은 무시.
 
     @classmethod
@@ -181,8 +190,16 @@ class ViewerState:
         return {n: self._classify(n) for n in names}
 
     @property
+    def pending_summaries(self) -> dict[str, str]:
+        """현재 running 중이면서 '준비 중'(stabilization 미달)인 케이스 → reason."""
+        return {
+            n: r for n, r in self._case_pending.items()
+            if self._status.get(n) == "running"
+        }
+
+    @property
     def case_details(self) -> dict[str, dict]:
-        """모든 케이스의 드릴다운 상세(상태/phase/소요시간/fail 목록)."""
+        """모든 케이스의 드릴다운 상세(상태/phase/소요시간/fail 목록/준비중)."""
         out: dict[str, dict] = {}
         for name in self._cases:
             start = self._case_started_s.get(name)
@@ -197,6 +214,7 @@ class ViewerState:
                 "classification": self._classify(name),
                 "fail_count": len(self._case_fails.get(name, [])),
                 "fails": [dict(f) for f in self._case_fails.get(name, [])],
+                "pending": self._case_pending.get(name),
             }
         return out
 
@@ -220,4 +238,5 @@ class ViewerState:
             "fail_summaries": dict(self._fail_summaries),
             "fail_classification": self.fail_classification,
             "case_details": self.case_details,
+            "pending_summaries": self.pending_summaries,
         }

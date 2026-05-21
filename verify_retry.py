@@ -30,6 +30,21 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
 )
 
 
+def is_stabilization_reason(reason) -> bool:
+    """단일 reason 문자열이 '장애가 아니라 아직 준비 안 됨' 신호인지 판정.
+
+    NEED_2_FINALIZES / recovering / NO_SSH 등(STABILIZATION_INDICATORS) 또는 i2c
+    register 빈 응답이면 True. fail 과 pending 을 가르는 단일 출처.
+    """
+    r = str(reason or "")
+    if any(s in r for s in STABILIZATION_INDICATORS):
+        return True
+    # i2c register 빈 응답 (recovering 상태 의심)
+    if "failed (got: )" in r or "failed (got: '')" in r:
+        return True
+    return False
+
+
 def is_stabilization_fail(results: list) -> bool:
     """안정화 미달(=재시도 가치 있음) 시그널이 결과에 있는지 판정."""
     for r in results:
@@ -39,11 +54,7 @@ def is_stabilization_fail(results: list) -> bool:
             continue
         if "known_issue" in r:
             continue
-        reason = str(r.get("reason", ""))
-        if any(s in reason for s in STABILIZATION_INDICATORS):
-            return True
-        # i2c register 빈 응답 (recovering 상태 의심)
-        if "failed (got: )" in reason or "failed (got: '')" in reason:
+        if is_stabilization_reason(r.get("reason", "")):
             return True
     return False
 

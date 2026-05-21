@@ -46,6 +46,7 @@ def build_state(path: str) -> dict:
         "completed": done, "total": total,
         "pass": st.pass_count, "fail": st.fail_count,
         "current": st.current_case,
+        "elapsed_s": round(st.elapsed_s, 1),
         "eta": round(st.eta_seconds, 1),
         "run_ended": st.run_ended,
         "producer_lost": (not st.run_ended) and idle > PRODUCER_LOST_AFTER,
@@ -55,6 +56,7 @@ def build_state(path: str) -> dict:
         "fail_summaries": st.fail_summaries,
         "fail_classification": st.fail_classification,
         "case_detail": st.case_details,
+        "pending": st.pending_summaries.get(st.current_case),
         "heartbeat_seq": st.last_heartbeat_seq,
     }
 
@@ -111,18 +113,40 @@ INDEX_HTML = """<!doctype html>
   .hint { color:#5b647a; font-size:11px; margin-top:4px; }
   .foot { color:#5b647a; font-size:11px; margin-top:14px; }
   .st-pass { color:#4ade80; } .st-fail { color:#f87171; } .st-running { color:#fbbf24; } .st-pending { color:#5b647a; }
+  /* live progress */
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .dot.run { background:#4ade80; animation:pulse 1.2s ease-in-out infinite; }
+  .dot.done { background:#7aa2f7; } .dot.lost { background:#f87171; animation:pulse .8s infinite; }
+  .clocks { display:flex; gap:28px; margin:6px 0 2px; }
+  .clk b { font-size:26px; font-variant-numeric:tabular-nums; color:#e6e6e6; }
+  .clk span { display:block; color:#8a93a6; font-size:11px; letter-spacing:.05em; }
+  .banner { margin:12px 0; padding:12px 16px; border-radius:10px; background:#15203a;
+            border:1px solid #2a3a63; display:flex; align-items:center; gap:12px; }
+  .banner.idle { background:#161a22; border-color:#26304a; }
+  .banner .bcase { font-size:18px; font-weight:700; color:#cfe0ff; }
+  .banner .bt { margin-left:auto; font-size:20px; font-variant-numeric:tabular-nums; color:#fbbf24; }
+  .box .case-h { font-weight:700; margin:4px 0 1px; }
+  .box .sub { margin:0 0 4px 14px; font-size:12px; opacity:.92; }
+  .confirmed .case-h { color:#f87171; } .active .case-h { color:#fbbf24; }
 </style></head>
 <body><div class="wrap">
   <h1 id="title">pim_viewer (web)</h1>
   <div class="sub" id="meta">waiting for event stream…</div>
-  <div id="badge" class="badge b-run">…</div>
+  <div id="badge" class="badge b-run"><span class="dot run"></span>…</div>
+  <div class="clocks">
+    <div class="clk"><b id="elapsed">0s</b><span>경과 (ELAPSED)</span></div>
+    <div class="clk"><b id="eta">~0s</b><span>남은 예상 (ETA)</span></div>
+  </div>
   <div class="bar"><i id="bar"></i></div>
   <div class="sub" id="prog">0 / 0 (0%)</div>
+  <div class="banner idle" id="banner">
+    <span class="dot run"></span><span class="bcase" id="bcase">대기 중</span>
+    <span class="bt" id="btimer"></span>
+  </div>
   <div class="row">
     <div class="stat pass"><b id="pass">0</b><span>PASS</span></div>
     <div class="stat fail"><b id="fail">0</b><span>FAIL</span></div>
-    <div class="stat"><b id="cur">—</b><span>CURRENT</span></div>
-    <div class="stat"><b id="eta">~0s</b><span>ETA</span></div>
   </div>
   <div class="box confirmed" id="confirmedBox" style="display:none"><div class="hd">✗ FAILED (최종)</div><div id="confirmed"></div></div>
   <div class="box active" id="activeBox" style="display:none"><div class="hd">⚠ FAULT (진행 중)</div><div id="active"></div></div>
@@ -135,8 +159,34 @@ INDEX_HTML = """<!doctype html>
 <script>
 let SEL = null;     // 선택된 케이스 (드릴다운)
 let LAST = null;    // 마지막 /state 응답
+let SRV = {elapsed:0, at:0, ended:false, lost:false, exists:false};  // 시계 보간 기준점
+let CUR_START = null;  // 현재 케이스 시작 elapsed_s
 function fmtEta(s){ s=Math.max(0,Math.round(s||0)); return s<60?("~"+s+"s"):("~"+Math.floor(s/60)+"m "+(s%60)+"s"); }
 function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); return s<60?(s+"s"):(Math.floor(s/60)+"m "+(s%60)+"s"); }
+function fmtClock(s){ s=Math.max(0,Math.floor(s||0)); const m=Math.floor(s/60); return m?(m+"m "+(s%60)+"s"):(s+"s"); }
+function splitReason(r){ return String(r||'').split(';').map(s=>s.trim()).filter(Boolean); }
+
+// 서버 elapsed_s 를 기준점 삼아 매초 부드럽게 흐르는 경과 시간(폴링 사이도 진행).
+function liveElapsed(){ if(!SRV.exists) return 0; if(SRV.ended||SRV.lost) return SRV.elapsed; return SRV.elapsed + (Date.now()-SRV.at)/1000; }
+function renderClocks(){
+  document.getElementById('elapsed').textContent = SRV.exists ? fmtClock(liveElapsed()) : '0s';
+  const bt=document.getElementById('btimer');
+  bt.textContent = (CUR_START!=null && SRV.exists && !SRV.ended && !SRV.lost) ? (fmtClock(liveElapsed()-CUR_START)+' 경과') : '';
+}
+function setBadge(boxcls, dotcls, text){
+  const b=document.getElementById('badge'); b.className='badge '+boxcls; b.replaceChildren();
+  const dot=document.createElement('span'); dot.className='dot '+dotcls; b.appendChild(dot);
+  b.appendChild(document.createTextNode(text));
+}
+function renderBanner(d){
+  const ban=document.getElementById('banner'), bc=document.getElementById('bcase'), dot=ban.querySelector('.dot');
+  if(d.producer_lost){ ban.className='banner'; dot.className='dot lost'; bc.textContent='Producer lost — 신호 끊김'; CUR_START=null; }
+  else if(d.run_ended){ ban.className='banner'; dot.className='dot done'; bc.textContent='완료 — '+d['pass']+'/'+d.total+' pass'; CUR_START=null; }
+  else if(d.current){ ban.className='banner'; dot.className='dot run';
+    bc.textContent='실행 중: '+d.current+(d.pending?'   ·   ⏳ 준비 중 (검증 대기)':'');
+    const cd=(d.case_detail||{})[d.current]; CUR_START=(cd && cd.started_s!=null)?cd.started_s:null; }
+  else { ban.className='banner idle'; dot.className='dot run'; bc.textContent='대기 중'; CUR_START=null; }
+}
 
 function fillLines(boxId, listId, items){
   const box=document.getElementById(boxId), list=document.getElementById(listId);
@@ -145,18 +195,31 @@ function fillLines(boxId, listId, items){
   list.replaceChildren(...items.map(t=>{ const d=document.createElement('div'); d.className='ln'; d.textContent=t; return d; }));
 }
 
+function renderFailGroup(boxId, listId, cases, sum, mark){
+  const box=document.getElementById(boxId), list=document.getElementById(listId);
+  if(!cases.length){ box.style.display='none'; list.replaceChildren(); return; }
+  box.style.display='block';
+  const nodes=[];
+  cases.forEach(n=>{
+    const h=document.createElement('div'); h.className='case-h'; h.textContent=mark+' '+n; nodes.push(h);
+    const lines=splitReason(sum[n]);
+    (lines.length?lines:['(원인 미상)']).forEach(line=>{
+      const d=document.createElement('div'); d.className='sub'; d.textContent='• '+line; nodes.push(d);
+    });
+  });
+  list.replaceChildren(...nodes);
+}
 function renderFails(d){
   const cls=d.fail_classification||{}, sum=d.fail_summaries||{};
   const conf=[], act=[], rec=[];
   Object.keys(cls).forEach(n=>{
-    const reason=sum[n]||'';
-    if(cls[n]==='confirmed') conf.push('✗ '+n+': '+reason);
-    else if(cls[n]==='active') act.push('⚠ '+n+': '+reason);
+    if(cls[n]==='confirmed') conf.push(n);
+    else if(cls[n]==='active') act.push(n);
     else if(cls[n]==='resolved') rec.push('↻ '+n+' — 재시도 후 통과');
   });
-  fillLines('confirmedBox','confirmed',conf);
-  fillLines('activeBox','active',act);
-  fillLines('recoveredBox','recovered',rec);
+  renderFailGroup('confirmedBox','confirmed',conf,sum,'✗');
+  renderFailGroup('activeBox','active',act,sum,'⚠');
+  fillLines('recoveredBox','recovered',rec);  // 회복은 한 줄 요약(상세는 클릭)
 }
 
 function renderCases(d){
@@ -191,15 +254,20 @@ function renderDetail(d){
   const meta=document.createElement('div'); meta.className='meta';
   meta.textContent='phase='+(cd.phase||'—')+'   소요='+fmtDur(cd.duration_s)+'   fail 이벤트='+(cd.fail_count||0)+'건';
   box.appendChild(meta);
+  if(cd.pending && cd.status==='running'){
+    const p=document.createElement('div'); p.className='none'; p.textContent='⏳ 준비 중 (검증 대기) — 아직 장애 아님'; box.appendChild(p);
+  }
   const fails=cd.fails||[];
   if(!fails.length){ const n=document.createElement('div'); n.className='none'; n.textContent=(cd.status==='pass'?'fault 없이 통과':'fault 이벤트 없음'); box.appendChild(n); return; }
   const resolved=(cd.classification==='resolved');
   fails.forEach(f=>{
-    const row=document.createElement('div'); row.className='fl '+(resolved?'r':'c');
-    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s-(cd.started_s||0))+'s '):''); row.appendChild(t);
-    const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check')+': '; row.appendChild(ck);
-    const rs=document.createElement('span'); rs.className='rs'; rs.textContent=(resolved?'↻ ':'✗ ')+(f.reason||''); row.appendChild(rs);
-    box.appendChild(row);
+    const head=document.createElement('div'); head.className='fl '+(resolved?'r':'c');
+    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s-(cd.started_s||0))+'s '):''); head.appendChild(t);
+    const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check'); head.appendChild(ck);
+    box.appendChild(head);
+    splitReason(f.reason).forEach(line=>{
+      const d=document.createElement('div'); d.className='rs sub'; d.textContent=(resolved?'↻ ':'✗ ')+line; box.appendChild(d);
+    });
   });
 }
 
@@ -209,26 +277,28 @@ async function tick(){
     const d = await r.json();
     LAST = d;
     const foot = document.getElementById('foot');
-    if(!d.exists){ document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
+    if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
     document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?');
-    const badge = document.getElementById('badge');
-    if(d.producer_lost){ badge.className='badge b-lost'; badge.textContent='❌ Producer lost ('+d.idle_s+'s)'; }
-    else if(d.run_ended){ badge.className='badge b-done'; badge.textContent='● DONE'; }
-    else { badge.className='badge b-run'; badge.textContent='● RUNNING'; }
+    // 시계 보간 기준점 갱신
+    SRV = {elapsed:d.elapsed_s||0, at:Date.now(), ended:!!d.run_ended, lost:!!d.producer_lost, exists:true};
+    if(d.producer_lost){ setBadge('b-lost','lost','Producer lost ('+d.idle_s+'s)'); }
+    else if(d.run_ended){ setBadge('b-done','done','DONE'); }
+    else { setBadge('b-run','run','RUNNING'); }
     const pct = d.total ? Math.round(100*d.completed/d.total) : 0;
     document.getElementById('bar').style.width = pct+'%';
     document.getElementById('prog').textContent = d.completed+' / '+d.total+' ('+pct+'%)';
     document.getElementById('pass').textContent = d['pass'];
     document.getElementById('fail').textContent = d.fail;
-    document.getElementById('cur').textContent = d.current || '—';
     document.getElementById('eta').textContent = fmtEta(d.eta);
+    renderBanner(d);
+    renderClocks();
     renderFails(d);
     renderCases(d);
     renderDetail(d);
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
 }
-tick(); setInterval(tick, 1000);
+tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 </script>
 </body></html>"""
 
