@@ -310,6 +310,22 @@ class TestChecklist:
         assert by == {"fps check": "fail", "bps check": "pass"}
         assert det["checks_passed"] == 1
 
+    def test_pending_case_shows_checklist_from_run_start(self):
+        # run_start 의 case_plans 로, 아직 시작 안 한 대기 케이스도 검증 항목을 미리 보여준다.
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1", "c2"], "total_cases": 2,
+                   "case_plans": {"c2": {"desc": "케이스2 설명", "checklist": [
+                       {"name": "x", "command": "cmd", "expected": "OK"}]}}}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+        ])
+        det = st.case_details["c2"]
+        assert det["status"] == "pending"
+        assert det["desc"] == "케이스2 설명"
+        assert det["checks_total"] == 1
+        assert det["checklist"][0]["status"] == "pending"
+
     def test_no_checklist_when_absent(self):
         st = ViewerState.from_lines([
             _line({"event_type": "run_start", "elapsed_s": 0.0,

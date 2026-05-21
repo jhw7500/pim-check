@@ -53,6 +53,14 @@ class ViewerState:
             self._cases = list(event.get("cases") or [])
             self.total_cases = event.get("total_cases", len(self._cases))
             self._status = {c: "pending" for c in self._cases}
+            # 대기 케이스도 검증 항목을 미리 보여주도록 run_start 의 plan 을 캡처.
+            for cname, plan in (event.get("case_plans") or {}).items():
+                if not isinstance(plan, dict):
+                    continue
+                if plan.get("desc") is not None:
+                    self._case_desc[cname] = plan.get("desc")
+                if plan.get("checklist") is not None:
+                    self._case_checklist[cname] = list(plan.get("checklist"))
         elif et == "case_start":
             name = event.get("case_name")
             if name is not None:
@@ -257,8 +265,10 @@ class ViewerState:
                 st = "pass"
             elif status == "fail":
                 st = "fail" if (iname and iname in reason) else "pass"
-            else:
+            elif status == "running":
                 st = "running"
+            else:
+                st = "pending"   # 아직 시작 안 한 케이스의 항목 = 대기
             if st == "pass":
                 passed += 1
             out.append({**item, "status": st})

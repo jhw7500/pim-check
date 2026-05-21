@@ -119,6 +119,7 @@ INDEX_HTML = """<!doctype html>
   .detail .chk:hover { background:#141925; }
   .detail .chk .ci { width:16px; display:inline-block; text-align:center; }
   .chk-pass .ci { color:#4ade80; } .chk-fail .ci { color:#f87171; } .chk-run .ci { color:#fbbf24; }
+  .chk-pend .ci { color:#5b647a; }
   .detail .method { margin:2px 0 6px 22px; font-size:11px; display:none; }
   .detail .method.open { display:block; }
   .detail .method .mc { color:#9ecbff; word-break:break-all; }
@@ -285,8 +286,10 @@ function renderDetail(d){
     const ct=document.createElement('div'); ct.className='prog';
     ct.textContent='검증 항목 ('+cd.checks_passed+'/'+cd.checks_total+' 통과)'; box.appendChild(ct);
     cl.forEach(it=>{
-      const icon = it.status==='pass'?'✓':(it.status==='fail'?'✗':'⏳');
-      const klass = it.status==='pass'?'chk-pass':(it.status==='fail'?'chk-fail':'chk-run');
+      const ic={pass:'✓',fail:'✗',running:'⏳',pending:'○'};
+      const kl={pass:'chk-pass',fail:'chk-fail',running:'chk-run',pending:'chk-pend'};
+      const icon = ic[it.status]||'○';
+      const klass = kl[it.status]||'chk-pend';
       const row=document.createElement('div'); row.className='chk '+klass;
       const ci=document.createElement('span'); ci.className='ci'; ci.textContent=icon; row.appendChild(ci);
       row.appendChild(document.createTextNode(' '+(it.name||'')));

@@ -271,29 +271,30 @@ def _run_plan(args) -> int:
     except Exception:
         sess = None
 
+    def _plan_summary(case_name):
+        """케이스 설명 + 검증 항목(custom_commands) 추출 (best-effort)."""
+        try:
+            prof = load_profile(PROFILES_DIR, case=case_name)
+        except Exception:
+            return None, None
+        desc = prof.get("description") or prof.get("name")
+        items = []
+        for c in ((prof.get("checks") or {}).get("custom_commands") or []):
+            exp = c.get("expected")
+            if exp is None and c.get("expected_min") is not None:
+                exp = f">= {c.get('expected_min')}"
+            items.append({
+                "name": c.get("name", "unnamed"),
+                "command": c.get("command", ""),
+                "expected": exp,
+            })
+        return desc, (items or None)
+
     def on_case_start(idx, total, case_name, section):
         _cur["case"] = case_name
         if sess is None:
             return
-        # 케이스 설명 + 검증 항목(custom_commands: 이름/command/expected)을 case_start
-        # 에 실어 뷰어가 "무엇을·어떻게 검증하는지"를 보여줄 수 있게 한다 (best-effort).
-        desc, checklist = None, None
-        try:
-            prof = load_profile(PROFILES_DIR, case=case_name)
-            desc = prof.get("description") or prof.get("name")
-            items = []
-            for c in ((prof.get("checks") or {}).get("custom_commands") or []):
-                exp = c.get("expected")
-                if exp is None and c.get("expected_min") is not None:
-                    exp = f">= {c.get('expected_min')}"
-                items.append({
-                    "name": c.get("name", "unnamed"),
-                    "command": c.get("command", ""),
-                    "expected": exp,
-                })
-            checklist = items or None
-        except Exception:
-            desc, checklist = None, None
+        desc, checklist = _plan_summary(case_name)
         _safe(sess.emit_case_start, case_name, "collect", desc, checklist)
 
     def _engine_factory(ssh, profile):
@@ -336,7 +337,14 @@ def _run_plan(args) -> int:
 
     try:
         if sess is not None:
-            _safe(sess.emit_run_start, cases=_all_cases)
+            # 모든 케이스의 설명+체크리스트를 run_start 에 미리 실어, 아직 시작 안 한
+            # 대기 케이스도 뷰어에서 검증 항목을 볼 수 있게 한다.
+            case_plans = {}
+            for _cn in _all_cases:
+                _d, _cl = _plan_summary(_cn)
+                if _d is not None or _cl is not None:
+                    case_plans[_cn] = {"desc": _d, "checklist": _cl}
+            _safe(sess.emit_run_start, cases=_all_cases, case_plans=(case_plans or None))
             _safe(sess.start_heartbeat)
         executions = execute_plan(
             plan, PROFILES_DIR,
