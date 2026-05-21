@@ -71,12 +71,35 @@ class TestEmitHelpers:
 class TestHeartbeat:
     def test_heartbeat_thread_emits_increasing_seq(self, tmp_path):
         events_dir = str(tmp_path / "events")
+
+        def _hbs(path):
+            # 스레드가 동시에 기록 중이라 파싱 불가한 말미 라인은 건너뛴다.
+            out = []
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for ln in f:
+                        ln = ln.strip()
+                        if not ln:
+                            continue
+                        try:
+                            rec = json.loads(ln)
+                        except ValueError:
+                            continue
+                        if rec.get("event_type") == "heartbeat":
+                            out.append(rec)
+            except OSError:
+                pass
+            return out
+
         with EventSession("r1", "p", "b", events_dir=events_dir,
                           heartbeat_interval=0.05) as sess:
             sess.start_heartbeat()
-            time.sleep(0.28)  # 약 5 tick 분량
-        recs = _read_lines(sess.run_path)
-        hbs = [r for r in recs if r["event_type"] == "heartbeat"]
+            # heartbeat 마다 fsync 가 있어 느린 CI 러너에서는 고정 sleep 이 부족할
+            # 수 있다(flake). 고정 sleep 대신 조건(>=2) 충족까지 넉넉히 폴링한다.
+            deadline = time.time() + 5.0
+            while time.time() < deadline and len(_hbs(sess.run_path)) < 2:
+                time.sleep(0.02)
+        hbs = _hbs(sess.run_path)
         assert len(hbs) >= 2
         seqs = [r["heartbeat_seq"] for r in hbs]
         assert seqs == sorted(seqs)  # 단조 증가
