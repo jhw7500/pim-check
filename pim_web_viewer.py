@@ -124,6 +124,9 @@ INDEX_HTML = """<!doctype html>
   .detail .method.open { display:block; }
   .detail .method .mc { color:#9ecbff; word-break:break-all; }
   .detail .method .me { color:#86efac; margin-top:2px; }
+  .detail .method .ma { color:#fde68a; margin-top:2px; }
+  .detail .meas { color:#cbd5e1; font-size:11px; margin-left:6px; }
+  .detail .chk-fail .meas { color:#fca5a5; }
   .detail .x { margin-left:auto; cursor:pointer; color:#8a93a6; border:1px solid #283246; border-radius:5px; padding:1px 8px; }
   .hint { color:#5b647a; font-size:11px; margin-top:4px; }
   .foot { color:#5b647a; font-size:11px; margin-top:14px; }
@@ -294,8 +297,10 @@ function renderDetail(d){
       const row=document.createElement('div'); row.className='chk '+klass;
       const ci=document.createElement('span'); ci.className='ci'; ci.textContent=icon; row.appendChild(ci);
       row.appendChild(document.createTextNode(' '+(it.name||'')));
+      if(it.actual!=null && it.actual!==''){ const meas=document.createElement('span'); meas.className='meas'; meas.textContent='측정 '+it.actual; row.appendChild(meas); }
       const m=document.createElement('div'); m.className='method';
       const mc=document.createElement('div'); mc.className='mc'; mc.textContent='$ '+(it.command||''); m.appendChild(mc);
+      if(it.actual!=null && it.actual!==''){ const ma=document.createElement('div'); ma.className='ma'; ma.textContent='측정값: '+it.actual; m.appendChild(ma); }
       if(it.expected!=null && it.expected!==''){ const me=document.createElement('div'); me.className='me'; me.textContent='기대값: '+it.expected; m.appendChild(me); }
       const key=SEL+'|'+(it.name||'');
       if(OPEN.has(key)) m.classList.add('open');

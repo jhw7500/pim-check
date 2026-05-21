@@ -120,10 +120,13 @@ def serialize_case_start(*, run_id, plan, board, elapsed_s, case_name,
 
 def serialize_case_end(*, run_id, plan, board, elapsed_s, case_name, phase,
                        result, completed_cases, pass_count, fail_count,
-                       avg_case_duration_s, reason=None, ts=None) -> str:
+                       avg_case_duration_s, reason=None, checklist_results=None,
+                       ts=None) -> str:
     """case 종료 이벤트. 결과 + 누적 카운트 + ETA 산정용 평균 소요시간.
 
     reason 은 ``result == "fail"`` 일 때(혹은 명시적으로 전달될 때)만 포함한다.
+    checklist_results 가 주어지면 항목별 실측값/통과여부 [{name, actual, passed}] 를
+    함께 실어, 뷰어가 '측정 vs 기대' 를 항목 단위로 보여줄 수 있게 한다.
     """
     rec = _base_event("case_end", run_id, plan, board, elapsed_s, ts)
     rec["case_name"] = case_name
@@ -135,6 +138,8 @@ def serialize_case_end(*, run_id, plan, board, elapsed_s, case_name, phase,
     rec["avg_case_duration_s"] = avg_case_duration_s
     if reason is not None:
         rec["reason"] = reason
+    if checklist_results is not None:
+        rec["checklist_results"] = checklist_results
     return json.dumps(rec, ensure_ascii=False)
 
 

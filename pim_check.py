@@ -25,6 +25,7 @@ def _install_graceful_exit_handlers() -> None:
     # SIGINT는 Python 기본 KeyboardInterrupt지만 명시 등록으로 일관성 유지
     signal.signal(signal.SIGINT, _handler)
 
+from checks.custom import item_results as _custom_item_results
 from config import load_profile
 from engine import Engine
 from reporter import Reporter
@@ -321,11 +322,24 @@ def _run_plan(args) -> int:
             reason = None
             if not execution.passed:
                 reason = execution.error or _first_fail_reason(execution.results) or "FAIL"
+            # 항목별 실측값 추출(custom_commands) — 뷰어 '측정 vs 기대' 표시용.
+            checklist_results = None
+            for _r in execution.results or []:
+                if isinstance(_r, dict) and _r.get("name") == "custom_commands":
+                    try:
+                        _items = _custom_item_results(_r.get("data") or {})
+                    except Exception:
+                        _items = []
+                    checklist_results = [
+                        {"name": _it["name"], "actual": _it["actual"],
+                         "passed": _it["passed"]} for _it in _items
+                    ] or None
+                    break
             _safe(sess.emit_case_end, case_name, "validate",
                   "pass" if execution.passed else "fail",
                   completed_cases=_stats["completed"], pass_count=_stats["pass"],
                   fail_count=_stats["fail"], avg_case_duration_s=round(avg, 2),
-                  reason=reason)
+                  reason=reason, checklist_results=checklist_results)
         # 콘솔 진행 출력은 quiet 가 아닐 때만.
         if args.quiet:
             return

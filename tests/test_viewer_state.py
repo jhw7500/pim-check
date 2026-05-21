@@ -310,6 +310,38 @@ class TestChecklist:
         assert by == {"fps check": "fail", "bps check": "pass"}
         assert det["checks_passed"] == 1
 
+    def test_checklist_results_attach_actual_and_authoritative_status(self):
+        # case_end 의 checklist_results 가 있으면 항목별 실측값 부착 + per-item passed 가
+        # reason 매칭보다 권위. 여기선 bps 가 fail 이지만 reason 엔 안 들어가도 fail 처리.
+        st = self._events({"event_type": "case_end", "elapsed_s": 5.0,
+                           "case_name": "c1", "phase": "validate", "result": "fail",
+                           "completed_cases": 1, "pass_count": 0, "fail_count": 1,
+                           "avg_case_duration_s": 5.0,
+                           "reason": "some aggregate reason",
+                           "checklist_results": [
+                               {"name": "fps check", "actual": "30", "passed": True},
+                               {"name": "bps check", "actual": "5596", "passed": False}]})
+        det = st.case_details["c1"]
+        by = {i["name"]: i for i in det["checklist"]}
+        assert by["fps check"]["status"] == "pass"
+        assert by["fps check"]["actual"] == "30"
+        assert by["bps check"]["status"] == "fail"   # reason 무관, per-item passed 권위
+        assert by["bps check"]["actual"] == "5596"
+        assert det["checks_passed"] == 1
+
+    def test_checklist_results_pass_shows_actuals(self):
+        st = self._events({"event_type": "case_end", "elapsed_s": 5.0,
+                           "case_name": "c1", "phase": "validate", "result": "pass",
+                           "completed_cases": 1, "pass_count": 1, "fail_count": 0,
+                           "avg_case_duration_s": 5.0,
+                           "checklist_results": [
+                               {"name": "fps check", "actual": "30", "passed": True},
+                               {"name": "bps check", "actual": "8050", "passed": True}]})
+        det = st.case_details["c1"]
+        assert all(i["status"] == "pass" for i in det["checklist"])
+        assert {i["name"]: i["actual"] for i in det["checklist"]} == {
+            "fps check": "30", "bps check": "8050"}
+
     def test_pending_case_shows_checklist_from_run_start(self):
         # run_start 의 case_plans 로, 아직 시작 안 한 대기 케이스도 검증 항목을 미리 보여준다.
         st = ViewerState.from_lines([

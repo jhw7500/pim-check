@@ -53,6 +53,30 @@ class TestSerializeCaseStartPlan(unittest.TestCase):
         self.assertNotIn("checklist", rec)
 
 
+class TestSerializeCaseEndChecklistResults(unittest.TestCase):
+    def test_case_end_carries_checklist_results(self):
+        from event_stream import serialize_case_end
+        rec = json.loads(serialize_case_end(
+            run_id="r", plan="p", board="b", elapsed_s=10.0,
+            case_name="c1", phase="validate", result="fail",
+            completed_cases=1, pass_count=0, fail_count=1,
+            avg_case_duration_s=10.0, reason="AE mismatch",
+            checklist_results=[{"name": "AE", "actual": "0x90", "passed": False}]))
+        self.assertEqual(rec["event_type"], "case_end")
+        self.assertEqual(rec["checklist_results"][0]["name"], "AE")
+        self.assertEqual(rec["checklist_results"][0]["actual"], "0x90")
+        self.assertFalse(rec["checklist_results"][0]["passed"])
+
+    def test_case_end_omits_checklist_results_when_absent(self):
+        from event_stream import serialize_case_end
+        rec = json.loads(serialize_case_end(
+            run_id="r", plan="p", board="b", elapsed_s=10.0,
+            case_name="c1", phase="validate", result="pass",
+            completed_cases=1, pass_count=1, fail_count=0,
+            avg_case_duration_s=10.0))
+        self.assertNotIn("checklist_results", rec)
+
+
 class TestRunStartPlans(unittest.TestCase):
     def test_run_start_carries_case_plans(self):
         from event_stream import serialize_run_start
