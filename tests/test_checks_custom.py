@@ -55,6 +55,20 @@ class TestItemResults(unittest.TestCase):
         ]})
         self.assertFalse(out[0]["passed"])
 
+    def test_non_string_output_does_not_crash(self):
+        # output 이 비문자열(int)/None 이어도 AttributeError 없이 처리.
+        out = item_results({"skipped": False, "results": [
+            {"name": "num", "command": "c", "output": 8050,
+             "expected": None, "expected_min": 8000, "on_fail": "x"},
+            {"name": "exact", "command": "c", "output": 42,
+             "expected": "42", "expected_min": None, "on_fail": "x"},
+            {"name": "none", "command": "c", "output": None,
+             "expected": "OK", "expected_min": None, "on_fail": "x"},
+        ]})
+        self.assertTrue(out[0]["passed"])     # 8050 >= 8000
+        self.assertTrue(out[1]["passed"])     # str(42) == "42"
+        self.assertFalse(out[2]["passed"])    # None != "OK"
+
     def test_no_expected_uses_nonempty_output(self):
         out = item_results({"skipped": False, "results": [
             {"name": "echo", "command": "echo hi", "output": "hi",

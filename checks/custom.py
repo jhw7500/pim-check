@@ -98,12 +98,13 @@ def item_results(data: dict) -> list[dict]:
         expected = r.get("expected")
         expected_min = r.get("expected_min")
         if expected is not None:
-            passed = output is not None and output.strip() == str(expected).strip()
+            # actual 은 위에서 정규화(문자열이면 strip, 아니면 원값) — 비문자열 output 도 안전.
+            passed = actual is not None and str(actual) == str(expected).strip()
             exp_disp = str(expected)
         elif expected_min is not None:
             try:
-                val = int(output.strip()) if output else None
-            except ValueError:
+                val = int(actual) if actual is not None else None
+            except (ValueError, TypeError):
                 val = None
             passed = val is not None and val >= expected_min
             exp_disp = f">= {expected_min}"
