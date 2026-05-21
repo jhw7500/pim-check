@@ -196,7 +196,7 @@ function renderDetail(d){
   const resolved=(cd.classification==='resolved');
   fails.forEach(f=>{
     const row=document.createElement('div'); row.className='fl '+(resolved?'r':'c');
-    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s)+'s '):''); row.appendChild(t);
+    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s-(cd.started_s||0))+'s '):''); row.appendChild(t);
     const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check')+': '; row.appendChild(ck);
     const rs=document.createElement('span'); rs.className='rs'; rs.textContent=(resolved?'↻ ':'✗ ')+(f.reason||''); row.appendChild(rs);
     box.appendChild(row);

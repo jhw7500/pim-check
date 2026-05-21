@@ -33,6 +33,19 @@ class TestRunStreamSymlink(unittest.TestCase):
         name = run_file_name("comprehensive", "board-A", ts="20260520T101500")
         self.assertEqual(name, "20260520T101500_comprehensive_board-A.jsonl")
 
+    def test_run_file_name_default_has_microseconds(self):
+        # 기본 ts 는 마이크로초 포함(YYYYmmddTHHMMSSffffff = 21자) — 같은 초에 시작한
+        # 두 run 이 파일을 공유해 이벤트가 섞이는 것을 방지한다.
+        name = run_file_name("smoke", "board-A")  # ts=None → 기본값
+        ts_seg = name.split("_")[0]
+        self.assertEqual(len(ts_seg), 21, ts_seg)
+        self.assertTrue(name.endswith("_smoke_board-A.jsonl"))
+
+    def test_run_file_name_rapid_calls_unique(self):
+        # 빠른 연속 호출도 마이크로초 해상도로 서로 다른 파일명을 받는다.
+        names = [run_file_name("smoke", "b") for _ in range(20)]
+        self.assertGreaterEqual(len(set(names)), 2)
+
     def test_start_creates_run_file_and_symlink(self):
         events_dir = self._events_dir()
         run_path = start_run_file("smoke", "board-A", events_dir=events_dir, ts="T1")

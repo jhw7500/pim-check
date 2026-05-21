@@ -172,6 +172,30 @@ class TestLintPlan(unittest.TestCase):
         errors = lint_plan(plan)
         self.assertTrue(any("stop_on_fail" in e for e in errors))
 
+    def test_monitor_until_pass_must_be_bool(self):
+        # YAML "false"(문자열)이 truthy 로 early-exit 를 켜는 footgun 방지.
+        plan = {**VALID_PLAN, "execution": {"monitor_until_pass": "false"}}
+        errors = lint_plan(plan)
+        self.assertTrue(any("monitor_until_pass" in e for e in errors))
+
+    def test_monitor_until_pass_bool_ok(self):
+        plan = {**VALID_PLAN, "execution": {"monitor_until_pass": True}}
+        self.assertEqual(lint_plan(plan), [])
+
+    def test_monitor_cap_sec_must_be_int_or_null(self):
+        plan = {**VALID_PLAN, "execution": {"monitor_cap_sec": "150"}}
+        errors = lint_plan(plan)
+        self.assertTrue(any("monitor_cap_sec" in e for e in errors))
+
+    def test_monitor_cap_sec_negative_rejected(self):
+        plan = {**VALID_PLAN, "execution": {"monitor_cap_sec": -5}}
+        errors = lint_plan(plan)
+        self.assertTrue(any("monitor_cap_sec" in e for e in errors))
+
+    def test_monitor_cap_sec_none_and_int_ok(self):
+        self.assertEqual(lint_plan({**VALID_PLAN, "execution": {"monitor_cap_sec": None}}), [])
+        self.assertEqual(lint_plan({**VALID_PLAN, "execution": {"monitor_cap_sec": 150}}), [])
+
 
 class TestLoadPlan(unittest.TestCase):
     """load_plan 통합 — 디스크 파일 로드, 기본값 채우기, 에러 raise."""
