@@ -36,6 +36,8 @@ class ViewerState:
         self._case_pending: dict[str, str] = {}        # name -> 마지막 '준비 중' reason (fault 아님)
         self._case_desc: dict[str, str] = {}           # name -> 케이스 설명 (case_start)
         self._case_checklist: dict[str, list[dict]] = {}  # name -> [{name,command,expected}]
+        # name -> {item_name: {actual, passed}} (case_end 의 항목별 실측값)
+        self._case_checklist_results: dict[str, dict] = {}
 
     # --- folding -----------------------------------------------------------
     def apply(self, event: dict) -> None:
@@ -90,6 +92,12 @@ class ViewerState:
                 if result == "fail":
                     reason = event.get("reason")
                     self._fail_summaries[name] = reason if reason is not None else ""
+                cr = event.get("checklist_results")
+                if isinstance(cr, list):
+                    self._case_checklist_results[name] = {
+                        it.get("name"): it for it in cr
+                        if isinstance(it, dict) and it.get("name") is not None
+                    }
                 phase = event.get("phase")
                 if phase is not None:
                     self._case_phase[name] = phase
@@ -257,11 +265,16 @@ class ViewerState:
             return [], 0
         status = self._status.get(name, "pending")
         reason = self._fail_summaries.get(name, "")
+        per_item = self._case_checklist_results.get(name, {})
         out: list[dict] = []
         passed = 0
         for item in items:
             iname = item.get("name", "")
-            if status == "pass":
+            res = per_item.get(iname)
+            if status in ("pass", "fail") and res is not None:
+                # case 종료 + 항목별 실측값 있음 → per-item passed 가 권위(reason 매칭보다 정확)
+                st = "pass" if res.get("passed") else "fail"
+            elif status == "pass":
                 st = "pass"
             elif status == "fail":
                 st = "fail" if (iname and iname in reason) else "pass"
@@ -271,7 +284,10 @@ class ViewerState:
                 st = "pending"   # 아직 시작 안 한 케이스의 항목 = 대기
             if st == "pass":
                 passed += 1
-            out.append({**item, "status": st})
+            entry = {**item, "status": st}
+            if res is not None and res.get("actual") is not None:
+                entry["actual"] = res.get("actual")
+            out.append(entry)
         return out, passed
 
     @property

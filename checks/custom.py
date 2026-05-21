@@ -81,3 +81,39 @@ class CustomCommandCheck(BaseCheck):
         if issues:
             return (False, "; ".join(issues))
         return (True, "OK")
+
+
+def item_results(data: dict) -> list[dict]:
+    """custom_commands collect() data → 항목별 [{name, expected, actual, passed}].
+
+    validate() 와 동일한 통과 판정을 항목 단위로 노출한다(뷰어 '측정/기대' 표시용).
+    expected_min 케이스는 expected 를 '>= N' 으로 표시해 case_start checklist 와 맞춘다.
+    """
+    if data.get("skipped"):
+        return []
+    out: list[dict] = []
+    for r in data.get("results", []):
+        output = r.get("output")
+        actual = output.strip() if isinstance(output, str) else output
+        expected = r.get("expected")
+        expected_min = r.get("expected_min")
+        if expected is not None:
+            passed = output is not None and output.strip() == str(expected).strip()
+            exp_disp = str(expected)
+        elif expected_min is not None:
+            try:
+                val = int(output.strip()) if output else None
+            except ValueError:
+                val = None
+            passed = val is not None and val >= expected_min
+            exp_disp = f">= {expected_min}"
+        else:
+            passed = output is not None
+            exp_disp = None
+        out.append({
+            "name": r.get("name", "unnamed"),
+            "expected": exp_disp,
+            "actual": actual,
+            "passed": passed,
+        })
+    return out

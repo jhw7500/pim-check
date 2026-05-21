@@ -6,7 +6,65 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from checks.custom import CustomCommandCheck
+from checks.custom import CustomCommandCheck, item_results
+
+
+class TestItemResults(unittest.TestCase):
+    """item_results: 항목별 실측값/통과여부 추출 (뷰어 '측정 vs 기대')."""
+
+    def test_skipped_returns_empty(self):
+        self.assertEqual(item_results({"skipped": True}), [])
+
+    def test_expected_exact_match(self):
+        out = item_results({"skipped": False, "results": [
+            {"name": "ROT", "command": "i2c", "output": "0x000x02",
+             "expected": "0x000x02", "expected_min": None, "on_fail": "rot"},
+        ]})
+        self.assertEqual(out, [{"name": "ROT", "expected": "0x000x02",
+                                "actual": "0x000x02", "passed": True}])
+
+    def test_expected_mismatch(self):
+        out = item_results({"skipped": False, "results": [
+            {"name": "AE", "command": "i2c", "output": "0x020x90",
+             "expected": "0x020x99", "expected_min": None, "on_fail": "ae"},
+        ]})
+        self.assertEqual(out[0]["actual"], "0x020x90")
+        self.assertEqual(out[0]["expected"], "0x020x99")
+        self.assertFalse(out[0]["passed"])
+
+    def test_expected_min_pass_and_display(self):
+        out = item_results({"skipped": False, "results": [
+            {"name": "bps", "command": "ffprobe", "output": "8050",
+             "expected": None, "expected_min": 8000, "on_fail": "low"},
+        ]})
+        self.assertEqual(out[0]["expected"], ">= 8000")
+        self.assertEqual(out[0]["actual"], "8050")
+        self.assertTrue(out[0]["passed"])
+
+    def test_expected_min_fail(self):
+        out = item_results({"skipped": False, "results": [
+            {"name": "bps", "command": "ffprobe", "output": "5596",
+             "expected": None, "expected_min": 8000, "on_fail": "low"},
+        ]})
+        self.assertFalse(out[0]["passed"])
+
+    def test_expected_min_non_numeric(self):
+        out = item_results({"skipped": False, "results": [
+            {"name": "bps", "command": "ffprobe", "output": "n/a",
+             "expected": None, "expected_min": 8000, "on_fail": "low"},
+        ]})
+        self.assertFalse(out[0]["passed"])
+
+    def test_no_expected_uses_nonempty_output(self):
+        out = item_results({"skipped": False, "results": [
+            {"name": "echo", "command": "echo hi", "output": "hi",
+             "expected": None, "expected_min": None, "on_fail": "x"},
+            {"name": "empty", "command": "true", "output": None,
+             "expected": None, "expected_min": None, "on_fail": "x"},
+        ]})
+        self.assertTrue(out[0]["passed"])
+        self.assertEqual(out[0]["expected"], None)
+        self.assertFalse(out[1]["passed"])
 
 
 class TestCustomCommandCollect(unittest.TestCase):

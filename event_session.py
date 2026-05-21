@@ -90,13 +90,14 @@ class EventSession:
 
     def emit_case_end(self, case_name: str, phase: str, result: str, *,
                       completed_cases: int, pass_count: int, fail_count: int,
-                      avg_case_duration_s: float, reason: str | None = None) -> None:
+                      avg_case_duration_s: float, reason: str | None = None,
+                      checklist_results: list | None = None) -> None:
         self.emit(es.serialize_case_end(
             **self._common(), elapsed_s=self.elapsed_s(),
             case_name=case_name, phase=phase, result=result,
             completed_cases=completed_cases, pass_count=pass_count,
             fail_count=fail_count, avg_case_duration_s=avg_case_duration_s,
-            reason=reason,
+            reason=reason, checklist_results=checklist_results,
         ))
 
     def emit_run_end(self, *, completed_cases: int, pass_count: int,

@@ -121,6 +121,31 @@ def test_case_checklist_exposed_in_detail(tmp_path):
     assert cd["checklist"][0]["command"] == "cmd1"
 
 
+def test_checklist_actual_values_exposed_in_detail(tmp_path):
+    # case_end 의 checklist_results 가 case_detail 체크리스트에 실측값으로 노출되고
+    # per-item passed 가 항목 상태의 권위가 된다.
+    p = str(tmp_path / "e.jsonl")
+    _write(p, [
+        {"event_type": "run_start", "plan": "smoke", "board": "b", "elapsed_s": 0,
+         "cases": ["c1"], "total_cases": 1},
+        {"event_type": "case_start", "case_name": "c1", "phase": "collect", "elapsed_s": 0.1,
+         "checklist": [
+             {"name": "ROT", "command": "i2c", "expected": "0x000x02"},
+             {"name": "bps", "command": "ffprobe", "expected": ">= 8000"}]},
+        {"event_type": "case_end", "case_name": "c1", "phase": "validate", "result": "fail",
+         "completed_cases": 1, "pass_count": 0, "fail_count": 1, "avg_case_duration_s": 5.0,
+         "reason": "bps low", "elapsed_s": 5,
+         "checklist_results": [
+             {"name": "ROT", "actual": "0x000x02", "passed": True},
+             {"name": "bps", "actual": "5596", "passed": False}]},
+    ])
+    cd = build_state(p)["case_detail"]["c1"]
+    by = {i["name"]: i for i in cd["checklist"]}
+    assert by["ROT"]["actual"] == "0x000x02" and by["ROT"]["status"] == "pass"
+    assert by["bps"]["actual"] == "5596" and by["bps"]["status"] == "fail"
+    assert cd["checks_passed"] == 1
+
+
 def test_elapsed_s_exposed_for_live_clock(tmp_path):
     # 웹 라이브 경과 시계용: build_state 가 run elapsed_s 를 노출한다.
     p = str(tmp_path / "e.jsonl")
