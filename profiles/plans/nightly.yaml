@@ -79,6 +79,7 @@ execution:
   retry_wait_sec: 90
   reboot_wait_sec: 300
   wait_between_cases: 5         # 안정화 마진
+  monitor_until_pass: true      # finalize-aware 조기 종료 (전 체크 통과 스냅샷에서 monitor 단축; smoke 참조)
 
 gate:
   threshold_pass_rate: 0.98     # 야간은 98% 허용 (HW 노이즈 마진)

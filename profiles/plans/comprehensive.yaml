@@ -67,6 +67,7 @@ execution:
   retry_wait_sec: 90            # 원본 RETRY_EXTRA_WAIT=90
   reboot_wait_sec: 300          # 원본 REBOOT_WAIT=300
   wait_between_cases: 0
+  monitor_until_pass: true      # finalize-aware 조기 종료 (전 체크 통과 스냅샷에서 monitor 단축; smoke 참조)
 
 gate:
   threshold_pass_rate: 1.0      # release gate는 100% 요구

@@ -60,6 +60,7 @@ execution:
   retry_wait_sec: 90         # 기존 RETRY_EXTRA_WAIT 값
   reboot_wait_sec: 300       # 기존 REBOOT_WAIT 값
   wait_between_cases: 5      # SSH 안정화 마진
+  monitor_until_pass: true   # finalize-aware 조기 종료 (전 체크 통과 스냅샷에서 monitor 단축; smoke 참조)
 
 gate:
   threshold_pass_rate: 1.0   # release gate는 100% 요구

@@ -31,6 +31,7 @@ execution:
   retry_wait_sec: 60
   reboot_wait_sec: 300
   wait_between_cases: 30     # case 사이 30s wait — 이전 inject 영향 소거 보장
+  monitor_until_pass: true   # self-heal 확인(전 체크 통과) 즉시 monitor 종료 — 회복 못 하면 window 끝까지 관찰
 
 gate:
   threshold_pass_rate: 1.0
