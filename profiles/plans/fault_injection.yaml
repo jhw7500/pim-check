@@ -31,6 +31,8 @@ execution:
   retry_wait_sec: 60
   reboot_wait_sec: 300
   wait_between_cases: 30     # case 사이 30s wait — 이전 inject 영향 소거 보장
+  # monitor_until_pass 미사용: until_pass=true 면 stable-fail early-exit(engine.py)도
+  # 같이 켜져 "회복 못 하면 window 끝까지 관찰" 의도와 충돌한다. 전체 관측 유지.
 
 gate:
   threshold_pass_rate: 1.0

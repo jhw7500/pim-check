@@ -67,6 +67,8 @@ execution:
   retry_wait_sec: 90            # 원본 RETRY_EXTRA_WAIT=90
   reboot_wait_sec: 300          # 원본 REBOOT_WAIT=300
   wait_between_cases: 0
+  # monitor_until_pass 미사용: comprehensive 는 지속검증 gate(첫 통과 스냅샷 이후의
+  # thermal/process drift 까지 관측해야 함). plan.py DEFAULT_EXECUTION 주석 참조.
 
 gate:
   threshold_pass_rate: 1.0      # release gate는 100% 요구

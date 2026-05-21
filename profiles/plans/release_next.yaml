@@ -60,6 +60,8 @@ execution:
   retry_wait_sec: 90         # 기존 RETRY_EXTRA_WAIT 값
   reboot_wait_sec: 300       # 기존 REBOOT_WAIT 값
   wait_between_cases: 5      # SSH 안정화 마진
+  # monitor_until_pass 미사용: release gate(threshold 1.0 + baseline 비교)라
+  # 첫 통과 스냅샷 이후의 drift 까지 끝까지 관측해야 한다.
 
 gate:
   threshold_pass_rate: 1.0   # release gate는 100% 요구
