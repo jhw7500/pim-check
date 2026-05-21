@@ -374,5 +374,27 @@ class TestMonitorCap(unittest.TestCase):
         self.assertEqual(self._effective_duration(100, 150), 100)
 
 
+class TestMonitorUntilPass(unittest.TestCase):
+    """plan-level monitor_until_pass: run_verify_with_retry 로 until_pass 전달."""
+
+    def _until_pass_kwarg(self, flag):
+        from unittest.mock import MagicMock, patch
+        from plan import _run_single_case
+        ssh = MagicMock()
+        ssh.check_connectivity.return_value = True
+        profile = {"monitor": {"duration_sec": 300}, "checks": {}}
+        with patch("verify_retry.run_verify_with_retry") as mock_rvr:
+            mock_rvr.return_value = ([{"name": "x", "passed": True, "reason": "OK"}], 1, 1)
+            _run_single_case(ssh, profile, "c", lambda s, p: MagicMock(),
+                             None, monitor_until_pass=flag)
+            return mock_rvr.call_args.kwargs.get("until_pass")
+
+    def test_until_pass_forwarded_true(self):
+        self.assertTrue(self._until_pass_kwarg(True))
+
+    def test_until_pass_default_false(self):
+        self.assertFalse(self._until_pass_kwarg(False))
+
+
 if __name__ == "__main__":
     unittest.main()

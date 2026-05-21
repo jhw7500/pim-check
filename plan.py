@@ -33,6 +33,10 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     # cap(min) 한다 — case 가 명시한 0(snapshot)은 그대로 0 유지(덮어쓰지 않음).
     # smoke 같은 sanity gate 에서 카메라 case 모니터를 짧게. None 이면 cap 없음(기존 동작).
     "monitor_cap_sec": None,
+    # finalize-aware: True 면 monitor 가 전 체크 통과 스냅샷에서 조기 종료(duration 은 상한).
+    # 카메라 case 의 "부팅 후 finalize 2개" 준비 즉시 끝내 단축. 기본 False(comprehensive 는
+    # 전체 지속검증 유지). cap 과 달리 검증을 깨지 않는다(통과해야 종료하므로).
+    "monitor_until_pass": False,
 }
 
 DEFAULT_GATE: dict[str, Any] = {
@@ -479,7 +483,8 @@ class CaseExecution:
 def _run_single_case(ssh, profile: dict, case_name: str,
                      engine_factory: Callable,
                      setup_factory: Callable | None,
-                     monitor_cap_sec: int | None = None) -> tuple[list, bool, str | None]:
+                     monitor_cap_sec: int | None = None,
+                     monitor_until_pass: bool = False) -> tuple[list, bool, str | None]:
     """단일 case의 setup → engine.run_snapshot → known_issue 처리 한 번 실행.
 
     Returns: (results, passed, error). error는 None or "NO_SSH"/"SETUP_TIMEOUT"/"EXCEPTION:..."
@@ -516,6 +521,7 @@ def _run_single_case(ssh, profile: dict, case_name: str,
             effective_duration = monitor_cap_sec
         results, _coll, _total = run_verify_with_retry(
             engine, ssh, effective_duration, log=print,
+            until_pass=monitor_until_pass,
         )
     except Exception as exc:
         return [], False, f"RUN_EXCEPTION: {type(exc).__name__}: {exc}"
@@ -630,6 +636,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
                     monitor_cap_sec=plan.execution.get("monitor_cap_sec"),
+                    monitor_until_pass=plan.execution.get("monitor_until_pass", False),
                 )
                 retries_used = attempt
                 if passed:

@@ -94,13 +94,19 @@ class Engine:
         print(f"Target did not recover within {timeout}s")
         return False
 
-    def run_monitor(self) -> tuple[list, int, int]:
+    def run_monitor(self, until_pass: bool = False) -> tuple[list, int, int]:
         """지정된 duration 동안 interval마다 스냅샷을 수집한다.
 
         모니터링 중 SSH 연결 끊김(thermal shutdown 등)이 발생하면:
         1. 최대 10분간 복귀 대기 (1분 주기)
         2. 복귀하면 모니터링 계속
         3. 타임아웃이면 수집된 결과로 리포트
+
+        until_pass=True (finalize-aware / sanity gate 모드):
+            전 체크가 통과한 스냅샷이 처음 나오는 즉시 종료한다. duration 은 상한으로만
+            쓰인다. 카메라 case 처럼 "부팅 후 녹화 finalize 2개"가 갖춰지면 통과하는
+            검증에서, 고정 300s 를 끝까지 기다리지 않고 준비되는 즉시 끝낸다. 통과 전의
+            일시 fail(NEED_2_FINALIZES 등)은 merge 하지 않고 통과 스냅샷만 반환한다.
 
         Returns:
             (merged_results, samples_collected, samples_total)
@@ -132,7 +138,15 @@ class Engine:
                     continue
 
             consecutive_failures = 0
-            snapshots.append(self.run_snapshot())
+            snap = self.run_snapshot()
+            snapshots.append(snap)
+
+            # early-exit-on-pass: 전 체크 통과 스냅샷이 나오면 즉시 종료.
+            # 통과 스냅샷만 권위로 반환한다(merge 시 직전의 일시 fail 이 살아남는 것 방지).
+            if until_pass and snap and all(
+                isinstance(r, dict) and r.get("passed") for r in snap
+            ):
+                return (snap, len(snapshots), samples_total)
 
             if len(snapshots) >= samples_total:
                 break

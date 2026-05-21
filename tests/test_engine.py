@@ -60,6 +60,45 @@ class TestEngine:
         assert "recording" in names
 
     @patch("engine.time.sleep")
+    def test_run_monitor_until_pass_exits_on_clean_snapshot(self, mock_sleep):
+        # finalize-aware: 첫 '전 체크 통과' 스냅샷에서 조기 종료한다.
+        from engine import Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 100, "interval_sec": 1}  # 큰 상한
+        engine = Engine(self.ssh, profile)
+        fail_snap = [{"name": "recording", "passed": False, "reason": "NEED_2_FINALIZES"}]
+        clean_snap = [{"name": "recording", "passed": True, "reason": "OK"}]
+        engine.run_snapshot = MagicMock(side_effect=[fail_snap, clean_snap])
+
+        results, collected, total = engine.run_monitor(until_pass=True)
+
+        # 2번째(통과) 스냅샷에서 종료 — 100s 상한을 끝까지 기다리지 않는다.
+        assert engine.run_snapshot.call_count == 2
+        assert collected == 2
+        # 통과 스냅샷만 반환 — 직전 NEED_2_FINALIZES 일시 fail 은 merge 되지 않는다.
+        assert all(r["passed"] for r in results)
+        assert results == clean_snap
+
+    @patch("engine.time.sleep")
+    def test_run_monitor_without_until_pass_merges_transient_fail(self, mock_sleep):
+        # 기본(comprehensive): until_pass 없으면 전 구간 sample → 일시 fail 이 merge 되어 살아남는다.
+        from engine import Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 2, "interval_sec": 1}  # samples_total=2
+        engine = Engine(self.ssh, profile)
+        fail_snap = [{"name": "recording", "passed": False, "reason": "NEED_2_FINALIZES"}]
+        clean_snap = [{"name": "recording", "passed": True, "reason": "OK"}]
+        engine.run_snapshot = MagicMock(side_effect=[fail_snap, clean_snap])
+
+        results, collected, total = engine.run_monitor(until_pass=False)
+
+        assert collected == 2
+        # 직전 fail 이 merge 로 살아남는다(지속검증 의미 — 한 번이라도 fail 이면 fail).
+        assert any(not r["passed"] for r in results)
+
+    @patch("engine.time.sleep")
     def test_run_monitor_loop(self, mock_sleep):
         from engine import Engine
 
