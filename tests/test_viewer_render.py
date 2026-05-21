@@ -59,6 +59,43 @@ def test_current_case_shown():
     assert "c3" in out
 
 
+def _resolved_state():
+    lines = [
+        json.dumps({"event_type": "run_start", "plan": "smoke", "board": "b",
+                    "elapsed_s": 0.0, "cases": ["c1"], "total_cases": 1}),
+        json.dumps({"event_type": "case_start", "elapsed_s": 0.1,
+                    "case_name": "c1", "phase": "collect"}),
+        json.dumps({"event_type": "fail", "elapsed_s": 1.0, "check": "recording",
+                    "reason": "NEED_2_FINALIZES", "case_name": "c1"}),
+        json.dumps({"event_type": "case_end", "elapsed_s": 9.0, "case_name": "c1",
+                    "phase": "validate", "result": "pass", "completed_cases": 1,
+                    "pass_count": 1, "fail_count": 0, "avg_case_duration_s": 9.0}),
+    ]
+    return ViewerState.from_lines(lines)
+
+
+def test_resolved_fail_not_shown_as_final_failure():
+    out = format_dashboard(_resolved_state())
+    # 재시도로 회복된 일시 fail 은 최종 실패 섹션이 아니라 회복 섹션에 표시된다.
+    assert "Recovered after retry" in out
+    assert "↻ c1" in out
+    assert "Failures (final):" not in out
+
+
+def test_active_fault_shown_separately():
+    lines = [
+        json.dumps({"event_type": "run_start", "plan": "smoke", "board": "b",
+                    "elapsed_s": 0.0, "cases": ["c1"], "total_cases": 1}),
+        json.dumps({"event_type": "case_start", "elapsed_s": 0.1,
+                    "case_name": "c1", "phase": "collect"}),
+        json.dumps({"event_type": "fail", "elapsed_s": 1.0, "check": "thermal",
+                    "reason": "과열", "case_name": "c1"}),
+    ]
+    out = format_dashboard(ViewerState.from_lines(lines))
+    assert "Faults (in progress):" in out
+    assert "⚠ c1" in out
+
+
 def test_eta_always_shown():
     out = format_dashboard(_state())
     assert "ETA" in out

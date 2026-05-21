@@ -53,6 +53,8 @@ def build_state(path: str) -> dict:
         "cases": st.cases,
         "status": st.case_status,
         "fail_summaries": st.fail_summaries,
+        "fail_classification": st.fail_classification,
+        "case_detail": st.case_details,
         "heartbeat_seq": st.last_heartbeat_seq,
     }
 
@@ -78,13 +80,37 @@ INDEX_HTML = """<!doctype html>
   .stat b { font-size: 22px; }
   .stat span { color:#8a93a6; font-size:12px; display:block; }
   .pass b { color:#4ade80; } .fail b { color:#f87171; }
-  .fails { background:#1a1014; border:1px solid #3a2026; border-radius:8px; padding:8px 12px; margin:10px 0; }
-  .fails div { color:#fca5a5; font-size:13px; padding:2px 0; }
+  .box { border-radius:8px; padding:8px 12px; margin:10px 0; font-size:13px; }
+  .box .hd { font-weight:700; font-size:12px; margin-bottom:4px; letter-spacing:.04em; }
+  .box div.ln { padding:2px 0; }
+  .confirmed { background:#1a1014; border:1px solid #3a2026; }
+  .confirmed .hd { color:#f87171; } .confirmed .ln { color:#fca5a5; }
+  .active { background:#1f1810; border:1px solid #3d2f12; }
+  .active .hd { color:#fbbf24; } .active .ln { color:#fcd34d; }
+  .recovered { background:#101a14; border:1px solid #1f3a2a; }
+  .recovered .hd { color:#34d399; } .recovered .ln { color:#86efac; }
   .cases { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:4px 14px; margin-top:8px; }
-  .case { font-size:13px; padding:2px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .case { font-size:13px; padding:3px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+          cursor:pointer; border-radius:5px; border:1px solid transparent; }
+  .case:hover { background:#161a22; border-color:#26304a; }
+  .case.sel { background:#172033; border-color:#3b82f6; }
   .m-pass { color:#4ade80; } .m-fail { color:#f87171; } .m-run { color:#fbbf24; } .m-pend { color:#5b647a; }
+  .chip { font-size:10px; padding:1px 6px; border-radius:8px; margin-left:6px; }
+  .chip-resolved { background:#0e2a1c; color:#34d399; }
+  .chip-active { background:#2a2210; color:#fbbf24; }
   .cur { color:#fbbf24; font-weight:700; }
+  .detail { margin-top:12px; background:#11151d; border:1px solid #283246; border-radius:8px; padding:12px 14px; }
+  .detail .dh { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .detail .dname { font-size:14px; font-weight:700; color:#cdd6f4; }
+  .detail .meta { color:#8a93a6; font-size:12px; margin-bottom:8px; }
+  .detail .fl { font-size:12px; padding:3px 0; border-top:1px solid #1c2433; }
+  .detail .fl .t { color:#7aa2f7; } .detail .fl .ck { color:#cbd5e1; }
+  .detail .fl.r .rs { color:#86efac; } .detail .fl.c .rs { color:#fca5a5; }
+  .detail .none { color:#5b647a; font-size:12px; }
+  .detail .x { margin-left:auto; cursor:pointer; color:#8a93a6; border:1px solid #283246; border-radius:5px; padding:1px 8px; }
+  .hint { color:#5b647a; font-size:11px; margin-top:4px; }
   .foot { color:#5b647a; font-size:11px; margin-top:14px; }
+  .st-pass { color:#4ade80; } .st-fail { color:#f87171; } .st-running { color:#fbbf24; } .st-pending { color:#5b647a; }
 </style></head>
 <body><div class="wrap">
   <h1 id="title">pim_viewer (web)</h1>
@@ -98,16 +124,90 @@ INDEX_HTML = """<!doctype html>
     <div class="stat"><b id="cur">—</b><span>CURRENT</span></div>
     <div class="stat"><b id="eta">~0s</b><span>ETA</span></div>
   </div>
-  <div class="fails" id="failsBox" style="display:none"><div id="fails"></div></div>
+  <div class="box confirmed" id="confirmedBox" style="display:none"><div class="hd">✗ FAILED (최종)</div><div id="confirmed"></div></div>
+  <div class="box active" id="activeBox" style="display:none"><div class="hd">⚠ FAULT (진행 중)</div><div id="active"></div></div>
+  <div class="box recovered" id="recoveredBox" style="display:none"><div class="hd">↻ 재시도로 회복됨 (일시 fail)</div><div id="recovered"></div></div>
+  <div class="hint">케이스를 클릭하면 상세 진행 상황을 볼 수 있습니다.</div>
   <div class="cases" id="cases"></div>
+  <div class="detail" id="detail" style="display:none"></div>
   <div class="foot" id="foot"></div>
 </div>
 <script>
+let SEL = null;     // 선택된 케이스 (드릴다운)
+let LAST = null;    // 마지막 /state 응답
 function fmtEta(s){ s=Math.max(0,Math.round(s||0)); return s<60?("~"+s+"s"):("~"+Math.floor(s/60)+"m "+(s%60)+"s"); }
+function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); return s<60?(s+"s"):(Math.floor(s/60)+"m "+(s%60)+"s"); }
+
+function fillLines(boxId, listId, items){
+  const box=document.getElementById(boxId), list=document.getElementById(listId);
+  if(!items.length){ box.style.display='none'; list.replaceChildren(); return; }
+  box.style.display='block';
+  list.replaceChildren(...items.map(t=>{ const d=document.createElement('div'); d.className='ln'; d.textContent=t; return d; }));
+}
+
+function renderFails(d){
+  const cls=d.fail_classification||{}, sum=d.fail_summaries||{};
+  const conf=[], act=[], rec=[];
+  Object.keys(cls).forEach(n=>{
+    const reason=sum[n]||'';
+    if(cls[n]==='confirmed') conf.push('✗ '+n+': '+reason);
+    else if(cls[n]==='active') act.push('⚠ '+n+': '+reason);
+    else if(cls[n]==='resolved') rec.push('↻ '+n+' — 재시도 후 통과');
+  });
+  fillLines('confirmedBox','confirmed',conf);
+  fillLines('activeBox','active',act);
+  fillLines('recoveredBox','recovered',rec);
+}
+
+function renderCases(d){
+  const mark={pass:['✓','m-pass'], fail:['✗','m-fail'], running:['⏳','m-run'], pending:['⏳','m-pend']};
+  const cls=d.fail_classification||{};
+  const cc=document.getElementById('cases');
+  cc.replaceChildren(...(d.cases||[]).map(name=>{
+    const m=mark[d.status[name]||'pending']||mark.pending;
+    const el=document.createElement('div');
+    el.className='case'+(name===d.current?' cur':'')+(name===SEL?' sel':'');
+    const sp=document.createElement('span'); sp.className=m[1]; sp.textContent=m[0];
+    el.appendChild(sp);
+    el.appendChild(document.createTextNode(' '+name+(name===d.current?'  ◀':'')));
+    if(cls[name]==='resolved'){ const c=document.createElement('span'); c.className='chip chip-resolved'; c.textContent='↻ 회복'; el.appendChild(c); }
+    else if(cls[name]==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ fault'; el.appendChild(c); }
+    el.onclick=()=>{ SEL=(SEL===name?null:name); renderCases(LAST); renderDetail(LAST); };
+    return el;
+  }));
+}
+
+function renderDetail(d){
+  const box=document.getElementById('detail');
+  if(!SEL || !d || !d.case_detail || !d.case_detail[SEL]){ box.style.display='none'; box.replaceChildren(); return; }
+  const cd=d.case_detail[SEL]; box.style.display='block'; box.replaceChildren();
+  const hd=document.createElement('div'); hd.className='dh';
+  const nm=document.createElement('span'); nm.className='dname'; nm.textContent=SEL; hd.appendChild(nm);
+  const stt=document.createElement('span'); stt.className='st-'+(cd.status||'pending'); stt.textContent=(cd.status||'pending').toUpperCase(); hd.appendChild(stt);
+  if(cd.classification==='resolved'){ const c=document.createElement('span'); c.className='chip chip-resolved'; c.textContent='↻ 재시도로 회복'; hd.appendChild(c); }
+  else if(cd.classification==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ 진행 중 fault'; hd.appendChild(c); }
+  const x=document.createElement('span'); x.className='x'; x.textContent='✕ 닫기'; x.onclick=()=>{ SEL=null; renderCases(LAST); renderDetail(LAST); }; hd.appendChild(x);
+  box.appendChild(hd);
+  const meta=document.createElement('div'); meta.className='meta';
+  meta.textContent='phase='+(cd.phase||'—')+'   소요='+fmtDur(cd.duration_s)+'   fail 이벤트='+(cd.fail_count||0)+'건';
+  box.appendChild(meta);
+  const fails=cd.fails||[];
+  if(!fails.length){ const n=document.createElement('div'); n.className='none'; n.textContent=(cd.status==='pass'?'fault 없이 통과':'fault 이벤트 없음'); box.appendChild(n); return; }
+  const resolved=(cd.classification==='resolved');
+  fails.forEach(f=>{
+    const row=document.createElement('div'); row.className='fl '+(resolved?'r':'c');
+    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s)+'s '):''); row.appendChild(t);
+    const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check')+': '; row.appendChild(ck);
+    const rs=document.createElement('span'); rs.className='rs'; rs.textContent=(resolved?'↻ ':'✗ ')+(f.reason||''); row.appendChild(rs);
+    box.appendChild(row);
+  });
+}
+
 async function tick(){
   try{
     const r = await fetch('/state?_='+Date.now(), {cache:'no-store'});
     const d = await r.json();
+    LAST = d;
     const foot = document.getElementById('foot');
     if(!d.exists){ document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
     document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?');
@@ -122,17 +222,9 @@ async function tick(){
     document.getElementById('fail').textContent = d.fail;
     document.getElementById('cur').textContent = d.current || '—';
     document.getElementById('eta').textContent = fmtEta(d.eta);
-    const fb = document.getElementById('failsBox'), fl = document.getElementById('fails');
-    const fk = Object.keys(d.fail_summaries||{});
-    if(fk.length){ fb.style.display='block'; fl.innerHTML = fk.map(k=>'✗ '+k+': '+d.fail_summaries[k]).map(t=>'<div></div>').join('');
-      [...fl.children].forEach((el,i)=>el.textContent='✗ '+fk[i]+': '+d.fail_summaries[fk[i]]); }
-    else { fb.style.display='none'; }
-    const mark = {pass:['✓','m-pass'], fail:['✗','m-fail'], running:['⏳','m-run'], pending:['⏳','m-pend']};
-    const cc = document.getElementById('cases');
-    cc.innerHTML = (d.cases||[]).map(()=>'<div class="case"></div>').join('');
-    (d.cases||[]).forEach((name,i)=>{ const m=mark[d.status[name]||'pending']||mark.pending;
-      const el=cc.children[i]; el.className='case'+(name===d.current?' cur':'');
-      el.innerHTML='<span class="'+m[1]+'">'+m[0]+'</span> '+name+(name===d.current?'  ◀':''); });
+    renderFails(d);
+    renderCases(d);
+    renderDetail(d);
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
 }
