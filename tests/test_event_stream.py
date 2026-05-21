@@ -38,6 +38,8 @@ class TestStabilizationReason(unittest.TestCase):
         self.assertTrue(is_stabilization_reason("i2c failed (got: )"))
         # 부팅/케이스 전환 직후 코어 프로세스 미기동도 '준비 중'(retry 대상).
         self.assertTrue(is_stabilization_reason("BG_Check_for_pim is not running"))
+        # 앞 공백 매칭 — 'is_not_running' 같은 프로세스명 자체는 오매칭하지 않는다.
+        self.assertFalse(is_stabilization_reason("is_not_running_service CPU 99% out of range"))
         self.assertFalse(is_stabilization_reason("FAIL:30.1_ex=15"))
         self.assertFalse(is_stabilization_reason("gstApp 죽음"))
         self.assertFalse(is_stabilization_reason(""))
