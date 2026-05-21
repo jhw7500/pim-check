@@ -15,13 +15,108 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
+import subprocess
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import plan as plan_mod
+import run_control
 import run_stream
 from viewer_state import ViewerState
 
 PRODUCER_LOST_AFTER = 10.0
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+PROFILES_DIR = os.path.join(REPO_DIR, "profiles")
+
+
+def _events_dir() -> str:
+    # 제어(control state/guard)는 spawn 될 producer 가 실제로 쓰는 디렉터리에 고정한다.
+    # producer(pim_check)는 뷰어의 read 경로와 무관하게 default_events_dir 에 기록·
+    # current.jsonl 을 repoint 하므로, 여기에 맞춰야 단일-런 가드/상태가 일관된다.
+    return run_stream.default_events_dir()
+
+
+def _list_plans() -> list[str]:
+    try:
+        return plan_mod.list_plans(PROFILES_DIR)
+    except Exception:
+        return []
+
+
+def control_status() -> dict:
+    """관리 중인 런 상태 + 선택 가능한 plan 목록 (UI 제어판용)."""
+    events_dir = _events_dir()
+    pid = run_control.active_pid(events_dir)
+    info = run_control.read_control(events_dir) or {}
+    return {
+        "active": pid is not None, "pid": pid,
+        "plan": info.get("plan"), "host": info.get("host"),
+        "started_at": info.get("started_at"), "plans": _list_plans(),
+    }
+
+
+def start_run(params: dict) -> tuple[int, dict]:
+    """plan 런 spawn. (http_status, body) 반환. 단일 런만 허용(current.jsonl 공유)."""
+    events_dir = _events_dir()
+    if run_control.active_pid(events_dir) is not None:
+        return 409, {"ok": False, "error": "이미 실행 중인 런이 있습니다"}
+    # 외부(CLI/nohup)로 시작된 런도 감지 — producer 가 쓰는 default current.jsonl 이
+    # 살아있으면 거부(공유 충돌 방지). 뷰어 read 경로가 아니라 producer write 경로 기준.
+    st = build_state(_events_path())
+    if st.get("exists") and not st.get("run_ended") and not st.get("producer_lost"):
+        return 409, {"ok": False, "error": "이미 진행 중인 런이 있습니다 (외부 시작 포함)"}
+    ok, err, clean = run_control.validate_start_request(params, _list_plans())
+    if not ok:
+        return 400, {"ok": False, "error": err}
+    try:
+        logf = open(os.path.join(events_dir, "viewer_run.log"), "ab")
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
+             "--plan", clean["plan"], "--host", clean["host"],
+             "--user", clean["user"], "--password", clean["password"],
+             "--json", "--html", "--log"],
+            cwd=REPO_DIR, stdout=logf, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
+        return 500, {"ok": False, "error": f"spawn 실패: {e}"}
+    run_control.write_control(events_dir, {
+        "pid": proc.pid, "plan": clean["plan"], "host": clean["host"],
+        "started_at": time.time(),
+    })
+    return 200, {"ok": True, "pid": proc.pid, "plan": clean["plan"], "host": clean["host"]}
+
+
+def stop_run() -> tuple[int, dict]:
+    """관리 중인 런 종료(SIGTERM→SIGKILL). (http_status, body) 반환."""
+    events_dir = _events_dir()
+    info = run_control.read_control(events_dir)
+    pid = info.get("pid") if info else None
+    if not isinstance(pid, int) or not run_control.pid_alive(pid):
+        run_control.clear_control(events_dir)
+        return 200, {"ok": True, "stopped": False, "note": "관리 중인 런 없음"}
+    _signal_pid(pid, signal.SIGTERM)
+    for _ in range(30):
+        if not run_control.pid_alive(pid):
+            break
+        time.sleep(0.1)
+    if run_control.pid_alive(pid):
+        _signal_pid(pid, signal.SIGKILL)
+    run_control.clear_control(events_dir)
+    return 200, {"ok": True, "stopped": True, "pid": pid}
+
+
+def _signal_pid(pid: int, sig: int) -> None:
+    """프로세스 그룹에 시그널(start_new_session 으로 그룹 리더). 실패 시 단일 pid."""
+    try:
+        os.killpg(os.getpgid(pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
 
 
 def _events_path(custom: str | None = None) -> str:
@@ -148,9 +243,30 @@ INDEX_HTML = """<!doctype html>
   .box .sub, .detail .sub { margin:0 0 4px 14px; font-size:12px; opacity:.92; }
   .confirmed .case-h { color:#f87171; } .active .case-h { color:#fbbf24; }
   .confirmed .sub { color:#fca5a5; } .active .sub { color:#fcd34d; }
+  .ctrl { background:#0f1722; border:1px solid #1f2a3a; border-radius:8px; padding:10px; margin:8px 0; }
+  .ctrl .crow { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .ctrl select, .ctrl input { background:#0b1220; color:#e5e7eb; border:1px solid #334155;
+    border-radius:6px; padding:5px 7px; font-size:12px; }
+  .ctrl input.host { width:130px; } .ctrl input.cred { width:80px; }
+  .ctrl button { border:none; border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer; }
+  .ctrl .start { background:#16a34a; color:#fff; } .ctrl .stop { background:#dc2626; color:#fff; }
+  .ctrl button:disabled { opacity:.4; cursor:not-allowed; }
+  .ctrl .cmsg { font-size:11px; margin-top:6px; min-height:14px; color:#9ca3af; }
+  .ctrl .cmsg.err { color:#fca5a5; } .ctrl .cmsg.ok { color:#86efac; }
 </style></head>
 <body><div class="wrap">
   <h1 id="title">pim_viewer (web)</h1>
+  <div class="ctrl" id="ctrl">
+    <div class="crow">
+      <select id="c_plan" title="플랜"></select>
+      <input class="host" id="c_host" placeholder="타겟 IP (예: 192.168.214.4)">
+      <input class="cred" id="c_user" value="root" title="SSH 유저">
+      <input class="cred" id="c_pass" type="password" value="root" title="SSH 비밀번호">
+      <button class="start" id="c_start">▶ 시작</button>
+      <button class="stop" id="c_stop" disabled>■ 중지</button>
+    </div>
+    <div class="cmsg" id="c_msg"></div>
+  </div>
   <div class="sub" id="meta">waiting for event stream…</div>
   <div id="badge" class="badge b-run"><span class="dot run"></span>…</div>
   <div class="clocks">
@@ -374,6 +490,53 @@ async function tick(){
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
 }
+// --- 제어판(plan 선택 → 시작/중지) ---------------------------------------
+let PLANS_LOADED=false;
+function setCtrlActive(active){
+  document.getElementById('c_start').disabled=active;
+  document.getElementById('c_stop').disabled=!active;
+}
+function cmsg(text, cls){ const m=document.getElementById('c_msg'); m.className='cmsg'+(cls?(' '+cls):''); m.textContent=text; }
+async function loadControl(){
+  try{
+    const r=await fetch('/control?_='+Date.now(),{cache:'no-store'});
+    const d=await r.json();
+    if(!PLANS_LOADED && Array.isArray(d.plans)){
+      const sel=document.getElementById('c_plan');
+      sel.replaceChildren(...d.plans.map(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;return o;}));
+      PLANS_LOADED=true;
+    }
+    setCtrlActive(!!d.active);
+  }catch(e){}
+}
+async function startRun(){
+  const plan=document.getElementById('c_plan').value;
+  const host=document.getElementById('c_host').value.trim();
+  const user=document.getElementById('c_user').value.trim();
+  const password=document.getElementById('c_pass').value;
+  if(!plan){ cmsg('플랜을 선택하세요','err'); return; }
+  if(!host){ cmsg('타겟 IP를 입력하세요','err'); return; }
+  cmsg('시작 중…'); setCtrlActive(true);
+  try{
+    const r=await fetch('/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({plan:plan,host:host,user:user,password:password})});
+    const d=await r.json();
+    if(d.ok){ cmsg('시작됨: '+d.plan+' @ '+d.host+(d.pid?(' (pid '+d.pid+')'):''),'ok'); }
+    else { cmsg('실패: '+(d.error||r.status),'err'); setCtrlActive(false); }
+  }catch(e){ cmsg('요청 오류: '+e,'err'); setCtrlActive(false); }
+}
+async function stopRun(){
+  cmsg('중지 중…');
+  try{
+    const r=await fetch('/stop',{method:'POST'});
+    const d=await r.json();
+    if(d.ok){ cmsg(d.stopped?('중지됨 (pid '+d.pid+')'):'관리 중인 런 없음','ok'); setCtrlActive(false); }
+    else cmsg('실패: '+(d.error||r.status),'err');
+  }catch(e){ cmsg('요청 오류: '+e,'err'); }
+}
+document.getElementById('c_start').onclick=startRun;
+document.getElementById('c_stop').onclick=stopRun;
+loadControl(); setInterval(loadControl, 3000);
 tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 </script>
 </body></html>"""
@@ -393,12 +556,51 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_json(self, code: int, body: dict):
+        data = json.dumps(body).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_json(self) -> dict | None:
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            raw = self.rfile.read(n) if n > 0 else b""
+            return json.loads(raw.decode("utf-8")) if raw else {}
+        except (ValueError, TypeError):
+            return None
+
     def do_GET(self):
         if self.path.startswith("/state"):
             self._send(json.dumps(build_state(self.events_path)).encode("utf-8"),
                        "application/json; charset=utf-8")
+        elif self.path.startswith("/control"):
+            self._send(json.dumps(control_status()).encode("utf-8"),
+                       "application/json; charset=utf-8")
+        elif self.path.startswith("/plans"):
+            self._send(json.dumps(_list_plans()).encode("utf-8"),
+                       "application/json; charset=utf-8")
         elif self.path == "/" or self.path.startswith("/?"):
             self._send(INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        route = self.path.rstrip("/")
+        if route == "/start":
+            params = self._read_json()
+            if params is None:
+                self._send_json(400, {"ok": False, "error": "잘못된 요청 본문"})
+                return
+            code, body = start_run(params)
+            self._send_json(code, body)
+        elif route == "/stop":
+            code, body = stop_run()
+            self._send_json(code, body)
         else:
             self.send_response(404)
             self.end_headers()
@@ -415,6 +617,12 @@ def main(argv=None) -> int:
     ap.add_argument("--port", type=int, default=8077, help="포트 (기본 8077)")
     args = ap.parse_args(argv)
     _Handler.events_path = _events_path(args.path)
+    # spawn 한 plan 런 자식 프로세스가 종료/중지 시 좀비로 남지 않도록 자동 reap.
+    # (start_run 은 fire-and-forget Popen 이라 wait() 하지 않음)
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    except (ValueError, AttributeError, OSError):
+        pass  # 비-POSIX 또는 비-메인스레드: 좀비 누적 감수
     srv = ThreadingHTTPServer((args.host, args.port), _Handler)
     print(f"pim_web_viewer: http://localhost:{args.port}  (events: {_Handler.events_path})", flush=True)
     try:
