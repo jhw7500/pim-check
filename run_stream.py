@@ -42,10 +42,14 @@ def _sanitize(token: str) -> str:
 def run_file_name(plan: str, board: str, ts: str | None = None) -> str:
     """Build the run-scoped basename ``<ts>_<plan>_<board>.jsonl``.
 
-    ``ts`` defaults to a compact local timestamp (``YYYYmmddTHHMMSS``).
+    ``ts`` defaults to a compact local timestamp with microseconds
+    (``YYYYmmddTHHMMSSffffff``). Microsecond resolution keeps the basename
+    collision-resistant when two runs of the same plan/board start within the
+    same second (rapid reruns / CI) — otherwise they would share one file and
+    interleave events, corrupting both runs' viewer state.
     """
     if ts is None:
-        ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+        ts = datetime.now().strftime("%Y%m%dT%H%M%S%f")
     return f"{_sanitize(ts)}_{_sanitize(plan)}_{_sanitize(board)}.jsonl"
 
 

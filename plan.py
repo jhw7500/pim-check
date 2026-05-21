@@ -229,7 +229,7 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
         if not isinstance(exec_cfg, dict):
             errors.append("'execution'은 dict이어야 합니다.")
         else:
-            for key in ("stop_on_fail",):
+            for key in ("stop_on_fail", "monitor_until_pass"):
                 if key in exec_cfg and not isinstance(exec_cfg[key], bool):
                     errors.append(f"execution.{key}은 bool이어야 합니다.")
             for key in ("case_retry", "retry_wait_sec",
@@ -238,6 +238,13 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     errors.append(f"execution.{key}은 정수여야 합니다.")
                 elif key in exec_cfg and exec_cfg[key] < 0:
                     errors.append(f"execution.{key}은 0 이상이어야 합니다.")
+            # monitor_cap_sec: None(미사용) 또는 0 이상 정수 (bool 제외)
+            cap = exec_cfg.get("monitor_cap_sec")
+            if cap is not None:
+                if isinstance(cap, bool) or not isinstance(cap, int):
+                    errors.append("execution.monitor_cap_sec은 정수 또는 null이어야 합니다.")
+                elif cap < 0:
+                    errors.append("execution.monitor_cap_sec은 0 이상이어야 합니다.")
 
     # reports (옵션)
     if "reports" in plan_dict:
