@@ -61,6 +61,42 @@ class TestProcessCheckCollect(unittest.TestCase):
         self.assertNotIn("gstApp", data["running"])
         self.assertNotIn("gstApp", data["cpu"])
 
+    def test_collect_empty_pgrep_output_is_missing(self):
+        """pgrep 이 빈 문자열("")을 반환해도 (None 아님) missing 으로 처리,
+        IndexError 없음 — 리부트 직후 프로세스 미기동 윈도우 회귀 방지."""
+        ssh = MagicMock()
+        ssh.run.return_value = ""   # 매치 없음: exit!=0 + 빈 stdout
+
+        data = self.check.collect(ssh, self.config)
+
+        all_procs = (
+            self.config["processes"]["required"]
+            + self.config["processes"]["optional"]
+        )
+        self.assertEqual(sorted(data["missing"]), sorted(all_procs))
+        self.assertEqual(data["running"], [])
+        self.assertEqual(data["cpu"], {})
+
+    def test_collect_pgrep_x_empty_falls_back_to_pgrep_f(self):
+        """pgrep -x 가 "" 면 pgrep -f 폴백을 시도하고, 거기서 pid 가 나오면 running."""
+        ssh = MagicMock()
+
+        def side_effect(cmd):
+            if cmd.startswith("pgrep -x"):
+                return ""          # -x 매치 실패
+            if cmd.startswith("pgrep -f"):
+                return "4321"      # -f 폴백 성공
+            return "3.0"           # ps cpu
+
+        ssh.run.side_effect = side_effect
+        data = self.check.collect(ssh, self.config)
+        all_procs = (
+            self.config["processes"]["required"]
+            + self.config["processes"]["optional"]
+        )
+        self.assertEqual(sorted(data["running"]), sorted(all_procs))
+        self.assertEqual(data["missing"], [])
+
 
 class TestProcessCheckValidate(unittest.TestCase):
     def setUp(self):
