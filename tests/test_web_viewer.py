@@ -84,6 +84,34 @@ def test_no_producer_lost_after_run_end(tmp_path):
     assert s["producer_lost"] is False
 
 
+def test_pending_exposed_and_not_a_fault(tmp_path):
+    # 현재 케이스가 '준비 중'(NEED_2_FINALIZES)이면 pending 으로 노출, fault 아님.
+    p = str(tmp_path / "e.jsonl")
+    _write(p, [
+        {"event_type": "run_start", "plan": "smoke", "board": "b", "elapsed_s": 0,
+         "cases": ["c1"], "total_cases": 1},
+        {"event_type": "case_start", "case_name": "c1", "phase": "collect", "elapsed_s": 0.1},
+        {"event_type": "pending", "check": "recording", "reason": "NEED_2_FINALIZES",
+         "case_name": "c1", "elapsed_s": 1},
+    ])
+    s = build_state(p)
+    assert s["pending"] == "NEED_2_FINALIZES"
+    assert s["fail_classification"] == {}
+    assert s["fail"] == 0
+
+
+def test_elapsed_s_exposed_for_live_clock(tmp_path):
+    # 웹 라이브 경과 시계용: build_state 가 run elapsed_s 를 노출한다.
+    p = str(tmp_path / "e.jsonl")
+    _write(p, [
+        {"event_type": "run_start", "plan": "smoke", "board": "b", "elapsed_s": 0,
+         "cases": ["c1"], "total_cases": 1},
+        {"event_type": "heartbeat", "elapsed_s": 42.5, "heartbeat_seq": 8},
+    ])
+    s = build_state(p)
+    assert s["elapsed_s"] == 42.5
+
+
 def test_transient_fail_classified_resolved(tmp_path):
     # 도중 check fail 이벤트가 떴지만 case 는 pass → resolved(일시 fail).
     p = str(tmp_path / "e.jsonl")

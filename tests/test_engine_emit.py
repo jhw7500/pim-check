@@ -32,10 +32,40 @@ class _FailCheck(BaseCheck):
         return (False, "gstApp 죽음")
 
 
+class _PendingCheck(BaseCheck):
+    name = "recording"
+
+    def collect(self, ssh, config):
+        return {}
+
+    def validate(self, data, config):
+        return (False, "ch0 fps ... (got: FAIL:NEED_2_FINALIZES_AFTER_BOOT)")
+
+
 def _engine(checks, **kw):
     eng = Engine(MagicMock(), {"checks": {}}, **kw)
     eng.checks = checks
     return eng
+
+
+def test_stabilization_reason_emits_pending_not_fail():
+    # NEED_2_FINALIZES 는 장애가 아니라 '준비 중' → pending 이벤트로 emit.
+    emitted: list[str] = []
+    eng = _engine([_PendingCheck()], emitter=emitted.append,
+                  emit_context={"case_name": "c1"})
+    eng.run_snapshot()
+    assert len(emitted) == 1
+    rec = json.loads(emitted[0])
+    assert rec["event_type"] == "pending"
+    assert rec["check"] == "recording"
+    assert rec["case_name"] == "c1"
+
+
+def test_real_fault_still_emits_fail():
+    emitted: list[str] = []
+    eng = _engine([_FailCheck()], emitter=emitted.append, emit_context={"case_name": "c1"})
+    eng.run_snapshot()
+    assert json.loads(emitted[0])["event_type"] == "fail"
 
 
 def test_emits_one_fail_event_with_context():

@@ -236,3 +236,54 @@ class TestCaseDetails:
         assert set(det) == {"c1", "c2", "c3", "c4"}
         assert det["c1"]["status"] == "pass" and det["c1"]["fail_count"] == 0
         assert det["c4"]["status"] == "pending"
+
+
+class TestPendingEvents:
+    """pending(준비 중) 이벤트는 fault 가 아님 — 분류/카운트에 영향 없음."""
+
+    def test_pending_is_not_a_fault(self):
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "pending", "elapsed_s": 0.5, "check": "recording",
+                   "reason": "NEED_2_FINALIZES", "case_name": "c1"}),
+        ])
+        assert st.fail_classification == {}      # fault 아님
+        assert st.fail_summaries == {}
+        assert st.pending_summaries == {"c1": "NEED_2_FINALIZES"}
+        assert st.case_status["c1"] == "running"
+
+    def test_pending_then_pass_is_clean(self):
+        # 준비 중만 있다가 통과 → fault/회복 어디에도 안 뜨는 '깨끗한' 케이스.
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "pending", "elapsed_s": 0.5, "check": "recording",
+                   "reason": "NEED_2_FINALIZES", "case_name": "c1"}),
+            _line({"event_type": "case_end", "elapsed_s": 9.0, "case_name": "c1",
+                   "phase": "validate", "result": "pass", "completed_cases": 1,
+                   "pass_count": 1, "fail_count": 0, "avg_case_duration_s": 9.0}),
+        ])
+        assert st.fail_classification == {}
+        assert st.pending_summaries == {}        # 종료 → 해제
+        assert st.case_status["c1"] == "pass"
+        assert st.case_details["c1"]["pending"] is None
+
+    def test_pending_does_not_mask_real_fault(self):
+        # 같은 케이스에 pending 후 실제 fail 이 오면 fault 로 분류된다.
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "pending", "elapsed_s": 0.5, "check": "recording",
+                   "reason": "NEED_2_FINALIZES", "case_name": "c1"}),
+            _line({"event_type": "fail", "elapsed_s": 1.0, "check": "process",
+                   "reason": "gstApp 죽음", "case_name": "c1"}),
+        ])
+        assert st.fail_classification == {"c1": "active"}
+        assert st.fail_summaries == {"c1": "gstApp 죽음"}

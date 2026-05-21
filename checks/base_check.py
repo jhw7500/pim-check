@@ -1,7 +1,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
-from event_stream import serialize_fail_event
+from event_stream import serialize_fail_event, serialize_pending_event
+from verify_retry import is_stabilization_reason
 
 
 class BaseCheck(ABC):
@@ -16,7 +17,11 @@ class BaseCheck(ABC):
         """Validate collected data. Returns (passed, reason)."""
 
     def validate_and_emit(self, data: dict, config: dict, emitter=None, **context) -> tuple[bool, str]:
-        """Run validate() and emit exactly one Fail event on the Fail path.
+        """Run validate() and emit exactly one event on the Fail path.
+
+        On a Fail outcome the emitted event is a ``pending`` event when the reason
+        is a stabilization/not-ready signal (NEED_2_FINALIZES 등), otherwise a
+        ``fail`` event. This keeps "still warming up" out of the fault stream.
 
         Wires the JSONL fail emitter into the validate() path so that real-time
         fault visibility (PimEventStream ``fail`` event) is produced the moment a
@@ -45,5 +50,10 @@ class BaseCheck(ABC):
         """
         passed, reason = self.validate(data, config)
         if not passed and emitter is not None:
-            emitter(serialize_fail_event(self.name, reason, **context))
+            # 안정화 미달(NEED_2_FINALIZES 등)은 장애가 아니라 '준비 중' → pending,
+            # 그 외 실제 결함만 fail 로 표면화한다.
+            if is_stabilization_reason(reason):
+                emitter(serialize_pending_event(self.name, reason, **context))
+            else:
+                emitter(serialize_fail_event(self.name, reason, **context))
         return passed, reason
