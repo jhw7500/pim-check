@@ -178,6 +178,7 @@ let LAST = null;    // 마지막 /state 응답
 let OPEN = new Set();  // 검증 방법(toggle)이 펼쳐진 체크리스트 항목 키 (재렌더 사이 유지)
 let SRV = {elapsed:0, at:0, ended:false, lost:false, exists:false};  // 시계 보간 기준점
 let CUR_START = null;  // 현재 케이스 시작 elapsed_s
+let LAST_RUN = null;   // 직전 폴링의 run_id (런 경계 감지용)
 function fmtEta(s){ s=Math.max(0,Math.round(s||0)); return s<60?("~"+s+"s"):("~"+Math.floor(s/60)+"m "+(s%60)+"s"); }
 function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); return s<60?(s+"s"):(Math.floor(s/60)+"m "+(s%60)+"s"); }
 function fmtClock(s){ s=Math.max(0,Math.floor(s||0)); const m=Math.floor(s/60); return m?(m+"m "+(s%60)+"s"):(s+"s"); }
@@ -342,9 +343,14 @@ async function tick(){
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
     document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?');
-    // 시계 보간 기준점 갱신 — baseline 을 단조롭게 유지(서버가 같은 elapsed 를
-    // 연속 보고해도 보간 시계가 뒤로 튀지 않도록 max 로 클램프).
-    SRV = {elapsed:Math.max(liveElapsed(), d.elapsed_s||0), at:Date.now(),
+    // 런 경계 감지: run_id 가 바뀌면 새 런의 elapsed_s 로 baseline 을 리셋한다.
+    // (안 그러면 아래 max 클램프가 이전 런의 높은 elapsed 를 그대로 끌고 와 새 런 시계가 오염됨)
+    const runChanged = (d.run_id != null && d.run_id !== LAST_RUN);
+    LAST_RUN = d.run_id;
+    if(runChanged){ CUR_START=null; OPEN.clear(); }
+    // 시계 보간 기준점 갱신 — 같은 런 안에서는 baseline 을 단조롭게 유지(서버가 같은
+    // elapsed 를 연속 보고해도 보간 시계가 뒤로 튀지 않도록 max 로 클램프).
+    SRV = {elapsed: runChanged ? (d.elapsed_s||0) : Math.max(liveElapsed(), d.elapsed_s||0), at:Date.now(),
            ended:!!d.run_ended, lost:!!d.producer_lost, exists:true};
     if(d.producer_lost){ setBadge('b-lost','lost','Producer lost ('+d.idle_s+'s)'); }
     else if(d.run_ended){ setBadge('b-done','done','DONE'); }
