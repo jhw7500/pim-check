@@ -287,3 +287,6 @@ class TestPendingEvents:
         ])
         assert st.fail_classification == {"c1": "active"}
         assert st.fail_summaries == {"c1": "gstApp 죽음"}
+        # 실제 fault 가 오면 pending 은 해제된다 (⚠ FAULT 와 ⏳ 준비 중 동시 표시 방지).
+        assert st.pending_summaries == {}
+        assert st.case_details["c1"]["pending"] is None

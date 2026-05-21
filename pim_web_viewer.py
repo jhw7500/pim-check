@@ -127,8 +127,9 @@ INDEX_HTML = """<!doctype html>
   .banner .bcase { font-size:18px; font-weight:700; color:#cfe0ff; }
   .banner .bt { margin-left:auto; font-size:20px; font-variant-numeric:tabular-nums; color:#fbbf24; }
   .box .case-h { font-weight:700; margin:4px 0 1px; }
-  .box .sub { margin:0 0 4px 14px; font-size:12px; opacity:.92; }
+  .box .sub, .detail .sub { margin:0 0 4px 14px; font-size:12px; opacity:.92; }
   .confirmed .case-h { color:#f87171; } .active .case-h { color:#fbbf24; }
+  .confirmed .sub { color:#fca5a5; } .active .sub { color:#fcd34d; }
 </style></head>
 <body><div class="wrap">
   <h1 id="title">pim_viewer (web)</h1>
@@ -261,13 +262,15 @@ function renderDetail(d){
   if(!fails.length){ const n=document.createElement('div'); n.className='none'; n.textContent=(cd.status==='pass'?'fault 없이 통과':'fault 이벤트 없음'); box.appendChild(n); return; }
   const resolved=(cd.classification==='resolved');
   fails.forEach(f=>{
-    const head=document.createElement('div'); head.className='fl '+(resolved?'r':'c');
-    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s-(cd.started_s||0))+'s '):''); head.appendChild(t);
-    const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check'); head.appendChild(ck);
-    box.appendChild(head);
-    splitReason(f.reason).forEach(line=>{
-      const d=document.createElement('div'); d.className='rs sub'; d.textContent=(resolved?'↻ ':'✗ ')+line; box.appendChild(d);
+    // reason 줄을 row(.fl r/c) 안에 넣어야 .detail .fl.r/.fl.c .rs 색상 셀렉터가 매칭된다.
+    const row=document.createElement('div'); row.className='fl '+(resolved?'r':'c');
+    const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s-(cd.started_s||0))+'s '):''); row.appendChild(t);
+    const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check'); row.appendChild(ck);
+    const lines=splitReason(f.reason);
+    (lines.length?lines:['(원인 미상)']).forEach(line=>{
+      const d=document.createElement('div'); d.className='rs sub'; d.textContent=(resolved?'↻ ':'✗ ')+line; row.appendChild(d);
     });
+    box.appendChild(row);
   });
 }
 
@@ -279,8 +282,10 @@ async function tick(){
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
     document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?');
-    // 시계 보간 기준점 갱신
-    SRV = {elapsed:d.elapsed_s||0, at:Date.now(), ended:!!d.run_ended, lost:!!d.producer_lost, exists:true};
+    // 시계 보간 기준점 갱신 — baseline 을 단조롭게 유지(서버가 같은 elapsed 를
+    // 연속 보고해도 보간 시계가 뒤로 튀지 않도록 max 로 클램프).
+    SRV = {elapsed:Math.max(liveElapsed(), d.elapsed_s||0), at:Date.now(),
+           ended:!!d.run_ended, lost:!!d.producer_lost, exists:true};
     if(d.producer_lost){ setBadge('b-lost','lost','Producer lost ('+d.idle_s+'s)'); }
     else if(d.run_ended){ setBadge('b-done','done','DONE'); }
     else { setBadge('b-run','run','RUNNING'); }

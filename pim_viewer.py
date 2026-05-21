@@ -76,8 +76,8 @@ def format_dashboard(state: ViewerState, *, producer_lost: bool = False) -> str:
     pending = state.pending_summaries
     if pending:
         out.append("Warming up (준비 중, not a fault):")
-        for name in pending:
-            out.append(f"  ⏳ {name}")
+        for name, reason in pending.items():
+            out.append(f"  ⏳ {name}: {reason}")
 
     out.append("Cases:")
     for name in state.cases:
