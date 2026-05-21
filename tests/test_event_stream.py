@@ -53,6 +53,21 @@ class TestSerializeCaseStartPlan(unittest.TestCase):
         self.assertNotIn("checklist", rec)
 
 
+class TestRunStartPlans(unittest.TestCase):
+    def test_run_start_carries_case_plans(self):
+        from event_stream import serialize_run_start
+        rec = json.loads(serialize_run_start(
+            run_id="r", plan="p", board="b", elapsed_s=0, cases=["c1"],
+            case_plans={"c1": {"desc": "d", "checklist": [{"name": "x"}]}}))
+        self.assertEqual(rec["case_plans"]["c1"]["desc"], "d")
+
+    def test_run_start_omits_plans_when_absent(self):
+        from event_stream import serialize_run_start
+        rec = json.loads(serialize_run_start(
+            run_id="r", plan="p", board="b", elapsed_s=0, cases=["c1"]))
+        self.assertNotIn("case_plans", rec)
+
+
 class TestStabilizationReason(unittest.TestCase):
     def test_classifies_not_ready_vs_real_fault(self):
         from verify_retry import is_stabilization_reason

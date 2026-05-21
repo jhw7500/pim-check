@@ -85,14 +85,18 @@ def _base_event(event_type: str, run_id: str, plan: str, board: str,
 
 
 def serialize_run_start(*, run_id, plan, board, elapsed_s, cases,
-                        total_cases=None, ts=None) -> str:
+                        total_cases=None, case_plans=None, ts=None) -> str:
     """run 시작 이벤트. 전체 case 목록과 총 개수를 담는다 (run_start 에만 존재).
 
-    total_cases 미지정 시 ``len(cases)`` 로 채운다.
+    total_cases 미지정 시 ``len(cases)`` 로 채운다. case_plans 가 주어지면
+    {case_name: {"desc":..., "checklist":[...]}} 형태로 함께 실어, 아직 시작 안 한
+    대기 케이스도 뷰어가 검증 항목을 미리 보여줄 수 있게 한다.
     """
     rec = _base_event("run_start", run_id, plan, board, elapsed_s, ts)
     rec["cases"] = list(cases)
     rec["total_cases"] = total_cases if total_cases is not None else len(rec["cases"])
+    if case_plans is not None:
+        rec["case_plans"] = case_plans
     return json.dumps(rec, ensure_ascii=False)
 
 

@@ -74,10 +74,10 @@ class EventSession:
     def _common(self) -> dict:
         return {"run_id": self.run_id, "plan": self.plan, "board": self.board}
 
-    def emit_run_start(self, cases, total_cases=None) -> None:
+    def emit_run_start(self, cases, total_cases=None, case_plans=None) -> None:
         self.emit(es.serialize_run_start(
             **self._common(), elapsed_s=self.elapsed_s(),
-            cases=cases, total_cases=total_cases,
+            cases=cases, total_cases=total_cases, case_plans=case_plans,
         ))
 
     def emit_case_start(self, case_name: str, phase: str,
