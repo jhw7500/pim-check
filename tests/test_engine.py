@@ -81,6 +81,41 @@ class TestEngine:
         assert results == clean_snap
 
     @patch("engine.time.sleep")
+    def test_run_monitor_stable_fail_early_exit(self, mock_sleep):
+        # 동일한 '실제 fail'(비-stabilization)이 STABLE_FAIL_SAMPLES(3)회 연속이면 조기 종료.
+        from engine import Engine, STABLE_FAIL_SAMPLES
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 20, "interval_sec": 1}  # samples_total=20
+        engine = Engine(self.ssh, profile)
+        fail_snap = [{"name": "custom_commands", "passed": False,
+                      "reason": "ch3 bitrate (got: FAIL:5596kbps_ex=8192kbps)"}]
+        engine.run_snapshot = MagicMock(return_value=fail_snap)  # 매번 같은 실제 fail
+
+        results, collected, total = engine.run_monitor(until_pass=True)
+
+        assert engine.run_snapshot.call_count == STABLE_FAIL_SAMPLES  # 20 이 아니라 3
+        assert collected == STABLE_FAIL_SAMPLES
+        assert any(not r["passed"] for r in results)
+
+    @patch("engine.time.sleep")
+    def test_run_monitor_stabilization_fail_does_not_early_exit(self, mock_sleep):
+        # NEED_2_FINALIZES('준비 중')는 stable-fail 대상이 아니므로 끝까지 샘플링한다.
+        from engine import Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 5, "interval_sec": 1}  # samples_total=5
+        engine = Engine(self.ssh, profile)
+        pending_snap = [{"name": "recording", "passed": False,
+                         "reason": "FAIL:NEED_2_FINALIZES_AFTER_BOOT"}]
+        engine.run_snapshot = MagicMock(return_value=pending_snap)
+
+        results, collected, total = engine.run_monitor(until_pass=True)
+
+        # 3 회에 끊기지 않고 samples_total(5)까지 간다.
+        assert collected == 5
+
+    @patch("engine.time.sleep")
     def test_run_monitor_without_until_pass_merges_transient_fail(self, mock_sleep):
         # 기본(comprehensive): until_pass 없으면 전 구간 sample → 일시 fail 이 merge 되어 살아남는다.
         from engine import Engine
