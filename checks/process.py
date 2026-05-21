@@ -21,12 +21,17 @@ class ProcessCheck(BaseCheck):
             # pgrep -x: 정확한 프로세스 이름 매칭 (바이너리)
             # pgrep -f: 명령줄 전체 매칭 (셸 스크립트 폴백)
             result = ssh.run(f"pgrep -x {proc}")
-            if result is None:
+            if not result:
                 result = ssh.run(f"pgrep -f {proc}")
-            if result is not None:
+            # 빈 문자열("")도 '미기동'으로 취급. pgrep 은 매치 없으면 exit!=0 + 빈 stdout 을
+            # 내는데, ssh.run 이 "" 를 돌려주면 'result is not None' 으로는 안 걸러져
+            # splitlines()[0] 가 IndexError 를 냈다(리부트 직후 프로세스 미기동 윈도우).
+            # truthiness 로 None/"" 를 함께 처리한다.
+            lines = result.splitlines() if result else []
+            if lines:
                 running.append(proc)
                 # ps -C는 정확한 이름만 지원하므로 PID 기반으로 CPU 조회
-                pid = result.splitlines()[0].strip()
+                pid = lines[0].strip()
                 cpu_raw = ssh.run(f"ps -p {pid} -o %cpu= 2>/dev/null | head -1")
                 try:
                     cpu[proc] = float(cpu_raw)
