@@ -5,9 +5,13 @@ import time
 
 from checks import ALL_CHECKS
 from ssh import SshClient, SshTimeoutError, SshConnectionError
+from verify_retry import is_stabilization_reason
 
 DEFAULT_SHUTDOWN_TIMEOUT = 600  # 10분
 DEFAULT_SHUTDOWN_POLL = 60      # 1분
+# until_pass 모니터에서 동일한 '실제 fail'(비-stabilization)이 이만큼 연속 관측되면
+# 지속 결함으로 판단해 조기 종료한다(전 구간 대기 회피).
+STABLE_FAIL_SAMPLES = 3
 
 
 class Engine:
@@ -94,6 +98,23 @@ class Engine:
         print(f"Target did not recover within {timeout}s")
         return False
 
+    def _real_fail_signature(self, snap):
+        """스냅샷에서 '실제 fail'(passed=False & 비-stabilization)의 시그니처 반환.
+
+        NEED_2_FINALIZES / recovering / process 미기동 등 '준비 중' 신호는 제외한다
+        (그건 시간이 지나면 풀릴 수 있으므로 조기 종료 대상이 아님). 실제 fail 이 없으면
+        None, 있으면 (name, reason) 쌍의 frozenset.
+        """
+        if not snap:
+            return None
+        sig = frozenset(
+            (r.get("name"), r.get("reason"))
+            for r in snap
+            if isinstance(r, dict) and not r.get("passed")
+            and not is_stabilization_reason(r.get("reason", ""))
+        )
+        return sig or None
+
     def run_monitor(self, until_pass: bool = False) -> tuple[list, int, int]:
         """지정된 duration 동안 interval마다 스냅샷을 수집한다.
 
@@ -120,6 +141,8 @@ class Engine:
         snapshots: list[list] = []
         start = time.time()
         consecutive_failures = 0
+        stable_sig = None      # 직전 '실제 fail' 시그니처 (frozenset)
+        stable_streak = 0      # 동일 실제 fail 연속 횟수
 
         while time.time() - start < duration:
             # 스냅샷 실행 전 연결 확인
@@ -141,12 +164,23 @@ class Engine:
             snap = self.run_snapshot()
             snapshots.append(snap)
 
-            # early-exit-on-pass: 전 체크 통과 스냅샷이 나오면 즉시 종료.
-            # 통과 스냅샷만 권위로 반환한다(merge 시 직전의 일시 fail 이 살아남는 것 방지).
-            if until_pass and snap and all(
-                isinstance(r, dict) and r.get("passed") for r in snap
-            ):
-                return (snap, len(snapshots), samples_total)
+            if until_pass:
+                # early-exit-on-pass: 전 체크 통과 스냅샷이 나오면 즉시 종료.
+                # 통과 스냅샷만 권위로 반환한다(merge 시 직전의 일시 fail 이 살아남는 것 방지).
+                if snap and all(isinstance(r, dict) and r.get("passed") for r in snap):
+                    return (snap, len(snapshots), samples_total)
+                # stable-fail early-exit: 동일한 '실제 fail'(비-stabilization)이
+                # STABLE_FAIL_SAMPLES 회 연속이면 지속 결함으로 보고 종료.
+                # NEED_2_FINALIZES 등 '준비 중'만 있으면 streak 리셋(계속 대기).
+                sig = self._real_fail_signature(snap)
+                if sig is None:
+                    stable_sig, stable_streak = None, 0
+                elif sig == stable_sig:
+                    stable_streak += 1
+                else:
+                    stable_sig, stable_streak = sig, 1
+                if stable_streak >= STABLE_FAIL_SAMPLES:
+                    return (snap, len(snapshots), samples_total)
 
             if len(snapshots) >= samples_total:
                 break
