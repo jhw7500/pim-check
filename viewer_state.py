@@ -208,6 +208,34 @@ class ViewerState:
             if self._status.get(n) == "running"
         }
 
+    def _deduped_fails(self, name: str) -> list[dict]:
+        """동일 (check, reason) fault 이벤트를 묶어 count 와 함께 반환.
+
+        until_pass 모니터가 ~interval 마다 재샘플링하면 지속 결함이 같은 fault 를
+        반복 emit 하는데(루프처럼 보임), 드릴다운에서 1줄(×count)로 접는다.
+        elapsed_s 는 첫 발생, last_elapsed_s 는 마지막 발생.
+        """
+        out: list[dict] = []
+        index: dict[tuple, int] = {}
+        for f in self._case_fails.get(name, []):
+            key = (f.get("check"), f.get("reason"))
+            es = f.get("elapsed_s")
+            if key in index:
+                entry = out[index[key]]
+                entry["count"] += 1
+                if isinstance(es, (int, float)):
+                    entry["last_elapsed_s"] = es
+            else:
+                index[key] = len(out)
+                out.append({
+                    "check": f.get("check"),
+                    "reason": f.get("reason"),
+                    "count": 1,
+                    "elapsed_s": es,
+                    "last_elapsed_s": es,
+                })
+        return out
+
     def _checklist_view(self, name: str) -> tuple[list[dict], int]:
         """케이스의 검증 항목 + 항목별 상태 유도, (checklist, passed_count) 반환.
 
@@ -253,7 +281,7 @@ class ViewerState:
                 "duration_s": round(duration, 2) if duration is not None else None,
                 "classification": self._classify(name),
                 "fail_count": len(self._case_fails.get(name, [])),
-                "fails": [dict(f) for f in self._case_fails.get(name, [])],
+                "fails": self._deduped_fails(name),
                 "pending": self._case_pending.get(name),
                 "desc": self._case_desc.get(name),
                 "checklist": checklist,

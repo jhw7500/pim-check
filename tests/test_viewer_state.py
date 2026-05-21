@@ -237,6 +237,28 @@ class TestCaseDetails:
         assert det["c1"]["status"] == "pass" and det["c1"]["fail_count"] == 0
         assert det["c4"]["status"] == "pending"
 
+    def test_repeated_fault_deduped_with_count(self):
+        # until_pass 재샘플링으로 같은 fault 가 반복 emit 돼도 1줄(×count)로 접힌다.
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "fail", "elapsed_s": 10.0, "check": "custom_commands",
+                   "reason": "ch3 bitrate (got: 5596kbps_ex=8192kbps)", "case_name": "c1"}),
+            _line({"event_type": "fail", "elapsed_s": 15.0, "check": "custom_commands",
+                   "reason": "ch3 bitrate (got: 5596kbps_ex=8192kbps)", "case_name": "c1"}),
+            _line({"event_type": "fail", "elapsed_s": 20.0, "check": "custom_commands",
+                   "reason": "ch3 bitrate (got: 5596kbps_ex=8192kbps)", "case_name": "c1"}),
+        ])
+        det = st.case_details["c1"]
+        assert len(det["fails"]) == 1
+        assert det["fails"][0]["count"] == 3
+        assert det["fails"][0]["elapsed_s"] == 10.0       # 첫 발생
+        assert det["fails"][0]["last_elapsed_s"] == 20.0  # 마지막 발생
+        # 원시 이벤트 수는 그대로 보존.
+        assert det["fail_count"] == 3
+
 
 class TestChecklist:
     """case_start 의 설명 + 검증 항목(checklist) 캡처 및 항목별 상태 유도."""
