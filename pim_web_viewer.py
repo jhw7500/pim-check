@@ -107,6 +107,7 @@ INDEX_HTML = """<!doctype html>
   .detail .meta { color:#8a93a6; font-size:12px; margin-bottom:8px; }
   .detail .fl { font-size:12px; padding:3px 0; border-top:1px solid #1c2433; }
   .detail .fl .t { color:#7aa2f7; } .detail .fl .ck { color:#cbd5e1; }
+  .detail .fl .cnt { color:#fbbf24; font-weight:700; }
   .detail .fl.r .rs { color:#86efac; } .detail .fl.c .rs { color:#fca5a5; }
   .detail .none { color:#5b647a; font-size:12px; }
   .detail .pendbox { margin:6px 0; padding:9px 12px; border-radius:8px; background:#1f1810; border:1px solid #3d2f12; }
@@ -321,6 +322,7 @@ function renderDetail(d){
     const row=document.createElement('div'); row.className='fl '+(resolved?'r':'c');
     const t=document.createElement('span'); t.className='t'; t.textContent=(f.elapsed_s!=null?('+'+Math.round(f.elapsed_s-(cd.started_s||0))+'s '):''); row.appendChild(t);
     const ck=document.createElement('span'); ck.className='ck'; ck.textContent=(f.check||'check'); row.appendChild(ck);
+    if(f.count>1){ const cnt=document.createElement('span'); cnt.className='cnt'; cnt.textContent=' ×'+f.count; row.appendChild(cnt); }
     const lines=splitReason(f.reason);
     (lines.length?lines:['(원인 미상)']).forEach(line=>{
       const d=document.createElement('div'); d.className='rs sub'; d.textContent=(resolved?'↻ ':'✗ ')+line; row.appendChild(d);
