@@ -347,7 +347,7 @@ async function tick(){
     // (안 그러면 아래 max 클램프가 이전 런의 높은 elapsed 를 그대로 끌고 와 새 런 시계가 오염됨)
     const runChanged = (d.run_id != null && d.run_id !== LAST_RUN);
     LAST_RUN = d.run_id;
-    if(runChanged){ CUR_START=null; OPEN.clear(); }
+    if(runChanged){ CUR_START=null; SEL=null; OPEN.clear(); }
     // 시계 보간 기준점 갱신 — 같은 런 안에서는 baseline 을 단조롭게 유지(서버가 같은
     // elapsed 를 연속 보고해도 보간 시계가 뒤로 튀지 않도록 max 로 클램프).
     SRV = {elapsed: runChanged ? (d.elapsed_s||0) : Math.max(liveElapsed(), d.elapsed_s||0), at:Date.now(),
