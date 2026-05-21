@@ -39,7 +39,9 @@ execution:
   wait_between_cases: 0
   # monitor_cap_sec 미사용: 카메라 검증은 "부팅 후 finalize 2개"(= 2×recording_time)를
   # 요구하므로 그보다 짧게 cap하면 NEED_2_FINALIZES_AFTER_BOOT 로 실패한다.
-  # 카메라 case 는 base.yaml 의 monitor.duration_sec(300s) 자연값을 그대로 사용한다.
+  # 대신 finalize-aware: monitor 가 전 체크 통과 스냅샷에서 조기 종료(duration 300s 는 상한).
+  # finalize 2개가 준비되는 즉시 끝나므로, 검증을 깨지 않으면서 카메라 case 를 단축한다.
+  monitor_until_pass: true
 
 gate:
   threshold_pass_rate: 1.0   # smoke는 100% 통과 요구

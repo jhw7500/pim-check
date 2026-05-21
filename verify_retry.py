@@ -60,6 +60,7 @@ def run_verify_with_retry(
     ssh,
     effective_duration: int = 0,
     log: Callable[[str], None] | None = None,
+    until_pass: bool = False,
 ) -> tuple[list, int, int]:
     """첫 검증(snapshot 또는 monitor) → 안정화 의심이면 60s 대기 후 snapshot 재수집.
 
@@ -68,6 +69,8 @@ def run_verify_with_retry(
         ssh: SshClient (check_connectivity 보유)
         effective_duration: monitor.duration_sec > 0 이면 monitor, 아니면 snapshot
         log: 진행 메시지 출력 콜백 (None이면 silent)
+        until_pass: True 면 monitor 가 전 체크 통과 스냅샷에서 조기 종료(duration 은 상한).
+                    finalize-aware sanity gate(smoke) 용 — 카메라 case 단축.
 
     Returns:
         (results, collected, total) — 마지막 채택된 검증 결과.
@@ -86,7 +89,7 @@ def run_verify_with_retry(
         results = engine.run_snapshot()
         collected, total = 1, 1
     else:
-        results, collected, total = engine.run_monitor()
+        results, collected, total = engine.run_monitor(until_pass=until_pass)
 
     for attempt in range(2, MAX_ATTEMPTS + 1):
         if not _has_real_fail(results):
