@@ -34,6 +34,8 @@ class ViewerState:
         self._case_started_s: dict[str, float] = {}    # name -> 첫 case_start elapsed_s
         self._case_ended_s: dict[str, float] = {}      # name -> 마지막 case_end elapsed_s
         self._case_pending: dict[str, str] = {}        # name -> 마지막 '준비 중' reason (fault 아님)
+        self._case_desc: dict[str, str] = {}           # name -> 케이스 설명 (case_start)
+        self._case_checklist: dict[str, list[dict]] = {}  # name -> [{name,command,expected}]
 
     # --- folding -----------------------------------------------------------
     def apply(self, event: dict) -> None:
@@ -63,6 +65,12 @@ class ViewerState:
                     self._case_phase[name] = phase
                 if isinstance(es, (int, float)):
                     self._case_started_s.setdefault(name, float(es))
+                desc = event.get("case_desc")
+                if desc is not None:
+                    self._case_desc[name] = desc
+                checklist = event.get("checklist")
+                if checklist is not None:
+                    self._case_checklist[name] = list(checklist)
         elif et == "case_end":
             name = event.get("case_name")
             result = event.get("result")
@@ -200,14 +208,43 @@ class ViewerState:
             if self._status.get(n) == "running"
         }
 
+    def _checklist_view(self, name: str) -> tuple[list[dict], int]:
+        """케이스의 검증 항목 + 항목별 상태 유도, (checklist, passed_count) 반환.
+
+        항목별 상태는 case 결과로부터 유도한다(per-item 라이브 이벤트 없이):
+          - case pass  → 모든 항목 pass
+          - case fail  → fail reason 에 항목명이 있으면 fail, 아니면 pass
+          - 그 외(running/pending) → 항목 running(대기)
+        """
+        items = self._case_checklist.get(name)
+        if not items:
+            return [], 0
+        status = self._status.get(name, "pending")
+        reason = self._fail_summaries.get(name, "")
+        out: list[dict] = []
+        passed = 0
+        for item in items:
+            iname = item.get("name", "")
+            if status == "pass":
+                st = "pass"
+            elif status == "fail":
+                st = "fail" if (iname and iname in reason) else "pass"
+            else:
+                st = "running"
+            if st == "pass":
+                passed += 1
+            out.append({**item, "status": st})
+        return out, passed
+
     @property
     def case_details(self) -> dict[str, dict]:
-        """모든 케이스의 드릴다운 상세(상태/phase/소요시간/fail 목록/준비중)."""
+        """모든 케이스의 드릴다운 상세(상태/phase/소요시간/fail 목록/준비중/체크리스트)."""
         out: dict[str, dict] = {}
         for name in self._cases:
             start = self._case_started_s.get(name)
             end = self._case_ended_s.get(name)
             duration = (end - start) if (start is not None and end is not None) else None
+            checklist, checks_passed = self._checklist_view(name)
             out[name] = {
                 "status": self._status.get(name, "pending"),
                 "phase": self._case_phase.get(name),
@@ -218,6 +255,10 @@ class ViewerState:
                 "fail_count": len(self._case_fails.get(name, [])),
                 "fails": [dict(f) for f in self._case_fails.get(name, [])],
                 "pending": self._case_pending.get(name),
+                "desc": self._case_desc.get(name),
+                "checklist": checklist,
+                "checks_total": len(checklist),
+                "checks_passed": checks_passed,
             }
         return out
 
