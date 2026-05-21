@@ -71,15 +71,18 @@ def start_run(params: dict) -> tuple[int, dict]:
     if not ok:
         return 400, {"ok": False, "error": err}
     try:
-        logf = open(os.path.join(events_dir, "viewer_run.log"), "ab")
-        proc = subprocess.Popen(
-            [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
-             "--plan", clean["plan"], "--host", clean["host"],
-             "--user", clean["user"], "--password", clean["password"],
-             "--json", "--html", "--log"],
-            cwd=REPO_DIR, stdout=logf, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, start_new_session=True,
-        )
+        os.makedirs(events_dir, exist_ok=True)
+        # with 블록: Popen 이 생성자에서 fd 를 자식으로 dup 하므로, spawn 직후 부모 핸들을
+        # 닫아도 자식은 계속 기록한다. (안 닫으면 /start 반복 시 부모 FD 누수)
+        with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
+            proc = subprocess.Popen(
+                [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
+                 "--plan", clean["plan"], "--host", clean["host"],
+                 "--user", clean["user"], "--password", clean["password"],
+                 "--json", "--html", "--log"],
+                cwd=REPO_DIR, stdout=logf, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, start_new_session=True,
+            )
     except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
         return 500, {"ok": False, "error": f"spawn 실패: {e}"}
     run_control.write_control(events_dir, {
