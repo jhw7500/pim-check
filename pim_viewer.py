@@ -54,10 +54,24 @@ def format_dashboard(state: ViewerState, *, producer_lost: bool = False) -> str:
     out.append(f"Current: {state.current_case or '—'}")
     out.append(f"ETA: {_fmt_eta(state.eta_seconds)}")
 
-    if state.fail_summaries:
-        out.append("Failures:")
-        for name, reason in state.fail_summaries.items():
-            out.append(f"  ✗ {name}: {reason}")
+    cls = state.fail_classification
+    if cls:
+        summ = state.fail_summaries
+        confirmed = [n for n in cls if cls[n] == "confirmed"]
+        active = [n for n in cls if cls[n] == "active"]
+        resolved = [n for n in cls if cls[n] == "resolved"]
+        if confirmed:
+            out.append("Failures (final):")
+            for name in confirmed:
+                out.append(f"  ✗ {name}: {summ.get(name, '')}")
+        if active:
+            out.append("Faults (in progress):")
+            for name in active:
+                out.append(f"  ⚠ {name}: {summ.get(name, '')}")
+        if resolved:
+            out.append("Recovered after retry (transient):")
+            for name in resolved:
+                out.append(f"  ↻ {name}")
 
     out.append("Cases:")
     for name in state.cases:

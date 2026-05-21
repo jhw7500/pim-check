@@ -137,3 +137,102 @@ class TestRealtimeCheckFail:
         st.apply({"event_type": "fail", "elapsed_s": 0.5,
                   "check": "process", "reason": "x"})
         assert st.fail_summaries == {}
+
+
+class TestFailClassification:
+    """check 단위 fail 이벤트를 case 결과로 분류 — 일시(resolved) vs 최종(confirmed)."""
+
+    def _resolved(self):
+        # c1: 도중 fail 이벤트가 떴지만 최종 case_end 는 pass (재시도로 회복).
+        return ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "fail", "elapsed_s": 0.5, "check": "recording",
+                   "reason": "NEED_2_FINALIZES", "case_name": "c1"}),
+            _line({"event_type": "case_end", "elapsed_s": 9.0, "case_name": "c1",
+                   "phase": "validate", "result": "pass", "completed_cases": 1,
+                   "pass_count": 1, "fail_count": 0, "avg_case_duration_s": 9.0}),
+        ])
+
+    def test_resolved_when_case_passes_after_fail_event(self):
+        st = self._resolved()
+        assert st.fail_classification == {"c1": "resolved"}
+        # 최종 카운트는 pass — fail_count 0.
+        assert st.fail_count == 0
+        assert st.case_status["c1"] == "pass"
+
+    def test_confirmed_when_case_ends_fail(self):
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "fail", "elapsed_s": 0.5, "check": "process",
+                   "reason": "gstApp 죽음", "case_name": "c1"}),
+            _line({"event_type": "case_end", "elapsed_s": 5.0, "case_name": "c1",
+                   "phase": "validate", "result": "fail", "completed_cases": 1,
+                   "pass_count": 0, "fail_count": 1, "avg_case_duration_s": 5.0,
+                   "reason": "gstApp 죽음"}),
+        ])
+        assert st.fail_classification == {"c1": "confirmed"}
+
+    def test_active_when_fail_event_and_still_running(self):
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "fail", "elapsed_s": 0.5, "check": "thermal",
+                   "reason": "과열", "case_name": "c1"}),
+        ])
+        assert st.fail_classification == {"c1": "active"}
+        assert st.case_status["c1"] == "running"
+
+    def test_confirmed_case_end_fail_without_check_event(self):
+        # check 단위 fail 이벤트 없이 case_end 만 fail (예: NO_SSH) 도 confirmed.
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "case_end", "elapsed_s": 5.0, "case_name": "c1",
+                   "phase": "validate", "result": "fail", "completed_cases": 1,
+                   "pass_count": 0, "fail_count": 1, "avg_case_duration_s": 5.0,
+                   "reason": "NO_SSH"}),
+        ])
+        assert st.fail_classification == {"c1": "confirmed"}
+
+    def test_clean_pass_has_no_classification(self):
+        st = ViewerState.from_lines([
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect"}),
+            _line({"event_type": "case_end", "elapsed_s": 3.0, "case_name": "c1",
+                   "phase": "validate", "result": "pass", "completed_cases": 1,
+                   "pass_count": 1, "fail_count": 0, "avg_case_duration_s": 3.0}),
+        ])
+        assert st.fail_classification == {}
+
+
+class TestCaseDetails:
+    def test_detail_captures_phase_duration_and_fails(self):
+        st = TestFailClassification()._resolved()
+        det = st.case_details["c1"]
+        assert det["status"] == "pass"
+        assert det["classification"] == "resolved"
+        assert det["phase"] == "validate"
+        assert det["duration_s"] == 8.9  # 9.0 - 0.1
+        assert det["fail_count"] == 1
+        assert det["fails"][0]["check"] == "recording"
+        assert det["fails"][0]["reason"] == "NEED_2_FINALIZES"
+
+    def test_detail_for_all_cases_even_without_fails(self):
+        st = ViewerState.from_lines(_stream())
+        det = st.case_details
+        # plan 의 모든 case 가 상세에 존재 (드릴다운 가능).
+        assert set(det) == {"c1", "c2", "c3", "c4"}
+        assert det["c1"]["status"] == "pass" and det["c1"]["fail_count"] == 0
+        assert det["c4"]["status"] == "pending"

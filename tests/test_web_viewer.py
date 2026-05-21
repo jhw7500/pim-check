@@ -82,3 +82,50 @@ def test_no_producer_lost_after_run_end(tmp_path):
     # 정상 종료(run_end) 후에는 무응답이어도 producer-lost 아님.
     assert s["run_ended"] is True
     assert s["producer_lost"] is False
+
+
+def test_transient_fail_classified_resolved(tmp_path):
+    # 도중 check fail 이벤트가 떴지만 case 는 pass → resolved(일시 fail).
+    p = str(tmp_path / "e.jsonl")
+    _write(p, [
+        {"event_type": "run_start", "plan": "smoke", "board": "b", "elapsed_s": 0,
+         "cases": ["720p_4ch"], "total_cases": 1},
+        {"event_type": "case_start", "case_name": "720p_4ch", "phase": "collect",
+         "elapsed_s": 0.1},
+        {"event_type": "fail", "check": "recording", "reason": "NEED_2_FINALIZES",
+         "case_name": "720p_4ch", "elapsed_s": 114},
+        {"event_type": "case_end", "case_name": "720p_4ch", "phase": "validate",
+         "result": "pass", "completed_cases": 1, "pass_count": 1, "fail_count": 0,
+         "avg_case_duration_s": 567.0, "elapsed_s": 567},
+    ])
+    s = build_state(p)
+    # 최종 카운트는 pass — 빨간 fail 아님.
+    assert s["fail"] == 0 and s["pass"] == 1
+    assert s["fail_classification"] == {"720p_4ch": "resolved"}
+    # 드릴다운 상세에 fault 이벤트가 보존된다.
+    det = s["case_detail"]["720p_4ch"]
+    assert det["classification"] == "resolved"
+    assert det["fail_count"] == 1
+    assert det["fails"][0]["check"] == "recording"
+    assert det["duration_s"] == 566.9
+
+
+def test_confirmed_vs_resolved_separated(tmp_path):
+    p = str(tmp_path / "e.jsonl")
+    _write(p, [
+        {"event_type": "run_start", "plan": "p", "board": "b", "elapsed_s": 0,
+         "cases": ["c1", "c2"], "total_cases": 2},
+        {"event_type": "case_start", "case_name": "c1", "phase": "collect", "elapsed_s": 0.1},
+        {"event_type": "fail", "check": "recording", "reason": "transient",
+         "case_name": "c1", "elapsed_s": 1},
+        {"event_type": "case_end", "case_name": "c1", "phase": "validate",
+         "result": "pass", "completed_cases": 1, "pass_count": 1, "fail_count": 0,
+         "avg_case_duration_s": 5.0, "elapsed_s": 5},
+        {"event_type": "case_start", "case_name": "c2", "phase": "collect", "elapsed_s": 5.1},
+        {"event_type": "case_end", "case_name": "c2", "phase": "validate",
+         "result": "fail", "completed_cases": 2, "pass_count": 1, "fail_count": 1,
+         "avg_case_duration_s": 5.0, "reason": "real fail", "elapsed_s": 10},
+    ])
+    s = build_state(p)
+    assert s["fail_classification"] == {"c1": "resolved", "c2": "confirmed"}
+    assert s["case_detail"]["c2"]["status"] == "fail"

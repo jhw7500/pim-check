@@ -28,6 +28,11 @@ class ViewerState:
         self._cases: list[str] = []           # plan 순서 유지
         self._status: dict[str, str] = {}      # name -> pending/running/pass/fail
         self._fail_summaries: dict[str, str] = {}  # name -> reason (발생 순서)
+        # 케이스별 상세(드릴다운 + 일시/최종 fail 구분)용 추가 상태.
+        self._case_fails: dict[str, list[dict]] = {}   # name -> [{check,reason,ts,elapsed_s}]
+        self._case_phase: dict[str, str] = {}          # name -> 마지막 phase
+        self._case_started_s: dict[str, float] = {}    # name -> 첫 case_start elapsed_s
+        self._case_ended_s: dict[str, float] = {}      # name -> 마지막 case_end elapsed_s
 
     # --- folding -----------------------------------------------------------
     def apply(self, event: dict) -> None:
@@ -52,6 +57,11 @@ class ViewerState:
                     self._cases.append(name)
                 self._status[name] = "running"
                 self.current_case = name
+                phase = event.get("phase")
+                if phase is not None:
+                    self._case_phase[name] = phase
+                if isinstance(es, (int, float)):
+                    self._case_started_s.setdefault(name, float(es))
         elif et == "case_end":
             name = event.get("case_name")
             result = event.get("result")
@@ -63,6 +73,11 @@ class ViewerState:
                 if result == "fail":
                     reason = event.get("reason")
                     self._fail_summaries[name] = reason if reason is not None else ""
+                phase = event.get("phase")
+                if phase is not None:
+                    self._case_phase[name] = phase
+                if isinstance(es, (int, float)):
+                    self._case_ended_s[name] = float(es)
                 if self.current_case == name:
                     self.current_case = None
             self.completed_cases = event.get("completed_cases", self.completed_cases)
@@ -85,9 +100,18 @@ class ViewerState:
             # 체크 단위 실시간 fail — case_end 전에 fault 를 즉시 표면화한다.
             # 카운트/상태는 case_end 가 권위이므로 여기선 reason 만 기록(첫 발생 우선).
             name = event.get("case_name")
-            if name is not None and name not in self._fail_summaries:
+            if name is not None:
                 reason = event.get("reason")
-                self._fail_summaries[name] = reason if reason is not None else ""
+                reason = reason if reason is not None else ""
+                if name not in self._fail_summaries:
+                    self._fail_summaries[name] = reason
+                # 케이스별 전체 fail 이벤트 보존 — 드릴다운 + 일시/최종 분류에 사용.
+                self._case_fails.setdefault(name, []).append({
+                    "check": event.get("check"),
+                    "reason": reason,
+                    "ts": event.get("ts"),
+                    "elapsed_s": event.get("elapsed_s"),
+                })
         # 그 외 알 수 없는 event_type 은 무시.
 
     @classmethod
@@ -131,6 +155,51 @@ class ViewerState:
     def fail_summaries(self) -> dict[str, str]:
         return dict(self._fail_summaries)
 
+    def _classify(self, name: str) -> str:
+        """케이스의 fail 성격 분류.
+
+        - confirmed: 최종 case_end 가 fail (진짜 실패)
+        - resolved : case 는 pass 인데 도중 fail 이벤트가 있었음 (재시도로 회복된 일시 fail)
+        - active   : 아직 running 인데 fail 이벤트가 떴음 (진행 중 fault, 결과 미정)
+        - none     : fail 이벤트도 없고 최종 실패도 아님
+        """
+        status = self._status.get(name, "pending")
+        if status == "fail":
+            return "confirmed"
+        if status == "pass":
+            return "resolved" if self._case_fails.get(name) else "none"
+        if status == "running":
+            return "active" if self._case_fails.get(name) else "none"
+        return "none"
+
+    @property
+    def fail_classification(self) -> dict[str, str]:
+        """fail 이력이 있는 케이스 → 분류(confirmed/resolved/active)."""
+        names = set(self._case_fails) | {
+            n for n, s in self._status.items() if s == "fail"
+        }
+        return {n: self._classify(n) for n in names}
+
+    @property
+    def case_details(self) -> dict[str, dict]:
+        """모든 케이스의 드릴다운 상세(상태/phase/소요시간/fail 목록)."""
+        out: dict[str, dict] = {}
+        for name in self._cases:
+            start = self._case_started_s.get(name)
+            end = self._case_ended_s.get(name)
+            duration = (end - start) if (start is not None and end is not None) else None
+            out[name] = {
+                "status": self._status.get(name, "pending"),
+                "phase": self._case_phase.get(name),
+                "started_s": start,
+                "ended_s": end,
+                "duration_s": round(duration, 2) if duration is not None else None,
+                "classification": self._classify(name),
+                "fail_count": len(self._case_fails.get(name, [])),
+                "fails": [dict(f) for f in self._case_fails.get(name, [])],
+            }
+        return out
+
     def snapshot(self) -> dict:
         """상태 비교/직렬화용 평면 dict (monotonic 일관성 검증에 사용)."""
         return {
@@ -149,4 +218,6 @@ class ViewerState:
             "cases": list(self._cases),
             "status": dict(self._status),
             "fail_summaries": dict(self._fail_summaries),
+            "fail_classification": self.fail_classification,
+            "case_details": self.case_details,
         }
