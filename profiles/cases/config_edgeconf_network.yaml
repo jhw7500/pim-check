@@ -3,6 +3,10 @@
 name: "Config: Network Settings"
 description: "edgeconf NETWORK 설정과 실제 네트워크 상태 일관성 검증"
 
+# 설정·인터페이스 상태를 한 번 읽는 point-in-time 검사 — base.yaml 300s 모니터 불필요.
+monitor:
+  duration_sec: 0
+
 checks:
   custom_commands:
     # === 사용 인터페이스 확인 ===
@@ -31,7 +35,7 @@ checks:
 
     # === WLAN0 실제 연결 확인 ===
     - name: "WLAN0 연결 상태"
-      command: "iw dev wlp1s0 info 2>/dev/null | grep -q ssid && echo CONNECTED || echo DISCONNECTED"
+      command: "iw dev wlp1s0 link 2>/dev/null | grep -q 'Connected to' && echo CONNECTED || echo DISCONNECTED"
       expected: "CONNECTED"
       on_fail: "WiFi가 연결되지 않음"
 

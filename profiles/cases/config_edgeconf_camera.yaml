@@ -3,6 +3,10 @@
 name: "Config: Camera Settings"
 description: "edgeconf VHL_CAM 설정값과 실제 카메라 동작 일관성 검증"
 
+# 설정값을 한 번 읽는 point-in-time 검사 — base.yaml 300s 모니터 불필요.
+monitor:
+  duration_sec: 0
+
 checks:
   custom_commands:
     # === 해상도 설정 확인 ===

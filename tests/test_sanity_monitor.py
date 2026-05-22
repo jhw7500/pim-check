@@ -26,6 +26,13 @@ def test_board_hw_check_is_snapshot():
     assert _duration("board_hw_check") == 0
 
 
+def test_config_edgeconf_cases_are_snapshot():
+    # config 정합성 검사는 설정·상태를 한 번 읽는 point-in-time — 0 이어야 한다.
+    # (300s 로 두면 gate 플랜에서 fail 시 전 구간을 돌아 case 당 수 분씩 낭비)
+    for case in ("config_edgeconf_network", "config_edgeconf_camera", "config_ord_vcm"):
+        assert _duration(case) == 0, f"{case} should be snapshot (duration_sec=0)"
+
+
 def test_camera_case_still_monitors():
     # 카메라 case 는 지속 관측이 필요하므로 0 으로 바뀌면 안 된다 (대조군).
     assert _duration("720p_2ch") and _duration("720p_2ch") > 0

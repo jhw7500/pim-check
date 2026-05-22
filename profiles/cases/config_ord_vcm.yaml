@@ -3,6 +3,11 @@
 name: "Config: ORD/VCM Process"
 description: "ORD/VCM 프로세스 상태 및 설정값 정합성 검증"
 
+# 설정·프로세스 상태를 한 번 읽는 point-in-time 검사 — base.yaml 300s 모니터 불필요.
+# (setup 의 readiness 대기로 프로세스 기동 후 스냅샷이 보장됨)
+monitor:
+  duration_sec: 0
+
 setup:
   ord_vcm_changes:
     .VCM.srt_enable: false
