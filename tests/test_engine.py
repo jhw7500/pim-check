@@ -149,7 +149,8 @@ class TestEngine:
         profile = dict(self.profile)
         profile["monitor"] = {"duration_sec": 5, "interval_sec": 1}  # samples_total=5
         engine = Engine(self.ssh, profile)
-        chans = itertools.cycle(["ch1", "ch3"])
+        # 다중 자리 채널(ch10/ch11)로 lookbehind 가 뒷자리만 마스킹하는 버그도 함께 검증.
+        chans = itertools.cycle(["ch10", "ch11"])
         kbps = itertools.count(5500)
         engine.run_snapshot = MagicMock(side_effect=lambda *a, **k: [
             {"name": "custom_commands", "passed": False,
