@@ -536,6 +536,34 @@ class TestCheckPassEvent:
         assert items["ch1 ROTATION"] == "pending"
         assert items["ch1 BITRATE"] == "fail"
 
+    def test_check_pass_clears_pending_summary(self):
+        # claude[bot] 리뷰: check_pass 후 pending 항목 없으면 _case_pending 도 해제.
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "pending", "elapsed_s": 1.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: (got: FAIL:NO_BR)",
+                   "case_name": "c1"}),
+            _line({"event_type": "check_pass", "elapsed_s": 62.0,
+                   "check": "custom_commands", "case_name": "c1"}),
+        ])
+        # 모든 pending 이 사라졌으므로 pending_summaries 에 c1 이 없어야 함.
+        assert "c1" not in st.pending_summaries
+
+    def test_check_pass_then_fail_restores_fail_state(self):
+        # claude[bot] 리뷰: check_pass 후 다음 스냅샷에서 fail → fail 복원.
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "check_pass", "elapsed_s": 1.0,
+                   "check": "custom_commands", "case_name": "c1"}),
+            _line({"event_type": "fail", "elapsed_s": 62.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: 범위 초과 (got: 9000kbps)",
+                   "case_name": "c1"}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 BITRATE"] == "fail"
+        assert items["ch1 ROTATION"] == "pass"
+
     def test_case_end_pass_overrides_runtime_state(self):
         # case 종료 후에는 runtime 추론 무시하고 case 결과가 최종 권위.
         st = ViewerState.from_lines(self._base_lines() + [

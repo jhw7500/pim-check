@@ -179,6 +179,12 @@ class ViewerState:
             if name is not None and check:
                 self._case_latest_reason_by_check.setdefault(name, {}).pop(check, None)
                 self._case_checks_seen.setdefault(name, set()).add(check)
+                # pending 항목이 남아있지 않으면 케이스 준비 중 표시도 해제.
+                if not any(
+                    is_p
+                    for is_p, _ in self._case_latest_reason_by_check.get(name, {}).values()
+                ):
+                    self._case_pending.pop(name, None)
         # 그 외 알 수 없는 event_type 은 무시.
 
     @classmethod
