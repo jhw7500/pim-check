@@ -200,6 +200,7 @@ INDEX_HTML = """<!doctype html>
   .confirmed .hd { color:#f87171; } .confirmed .ln { color:#fca5a5; }
   .active { background:#1f1810; border:1px solid #3d2f12; }
   .active .hd { color:#fbbf24; } .active .ln { color:#fcd34d; }
+  .ahint { color:#a89668; font-size:11px; margin:2px 0 6px; }
   .recovered { background:#101a14; border:1px solid #1f3a2a; }
   .recovered .hd { color:#34d399; } .recovered .ln { color:#86efac; }
   .cases { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:4px 14px; margin-top:8px; }
@@ -300,7 +301,7 @@ INDEX_HTML = """<!doctype html>
     <div class="stat fail"><b id="fail">0</b><span>FAIL</span></div>
   </div>
   <div class="box confirmed" id="confirmedBox" style="display:none"><div class="hd">✗ FAILED (최종)</div><div id="confirmed"></div></div>
-  <div class="box active" id="activeBox" style="display:none"><div class="hd">⚠ FAULT (진행 중)</div><div id="active"></div></div>
+  <div class="box active" id="activeBox" style="display:none"><div class="hd">⚠ 관찰 중 — 진행 중 일시 fail (회복 가능)</div><div class="ahint">아직 확정 아님 — 조건이 갖춰지면(예: 녹화 finalize) 자동 회복됩니다. 확정 결과는 케이스 종료 시점 기준.</div><div id="active"></div></div>
   <div class="box recovered" id="recoveredBox" style="display:none"><div class="hd">↻ 재시도로 회복됨 (일시 fail)</div><div id="recovered"></div></div>
   <div class="hint">케이스를 클릭하면 상세 진행 상황을 볼 수 있습니다.</div>
   <div class="cases" id="cases"></div>
@@ -387,7 +388,7 @@ function renderCases(d){
     el.appendChild(sp);
     el.appendChild(document.createTextNode(' '+name+(name===d.current?'  ◀':'')));
     if(cls[name]==='resolved'){ const c=document.createElement('span'); c.className='chip chip-resolved'; c.textContent='↻ 회복'; el.appendChild(c); }
-    else if(cls[name]==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ fault'; el.appendChild(c); }
+    else if(cls[name]==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ 관찰 중'; el.appendChild(c); }
     el.onclick=()=>{ SEL=(SEL===name?null:name); renderCases(LAST); renderDetail(LAST); };
     return el;
   }));
@@ -401,7 +402,7 @@ function renderDetail(d){
   const nm=document.createElement('span'); nm.className='dname'; nm.textContent=SEL; hd.appendChild(nm);
   const stt=document.createElement('span'); stt.className='st-'+(cd.status||'pending'); stt.textContent=(cd.status||'pending').toUpperCase(); hd.appendChild(stt);
   if(cd.classification==='resolved'){ const c=document.createElement('span'); c.className='chip chip-resolved'; c.textContent='↻ 재시도로 회복'; hd.appendChild(c); }
-  else if(cd.classification==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ 진행 중 fault'; hd.appendChild(c); }
+  else if(cd.classification==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ 관찰 중 (회복 가능)'; hd.appendChild(c); }
   const x=document.createElement('span'); x.className='x'; x.textContent='✕ 닫기'; x.onclick=()=>{ SEL=null; renderCases(LAST); renderDetail(LAST); }; hd.appendChild(x);
   box.appendChild(hd);
   if(cd.desc){ const ds=document.createElement('div'); ds.className='desc'; ds.textContent=cd.desc; box.appendChild(ds); }
