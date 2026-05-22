@@ -200,7 +200,7 @@ INDEX_HTML = """<!doctype html>
   .confirmed .hd { color:#f87171; } .confirmed .ln { color:#fca5a5; }
   .active { background:#1f1810; border:1px solid #3d2f12; }
   .active .hd { color:#fbbf24; } .active .ln { color:#fcd34d; }
-  .active .ahint { color:#a89668; font-size:11px; margin:2px 0 6px; }
+  .ahint { color:#a89668; font-size:11px; margin:2px 0 6px; }
   .recovered { background:#101a14; border:1px solid #1f3a2a; }
   .recovered .hd { color:#34d399; } .recovered .ln { color:#86efac; }
   .cases { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:4px 14px; margin-top:8px; }
@@ -388,7 +388,7 @@ function renderCases(d){
     el.appendChild(sp);
     el.appendChild(document.createTextNode(' '+name+(name===d.current?'  ◀':'')));
     if(cls[name]==='resolved'){ const c=document.createElement('span'); c.className='chip chip-resolved'; c.textContent='↻ 회복'; el.appendChild(c); }
-    else if(cls[name]==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ fault'; el.appendChild(c); }
+    else if(cls[name]==='active'){ const c=document.createElement('span'); c.className='chip chip-active'; c.textContent='⚠ 관찰 중'; el.appendChild(c); }
     el.onclick=()=>{ SEL=(SEL===name?null:name); renderCases(LAST); renderDetail(LAST); };
     return el;
   }));
