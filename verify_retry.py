@@ -32,6 +32,10 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
     # (process 체크 실패 형식: "<proc> is not running" — 앞 공백으로 'is_not_running'
     #  같은 프로세스명과의 오매칭 방지)
     " is not running",
+    # 부팅 경계 직후 파일이 아직 finalize 되지 않아 ffprobe 가 메타데이터를 읽지 못하는
+    # 경우 — 녹화가 완성된 뒤 재시도하면 해소된다.
+    "FAIL:NO_BR",   # bitrate 측정 불가 (파일 미완성)
+    "FAIL:NO_DUR",  # duration 측정 불가 (파일 미완성)
 )
 
 

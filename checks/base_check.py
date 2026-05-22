@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
-from event_stream import serialize_fail_event, serialize_pending_event
+from event_stream import serialize_check_pass_event, serialize_fail_event, serialize_pending_event
 from verify_retry import is_stabilization_reason
 
 
@@ -49,11 +49,15 @@ class BaseCheck(ABC):
             The unchanged ``(passed, reason)`` tuple from ``validate()``.
         """
         passed, reason = self.validate(data, config)
-        if not passed and emitter is not None:
-            # 안정화 미달(NEED_2_FINALIZES 등)은 장애가 아니라 '준비 중' → pending,
-            # 그 외 실제 결함만 fail 로 표면화한다.
-            if is_stabilization_reason(reason):
-                emitter(serialize_pending_event(self.name, reason, **context))
+        if emitter is not None:
+            if not passed:
+                # 안정화 미달(NEED_2_FINALIZES 등)은 장애가 아니라 '준비 중' → pending,
+                # 그 외 실제 결함만 fail 로 표면화한다.
+                if is_stabilization_reason(reason):
+                    emitter(serialize_pending_event(self.name, reason, **context))
+                else:
+                    emitter(serialize_fail_event(self.name, reason, **context))
             else:
-                emitter(serialize_fail_event(self.name, reason, **context))
+                # 통과 신호 — 뷰어가 케이스 실행 중에도 이 항목을 ✓ 로 표시할 수 있도록.
+                emitter(serialize_check_pass_event(self.name, **context))
         return passed, reason

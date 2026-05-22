@@ -67,6 +67,23 @@ def serialize_pending_event(check, reason, *, ts=None, **fields) -> str:
     return json.dumps(record, ensure_ascii=False)
 
 
+def serialize_check_pass_event(check, *, ts=None, **fields) -> str:
+    """체크가 통과했음을 단일 한 줄 JSONL ``check_pass`` 이벤트로 직렬화한다.
+
+    뷰어가 케이스 실행 중에도 이미 통과한 항목을 ✓ 로 표시하기 위한 실시간 신호.
+    ``event_type`` == "check_pass".
+    """
+    record = {
+        "event_type": "check_pass",
+        "ts": ts if ts is not None else _now_iso(),
+        "check": check,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            record[key] = value
+    return json.dumps(record, ensure_ascii=False)
+
+
 def _base_event(event_type: str, run_id: str, plan: str, board: str,
                 elapsed_s: float, ts) -> dict:
     """모든 lifecycle 이벤트에 공통으로 존재하는 필드 묶음.

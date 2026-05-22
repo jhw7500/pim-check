@@ -38,6 +38,13 @@ class ViewerState:
         self._case_checklist: dict[str, list[dict]] = {}  # name -> [{name,command,expected}]
         # name -> {item_name: {actual, passed}} (case_end 의 항목별 실측값)
         self._case_checklist_results: dict[str, dict] = {}
+        # name -> check_name -> (is_pending, reason) (fail/pending 이벤트, 스냅샷마다 덮어씀)
+        # is_pending=True: settling/준비 중, False: 실제 fault.
+        # check_pass 이벤트 수신 시 해당 check 항목 제거.
+        self._case_latest_reason_by_check: dict[str, dict[str, tuple[bool, str]]] = {}
+        # name -> set of check names that emitted any event (pass/fail/pending)
+        # 비어있으면 아직 첫 스냅샷 미완.
+        self._case_checks_seen: dict[str, set[str]] = {}
 
     # --- folding -----------------------------------------------------------
     def apply(self, event: dict) -> None:
@@ -81,6 +88,9 @@ class ViewerState:
                 checklist = event.get("checklist")
                 if checklist is not None:
                     self._case_checklist[name] = list(checklist)
+                # 새 케이스 시작 → 이전 스냅샷 체크 상태 초기화
+                self._case_latest_reason_by_check.pop(name, None)
+                self._case_checks_seen.pop(name, None)
         elif et == "case_end":
             name = event.get("case_name")
             result = event.get("result")
@@ -103,8 +113,10 @@ class ViewerState:
                     self._case_phase[name] = phase
                 if isinstance(es, (int, float)):
                     self._case_ended_s[name] = float(es)
-                # 케이스 종료 → 더 이상 '준비 중' 아님.
+                # 케이스 종료 → 준비 중/체크 상태 정리.
                 self._case_pending.pop(name, None)
+                self._case_latest_reason_by_check.pop(name, None)
+                self._case_checks_seen.pop(name, None)
                 if self.current_case == name:
                     self.current_case = None
             self.completed_cases = event.get("completed_cases", self.completed_cases)
@@ -133,12 +145,17 @@ class ViewerState:
                 if name not in self._fail_summaries:
                     self._fail_summaries[name] = reason
                 # 케이스별 전체 fail 이벤트 보존 — 드릴다운 + 일시/최종 분류에 사용.
+                check = event.get("check")
                 self._case_fails.setdefault(name, []).append({
-                    "check": event.get("check"),
+                    "check": check,
                     "reason": reason,
                     "ts": event.get("ts"),
                     "elapsed_s": event.get("elapsed_s"),
                 })
+                # 체크별 최신 실패 reason 기록 (스냅샷 경계마다 덮어씀 → 최신 상태 반영).
+                if check:
+                    self._case_latest_reason_by_check.setdefault(name, {})[check] = (False, reason)
+                    self._case_checks_seen.setdefault(name, set()).add(check)
                 # 실제 fault 가 떴으면 더 이상 '준비 중' 아님 — pending 해제
                 # (안 그러면 드릴다운이 ⚠ FAULT 와 ⏳ 준비 중 을 동시 표시).
                 self._case_pending.pop(name, None)
@@ -147,7 +164,27 @@ class ViewerState:
             # 현재 케이스가 '준비 중'임을 표시하는 용도로만 마지막 reason 을 보존한다.
             name = event.get("case_name")
             if name is not None:
-                self._case_pending[name] = event.get("reason") or ""
+                reason = event.get("reason") or ""
+                self._case_pending[name] = reason
+                # 체크별 최신 pending reason 기록 (pending 은 fail 을 덮어씀 — 같은 체크의
+                # 최신 스냅샷 결과가 settling 으로 바뀌었음을 의미).
+                check = event.get("check")
+                if check:
+                    self._case_latest_reason_by_check.setdefault(name, {})[check] = (True, reason)
+                    self._case_checks_seen.setdefault(name, set()).add(check)
+        elif et == "check_pass":
+            # 체크 통과 — 해당 체크의 latest reason 제거(더 이상 fail/pending 아님).
+            name = event.get("case_name")
+            check = event.get("check")
+            if name is not None and check:
+                self._case_latest_reason_by_check.setdefault(name, {}).pop(check, None)
+                self._case_checks_seen.setdefault(name, set()).add(check)
+                # pending 항목이 남아있지 않으면 케이스 준비 중 표시도 해제.
+                if not any(
+                    is_p
+                    for is_p, _ in self._case_latest_reason_by_check.get(name, {}).values()
+                ):
+                    self._case_pending.pop(name, None)
         # 그 외 알 수 없는 event_type 은 무시.
 
     @classmethod
@@ -255,10 +292,14 @@ class ViewerState:
     def _checklist_view(self, name: str) -> tuple[list[dict], int]:
         """케이스의 검증 항목 + 항목별 상태 유도, (checklist, passed_count) 반환.
 
-        항목별 상태는 case 결과로부터 유도한다(per-item 라이브 이벤트 없이):
-          - case pass  → 모든 항목 pass
-          - case fail  → fail reason 에 항목명이 있으면 fail, 아니면 pass
-          - 그 외(running/pending) → 항목 running(대기)
+        항목별 상태는 case 결과 + 실시간 check 이벤트로부터 유도한다:
+          - case pass/fail 종료 후 → per-item 실측값 or reason 매칭
+          - case running + 첫 스냅샷 완료 → check_pass/fail/pending 이벤트로 추론:
+              pending reason 에 항목명 있음 → "pending" (settling)
+              fail reason 에 항목명 있음    → "fail"
+              어느 reason 에도 없음          → "pass" (이미 통과)
+          - case running + 첫 스냅샷 미완 → "running" (아직 대기)
+          - pending(미시작)                 → "pending"
         """
         items = self._case_checklist.get(name)
         if not items:
@@ -266,6 +307,9 @@ class ViewerState:
         status = self._status.get(name, "pending")
         reason = self._fail_summaries.get(name, "")
         per_item = self._case_checklist_results.get(name, {})
+        # running 케이스의 per-item 상태 추론용
+        checks_seen = self._case_checks_seen.get(name)  # None 이면 첫 스냅샷 미완
+        latest_reasons = self._case_latest_reason_by_check.get(name, {})
         out: list[dict] = []
         passed = 0
         for item in items:
@@ -279,7 +323,19 @@ class ViewerState:
             elif status == "fail":
                 st = "fail" if (iname and iname in reason) else "pass"
             elif status == "running":
-                st = "running"
+                if not checks_seen:
+                    st = "running"  # 첫 스냅샷 아직 미완
+                else:
+                    st = "pass"     # 기본: 어느 reason 에도 없음 = 이미 통과
+                    if iname:
+                        for is_pending, r in latest_reasons.values():
+                            if iname in r:
+                                if is_pending:
+                                    if st == "pass":
+                                        st = "pending"  # settling 중
+                                else:
+                                    st = "fail"         # 실제 fault (fail > pending 우선)
+                                    break
             else:
                 st = "pending"   # 아직 시작 안 한 케이스의 항목 = 대기
             if st == "pass":

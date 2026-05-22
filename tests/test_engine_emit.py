@@ -78,9 +78,10 @@ def test_emits_one_fail_event_with_context():
     )
     results = eng.run_snapshot()
 
-    # pass 체크는 emit 안 함, fail 체크만 한 번.
-    assert len(emitted) == 1
-    rec = json.loads(emitted[0])
+    # pass 체크는 check_pass, fail 체크는 fail — 총 2개.
+    assert len(emitted) == 2
+    recs = [json.loads(e) for e in emitted]
+    rec = next(r for r in recs if r["event_type"] == "fail")
     assert rec["event_type"] == "fail"
     assert rec["check"] == "process"
     assert rec["reason"] == "gstApp 죽음"
@@ -99,9 +100,13 @@ def test_no_emitter_is_backward_compatible():
     assert results[0]["reason"] == "gstApp 죽음"
 
 
-def test_pass_only_emits_nothing():
+def test_pass_emits_check_pass_event():
     emitted: list[str] = []
     eng = _engine([_PassCheck()], emitter=emitted.append,
                   emit_context={"case_name": "c1"})
     eng.run_snapshot()
-    assert emitted == []
+    assert len(emitted) == 1
+    rec = json.loads(emitted[0])
+    assert rec["event_type"] == "check_pass"
+    assert rec["check"] == "cpu"
+    assert rec["case_name"] == "c1"
