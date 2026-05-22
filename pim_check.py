@@ -214,7 +214,7 @@ def _run_plan(args) -> int:
     # CLI --until-pass: plan.execution 의 monitor_until_pass 를 일회성으로 켠다.
     # comprehensive 처럼 지속검증 gate(첫 통과 후 drift 관측)인 plan 을 빠르게 검증할 때
     # 사용 — plan YAML 은 불변(gate 의미 보존), 이번 실행에만 조기종료 적용.
-    if getattr(args, "until_pass", False):
+    if args.until_pass:
         plan.execution["monitor_until_pass"] = True
 
     # CLI 오버라이드 dict 구성
@@ -249,7 +249,7 @@ def _run_plan(args) -> int:
         print(f"  execution: stop_on_fail={plan.execution['stop_on_fail']}, "
               f"case_retry={plan.execution['case_retry']}, "
               f"monitor_until_pass={plan.execution.get('monitor_until_pass', False)}"
-              f"{' (CLI override)' if getattr(args, 'until_pass', False) else ''}")
+              f"{' (CLI override)' if args.until_pass else ''}")
         if baseline:
             print(f"  baseline: {baseline_ref.get('file')} "
                   f"({len(baseline.get('executions', []))} prior cases)")
@@ -601,6 +601,9 @@ def _main_run(args) -> int:
         else:
             print("No plans found in profiles/plans/")
         return 0
+
+    if args.until_pass and not args.plan:
+        print("WARNING: --until-pass 는 --plan 실행에만 적용됩니다 (무시됨).")
 
     if args.plan:
         return _run_plan(args)

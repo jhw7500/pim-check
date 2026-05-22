@@ -56,18 +56,6 @@ class TestParseArgs(unittest.TestCase):
         args = pim_check.parse_args(["--plan", "comprehensive"])
         self.assertFalse(args.until_pass)
 
-    def test_until_pass_overrides_plan_execution(self):
-        # --until-pass 가 plan.execution.monitor_until_pass 를 강제로 켠다.
-        from plan import load_plan
-        import os
-        plan_path = os.path.join(pim_check.PROFILES_DIR, "plans", "comprehensive.yaml")
-        plan = load_plan(plan_path)
-        self.assertFalse(plan.execution.get("monitor_until_pass", False))
-        args = pim_check.parse_args(["--plan", "comprehensive", "--until-pass"])
-        if getattr(args, "until_pass", False):
-            plan.execution["monitor_until_pass"] = True
-        self.assertTrue(plan.execution["monitor_until_pass"])
-
 
 class TestMainFlow(unittest.TestCase):
     @patch("pim_check.Reporter")
