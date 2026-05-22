@@ -320,17 +320,21 @@ python3 -m pytest tests/ -v    # 256 tests, 93% coverage
 
 `profiles/plans/{name}.yaml` 한 파일에 (a) 어떤 case 묶음을 (b) 어떤 합격선으로 (c) 어떤 baseline과 비교하여 (d) 어떤 형식으로 보고할지 모두 표현한다. 매 릴리스마다 새 Python runner 스크립트를 작성하지 않아도 된다.
 
-기존 plan (`--list-plans`):
+현재 plan (정확한 목록·케이스 수는 `--list-plans` 가 authoritative):
 
-| Plan | 용도 | Cases |
-|------|------|------:|
-| `smoke` | 빠른 회귀 보호 (PR/build 직후 sanity) | 6 |
-| `comprehensive` | 채널 × 해상도 × 설정 종합 검증 (multi-channel) | 18 |
-| `channel_verify` | vflip/ae 32 cases 단일 토글 | 32 |
-| `bps_quick` | bitrate 검증 | 3 |
-| `mixed_combo` | 채널 조합별 i2c 모드 검증 | 22 |
-| `nightly` | 야간 전수 회귀 (6 러너 통합) | 146 |
-| `release_next` | 다음 릴리스 게이트 (가상, 시나리오별 교체 필요) | 49 |
+| Plan | 용도 | monitor_until_pass |
+|------|------|:--:|
+| `smoke` | 빠른 회귀 보호 (PR/build 직후 sanity) | ✅ |
+| `comprehensive` | 채널 × 해상도 × 설정 종합 검증 (multi-channel, gate) | — |
+| `channel_verify` | vflip/hflip/ae 토글 (720p+fhd) | ✅ |
+| `nightly` | 야간 전수 회귀 | — |
+| `release_next` | 다음 릴리스 게이트 (시나리오별 교체) | — |
+| `rerun_failed` / `rerun_priority` | 실패 케이스 재실행 (디버그) | ✅ |
+| `fault_injection` | 의도적 장애 주입 + 자동 감지/회복 검증 | — |
+| `bps_quick` / `mixed_combo` | script-wrapper (전용 러너 직접 호출) | — |
+
+> `monitor_until_pass` = 전 체크 통과 스냅샷에서 monitor 조기 종료(빠른 sanity). gate 플랜은
+> 후반 drift 관측을 위해 미적용. 실시간 뷰어/제어판: [docs/realtime-monitor-guide.md](docs/realtime-monitor-guide.md).
 
 ### 운영 워크플로우
 

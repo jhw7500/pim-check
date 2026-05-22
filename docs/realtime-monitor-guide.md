@@ -141,8 +141,9 @@ python3 pim_viewer.py <path.jsonl>    # 특정 스트림 보기
 |---|---|
 | smoke, channel_verify, rerun_failed, rerun_priority | comprehensive, nightly, release_next, fault_injection |
 
-> script-wrapper 플랜(`bps_quick`, `mixed_combo`)은 plan engine 을 경유하지 않아
-> 무관하다.
+> script-wrapper 플랜(`bps_quick`, `mixed_combo`)은 hw-verify workflow 가 plan name 으로
+> 분기해 전용 러너(`run_bps_quick.py` / `run_mixed_combo_verify.py`)를 직접 호출한다.
+> plan engine 의 monitor 루프를 타지 않으므로 `monitor_until_pass` 설정과 무관하다.
 
 ---
 
@@ -174,8 +175,8 @@ python3 pim_viewer.py <path.jsonl>    # 특정 스트림 보기
 | POST | `/start` | `{plan, host, user, password}` → 런 시작 |
 | POST | `/stop` | 관리 중인 런 종료 |
 
-`/start` 응답: `{ok, pid, plan, host}` 또는 `{ok:false, error}`(검증 실패 400 /
-이미 실행 중 409 / spawn 실패 500).
+`/start` 응답: `{"ok": true, "pid": 123, "plan": "...", "host": "..."}` 또는
+`{"ok": false, "error": "..."}` (검증 실패 400 / 이미 실행 중 409 / spawn 실패 500).
 
 ---
 
