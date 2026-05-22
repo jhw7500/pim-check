@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from setup import SetupManager, READINESS_POLL_INTERVAL
+from setup import (
+    SetupManager,
+    READINESS_POLL_INTERVAL,
+    FSYNC_SETTLE_SEC,
+    profile_is_camera,
+)
 
 
 def _mgr():
@@ -177,3 +182,102 @@ class TestStage3Recording:
         mgr._ready_processes_list = ["gstApp"]
         mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
         assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "processes", "recording"]
+
+
+class _FixedClock:
+    """수동으로 값을 세팅하는 가짜 monotonic 시계."""
+    def __init__(self, start=0.0):
+        self.v = start
+    def __call__(self):
+        return self.v
+
+
+class TestStageCameraInitFsync:
+    """카메라 init readiness — dmesg max9296_fsync fps 로그 + settle."""
+
+    def test_not_ready_when_log_absent(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "0"  # grep -c → 0건
+        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+
+    def test_settle_requires_elapsed_time(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "1"  # 로그 1건 존재
+        clk = _FixedClock(start=100.0)
+        # 최초 관측: settle 0초 → 아직 무효
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        # settle 직전 → 여전히 무효
+        clk.v = 100.0 + FSYNC_SETTLE_SEC - 0.5
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        # settle 충족 → 유효
+        clk.v = 100.0 + FSYNC_SETTLE_SEC
+        assert mgr._ready_dmesg_fsync(_clock=clk) is True
+
+    def test_log_disappear_resets_settle_timer(self):
+        mgr = _mgr()
+        seq = iter(["1", "0", "1"])
+        mgr.ssh.run.side_effect = lambda *a, **k: next(seq)
+        clk = _FixedClock(start=0.0)
+        mgr._ready_dmesg_fsync(_clock=clk)            # seen_at=0
+        clk.v = 10.0
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False  # "0" → 리셋
+        assert mgr._fsync_seen_at is None
+        # 재출현: seen_at 새로 기록, settle 미경과 → False
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        assert mgr._fsync_seen_at == 10.0
+
+    def test_ssh_error_is_not_ready_and_resets(self):
+        mgr = _mgr()
+        mgr._fsync_seen_at = 5.0
+        mgr.ssh.run.side_effect = RuntimeError("boom")
+        assert mgr._ready_dmesg_fsync() is False
+        assert mgr._fsync_seen_at is None
+
+    def test_grep_command_uses_marker(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "0"
+        mgr._ready_dmesg_fsync(_clock=_FixedClock())
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert "dmesg" in cmd
+        assert "max9296_fsync fps :" in cmd
+        assert "grep -c" in cmd
+
+    def test_camera_init_stage_before_recording_when_enabled(self):
+        mgr = _mgr()
+        mgr._ready_processes_list = ["gstApp"]
+        mgr._ready_fsync = True
+        mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
+        assert [n for n, _ in mgr._stabilize_stages()] == [
+            "ssh", "processes", "camera_init", "recording"]
+
+    def test_camera_init_stage_skipped_when_not_camera(self):
+        mgr = _mgr()
+        mgr._ready_recording_paths = ["/dev/shm"]
+        # ready_fsync 미주입(기본 False) → camera_init 단계 없음
+        assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "recording"]
+
+    def test_run_setup_stores_ready_fsync(self):
+        mgr = _mgr()
+        # edge_changes 없고 inject 없으면 run_setup 은 곧 False 반환하지만
+        # 그 전에 readiness 주입값은 저장된다.
+        mgr.run_setup({}, ready_fsync=True)
+        assert mgr._ready_fsync is True
+        assert mgr._fsync_seen_at is None
+
+
+class TestProfileIsCamera:
+    def test_camera_when_fsync_check_present(self):
+        prof = {"checks": {"custom_commands": [
+            {"name": "dmesg max9296_fsync fps",
+             "command": "dmesg | grep -oE 'max9296_fsync fps : [0-9]+'"}]}}
+        assert profile_is_camera(prof) is True
+
+    def test_not_camera_without_fsync_check(self):
+        prof = {"checks": {"custom_commands": [
+            {"name": "config", "command": "jq . /root/shared_v/edgeconf_pim.json"}]}}
+        assert profile_is_camera(prof) is False
+
+    def test_not_camera_when_no_checks(self):
+        assert profile_is_camera({}) is False
+        assert profile_is_camera({"checks": None}) is False
+        assert profile_is_camera({"checks": {}}) is False

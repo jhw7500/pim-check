@@ -507,11 +507,12 @@ def _run_single_case(ssh, profile: dict, case_name: str,
         #  - 3차(영상파일 생성): 고정 인프라 경로 RECORDING_DIRS (RAM fallback + SD)
         required_procs = (((profile.get("checks") or {}).get("processes") or {})
                           .get("required") or [])
-        from setup import RECORDING_DIRS
+        from setup import RECORDING_DIRS, profile_is_camera
         try:
             setup_mgr = setup_factory(ssh)
             setup_mgr.run_setup(setup_cfg, ready_processes=required_procs,
-                                ready_recording_paths=RECORDING_DIRS)
+                                ready_recording_paths=RECORDING_DIRS,
+                                ready_fsync=profile_is_camera(profile))
         except TimeoutError as exc:
             return [], False, f"SETUP_TIMEOUT: {exc}"
         except Exception as exc:

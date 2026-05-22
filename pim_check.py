@@ -460,8 +460,18 @@ def run_case(case_name, host, user, password, duration, save_json=False,
     setup_mgr = SetupManager(ssh)
     setup_changed = False
     if setup_config:
+        # 리부트 후 안정화 readiness 주입 (plan 경로와 동일):
+        #  - processes: profile 의 checks.processes.required
+        #  - recording: 고정 인프라 경로 RECORDING_DIRS
+        #  - fsync: 카메라 케이스만 — ISP 레지스터는 카메라 init(dmesg max9296_fsync) 후 유효
+        from setup import RECORDING_DIRS, profile_is_camera
+        required_procs = (((profile.get("checks") or {}).get("processes") or {})
+                          .get("required") or [])
         try:
-            setup_changed = setup_mgr.run_setup(setup_config)
+            setup_changed = setup_mgr.run_setup(
+                setup_config, ready_processes=required_procs,
+                ready_recording_paths=RECORDING_DIRS,
+                ready_fsync=profile_is_camera(profile))
         except TimeoutError as e:
             print(f"ERROR: Setup failed - {e}")
             return 1
