@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from setup import SetupManager, READINESS_POLL_INTERVAL
+from setup import (
+    SetupManager,
+    READINESS_POLL_INTERVAL,
+    FSYNC_SETTLE_SEC,
+    profile_is_camera,
+)
 
 
 def _mgr():
@@ -177,3 +182,168 @@ class TestStage3Recording:
         mgr._ready_processes_list = ["gstApp"]
         mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
         assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "processes", "recording"]
+
+
+class _FixedClock:
+    """수동으로 값을 세팅하는 가짜 monotonic 시계."""
+    def __init__(self, start=0.0):
+        self.v = start
+    def __call__(self):
+        return self.v
+
+
+class TestStageCameraInitFsync:
+    """카메라 init readiness — dmesg max9296_fsync fps 로그 + settle."""
+
+    def test_not_ready_when_log_absent(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "0"  # grep -c → 0건
+        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+
+    def test_settle_requires_elapsed_time(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "1"  # 로그 1건 존재
+        clk = _FixedClock(start=100.0)
+        # 최초 관측: settle 0초 → 아직 무효
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        # settle 직전 → 여전히 무효
+        clk.v = 100.0 + FSYNC_SETTLE_SEC - 0.5
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        # settle 충족 → 유효
+        clk.v = 100.0 + FSYNC_SETTLE_SEC
+        assert mgr._ready_dmesg_fsync(_clock=clk) is True
+
+    def test_log_disappear_resets_settle_timer(self):
+        mgr = _mgr()
+        seq = iter(["1", "0", "1"])
+        mgr.ssh.run.side_effect = lambda *a, **k: next(seq)
+        clk = _FixedClock(start=0.0)
+        mgr._ready_dmesg_fsync(_clock=clk)            # seen_at=0
+        clk.v = 10.0
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False  # "0" → 리셋
+        assert mgr._fsync_seen_at is None
+        # 재출현: seen_at 새로 기록, settle 미경과 → False
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        assert mgr._fsync_seen_at == 10.0
+
+    def test_ssh_error_is_not_ready_and_resets(self):
+        mgr = _mgr()
+        mgr._fsync_seen_at = 5.0
+        mgr.ssh.run.side_effect = RuntimeError("boom")
+        assert mgr._ready_dmesg_fsync() is False
+        assert mgr._fsync_seen_at is None
+
+    def test_grep_command_uses_marker_and_self_exits_zero(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "0"
+        mgr._ready_dmesg_fsync(_clock=_FixedClock())
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert "dmesg" in cmd
+        assert "max9296_fsync fps :" in cmd
+        assert "grep -c" in cmd
+        # self-exiting-zero: ssh.run None 규약에 의존하지 않도록 '|| echo 0'
+        assert "|| echo 0" in cmd
+
+    def test_count_parsed_from_self_exiting_output(self):
+        mgr = _mgr()
+        # '|| echo 0' 덕에 board 는 0건이어도 None 이 아닌 "0" 을 반환
+        mgr.ssh.run.return_value = "0"
+        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+        # None(=SSH 비정상)도 안전하게 0 처리
+        mgr.ssh.run.return_value = None
+        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+
+    def test_camera_init_stage_before_recording_when_enabled(self):
+        mgr = _mgr()
+        mgr._ready_processes_list = ["gstApp"]
+        mgr._ready_fsync = True
+        mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
+        assert [n for n, _ in mgr._stabilize_stages()] == [
+            "ssh", "processes", "camera_init", "recording"]
+
+    def test_camera_init_stage_skipped_when_not_camera(self):
+        mgr = _mgr()
+        mgr._ready_recording_paths = ["/dev/shm"]
+        # ready_fsync 미주입(기본 False) → camera_init 단계 없음
+        assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "recording"]
+
+    def test_run_setup_stores_ready_fsync(self):
+        mgr = _mgr()
+        # edge_changes 없고 inject 없으면 run_setup 은 곧 False 반환하지만
+        # 그 전에 readiness 주입값은 저장된다.
+        mgr.run_setup({}, ready_fsync=True)
+        assert mgr._ready_fsync is True
+        assert mgr._fsync_seen_at is None
+
+
+class TestProfileIsCamera:
+    """카메라 판정은 setup 설정 기반 (test-step custom_commands 와 분리)."""
+
+    def test_camera_when_edgeconf_enables_channel(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.vflip": False}}}
+        assert profile_is_camera(prof) is True
+
+    def test_camera_when_i2c1_channel_enabled(self):
+        prof = {"setup": {"edgeconf_changes": {".VHL_CAM.i2c1.ch3.enable": True}}}
+        assert profile_is_camera(prof) is True
+
+    def test_not_camera_when_no_channel_enable(self):
+        # VHL_CAM 키가 있어도 채널 enable 이 아니면 카메라 아님
+        prof = {"setup": {"edgeconf_changes": {".VHL_CAM.cam_width": 1280}}}
+        assert profile_is_camera(prof) is False
+
+    def test_not_camera_for_network_config(self):
+        prof = {"setup": {"edgeconf_changes": {".NETWORK.wifi.ssid": "x"}}}
+        assert profile_is_camera(prof) is False
+
+    def test_channel_enable_false_is_not_camera(self):
+        prof = {"setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": False}}}
+        assert profile_is_camera(prof) is False
+
+    def test_explicit_key_opt_in_overrides(self):
+        # edgeconf 신호가 없어도 명시 키로 켤 수 있다
+        prof = {"setup": {"camera_init_required": True, "edgeconf_changes": {}}}
+        assert profile_is_camera(prof) is True
+
+    def test_explicit_key_opt_out_overrides_channel_signal(self):
+        # 채널 enable 이 있어도 명시 False 면 게이트 off
+        prof = {"setup": {"camera_init_required": False,
+                          "edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}}}
+        assert profile_is_camera(prof) is False
+
+    def test_not_camera_when_no_setup(self):
+        assert profile_is_camera({}) is False
+        assert profile_is_camera({"setup": None}) is False
+        assert profile_is_camera({"setup": {}}) is False
+
+    def test_not_camera_when_profile_is_none(self):
+        assert profile_is_camera(None) is False
+
+
+class TestReadinessKwargs:
+    def test_camera_profile_enables_fsync_and_paths(self):
+        from setup import readiness_kwargs, RECORDING_DIRS
+        prof = {
+            "setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}},
+            "checks": {"processes": {"required": ["gstApp", "chk_cam_operate"]}},
+        }
+        kw = readiness_kwargs(prof)
+        assert kw["ready_processes"] == ["gstApp", "chk_cam_operate"]
+        assert kw["ready_recording_paths"] == RECORDING_DIRS
+        assert kw["ready_fsync"] is True
+
+    def test_non_camera_profile_disables_fsync(self):
+        from setup import readiness_kwargs
+        prof = {"setup": {"edgeconf_changes": {".NETWORK.wifi.ssid": "x"}},
+                "checks": {"custom_commands": [{"name": "cfg", "command": "jq ."}]}}
+        kw = readiness_kwargs(prof)
+        assert kw["ready_fsync"] is False
+        assert kw["ready_processes"] == []
+
+    def test_handles_missing_checks(self):
+        from setup import readiness_kwargs
+        kw = readiness_kwargs({})
+        assert kw["ready_processes"] == []
+        assert kw["ready_fsync"] is False

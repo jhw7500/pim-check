@@ -3,6 +3,8 @@ from __future__ import annotations
 setup.py - SetupManager: edgeconf 설정 변경 및 복원 엔진
 """
 import json
+import os
+import re
 import subprocess
 import time
 
@@ -28,6 +30,21 @@ READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
 RECORDING_DIRS = ["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"]
 RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 
+# 안정화 카메라 init readiness — dmesg 의 'max9296_fsync fps :' 로그는 부팅마다
+# dmesg ring buffer 가 초기화되므로 per-boot 정확한 카메라 init 신호다. ISP 레지스터
+# (i2ctransfer read: ROTATION/AE/AWB/EXP)는 카메라 init 전엔 무효값이라, 이 로그가
+# 뜨고 FSYNC_SETTLE_SEC 만큼 더 지나야 레지스터가 settle 됐다고 본다.
+# (recording readiness 는 reboot 직전 /mnt/sd_cam 잔여 파일로 false-positive 가능 —
+#  fsync 로그는 ring buffer 초기화로 그 위험이 없어 ISP 게이트로 더 정확하다.)
+FSYNC_MARKER = "max9296_fsync fps :"
+# 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
+# 보드별 튜닝을 위해 환경변수 PIM_FSYNC_SETTLE_SEC 로 override 가능
+# (verify_retry 의 PIM_VERIFY_* 와 동일한 패턴).
+try:
+    FSYNC_SETTLE_SEC = float(os.environ.get("PIM_FSYNC_SETTLE_SEC", "2"))
+except ValueError:
+    FSYNC_SETTLE_SEC = 2.0
+
 # Setup 단계 SSH retry — 정책은 verify_retry 중앙 모듈에서 가져와
 # verify_retry 환경변수(PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT)
 # 한 곳에서 setup/verify 양쪽 retry 정책을 조정한다.
@@ -44,6 +61,57 @@ BOARD_NET_RECOVERY_CMD = "python3 /opt/cis/bin/update_network.py"
 HOST_WLAN_IFACE = "wlan0"             # 호스트 측 보드 접속 인터페이스
 
 
+# 카메라 채널 enable 키 — 예: ".VHL_CAM.i2c2.ch0.enable", ".VHL_CAM.i2c1.ch3.enable".
+_CAM_CH_ENABLE_RE = re.compile(r"\.VHL_CAM\.[^.]+\.ch\d+\.enable$")
+
+
+def profile_is_camera(profile: dict) -> bool:
+    """카메라(녹화) 케이스인지 — reboot 후 카메라 init(fsync) readiness 게이트가
+    필요한 케이스인지 판정한다.
+
+    판정 신호는 **setup 설정**을 본다(테스트 스텝 custom_commands 와 분리 — 테스트가
+    무엇을 검사하는지와 부팅 게이트가 독립적이도록):
+      1. `setup.camera_init_required` 가 명시돼 있으면 그 값을 그대로 사용(opt-in/out).
+      2. 없으면 `setup.edgeconf_changes` 가 카메라 채널을 켜는지로 자동 추론
+         (`.VHL_CAM.*.chN.enable: true` 가 하나라도 있으면 카메라).
+
+    ISP 레지스터 검사(i2ctransfer)는 카메라 init 완료 후에야 유효하므로 카메라
+    케이스만 게이트를 켠다. config/network 등 비카메라는 fsync 로그가 안 떠서
+    게이트를 켜면 불필요하게 대기하게 된다."""
+    setup = (profile or {}).get("setup") or {}
+    if not isinstance(setup, dict):
+        return False
+    if "camera_init_required" in setup:
+        return bool(setup["camera_init_required"])
+    edge = setup.get("edgeconf_changes") or {}
+    if not isinstance(edge, dict):
+        return False
+    return any(v is True and _CAM_CH_ENABLE_RE.search(k) for k, v in edge.items())
+
+
+def readiness_kwargs(profile: dict) -> dict:
+    """reboot 후 안정화 readiness 단계 주입 인자를 profile 에서 산출한다
+    (plan / run_case 공용 — 중복 제거).
+
+    Returns dict(run_setup 키워드):
+      - ready_processes: checks.processes.required (코어 프로세스 생존 단계)
+      - ready_recording_paths: RECORDING_DIRS (영상파일 생성 단계 고정 인프라 경로)
+      - ready_fsync: 카메라 케이스만 True (카메라 init(fsync) 게이트)
+    """
+    checks = (profile or {}).get("checks") or {}
+    procs = []
+    if isinstance(checks, dict):
+        procs = ((checks.get("processes") or {}).get("required") or [])
+    return {
+        "ready_processes": list(procs),
+        # recording 단계는 카메라/비카메라 구분 없이 항상 주입(기존 plan.py 동작 보존).
+        # 비카메라 케이스는 녹화 파일이 안 생겨 stabilize_sec 까지 대기 후 진행(경고)하나,
+        # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_fsync 로 분리.
+        "ready_recording_paths": RECORDING_DIRS,
+        "ready_fsync": profile_is_camera(profile),
+    }
+
+
 class SetupManager:
     def __init__(self, ssh, reboot_timeout: int = DEFAULT_REBOOT_TIMEOUT,
                  poll_interval: int = DEFAULT_POLL_INTERVAL):
@@ -58,6 +126,11 @@ class SetupManager:
         # 안정화 3차(영상파일 생성) readiness 에 쓰일 녹화 경로 목록.
         # run_setup(ready_recording_paths=...) 로 주입 (기본 OFF → 미주입 시 단계 skip).
         self._ready_recording_paths: list[str] = []
+        # 안정화 카메라 init(dmesg max9296_fsync) readiness 활성 여부.
+        # run_setup(ready_fsync=True) 로 카메라 케이스에만 주입 (기본 OFF → 단계 skip).
+        self._ready_fsync: bool = False
+        # fsync 로그 최초 관측 시각(monotonic) — FSYNC_SETTLE_SEC 경과 판정용.
+        self._fsync_seen_at: float | None = None
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -287,6 +360,35 @@ class SetupManager:
             return False
         return bool(out and out.strip())
 
+    def _ready_dmesg_fsync(self, _clock=None) -> bool:
+        """카메라 init readiness — dmesg 에 'max9296_fsync fps :' 로그가 뜨고
+        FSYNC_SETTLE_SEC 초 경과하면 True.
+
+        dmesg 는 부팅마다 ring buffer 가 초기화되므로 이 로그는 per-boot 카메라 init
+        신호다. 로그가 보이면 최초 관측 시각을 기록하고, settle 시간이 지나야 ISP
+        레지스터가 유효(settle)하다고 판단해 True 를 반환한다. 로그가 사라지거나 SSH
+        실패면 settle 타이머를 리셋한다(재부팅/재초기화 대비)."""
+        clock = _clock or time.monotonic
+        # '|| echo 0' 으로 명령 자체가 항상 exit 0 + 단일 정수를 출력하게 한다.
+        # (grep -c 는 0건이면 exit 1 이라 ssh.run 이 None 을 반환하는데, 그 ssh.py
+        #  규약에 의존하지 않도록 self-exiting-zero 로 만든다.)
+        try:
+            out = self.ssh.run(f"dmesg 2>/dev/null | grep -c '{FSYNC_MARKER}' || echo 0")
+        except Exception:
+            self._fsync_seen_at = None
+            return False
+        try:
+            count = int(out.strip()) if out else 0
+        except ValueError:
+            count = 0
+        if count <= 0:
+            self._fsync_seen_at = None
+            return False
+        now = clock()
+        if self._fsync_seen_at is None:
+            self._fsync_seen_at = now
+        return (now - self._fsync_seen_at) >= FSYNC_SETTLE_SEC
+
     def _stabilize_stages(self) -> list:
         """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장.
 
@@ -296,6 +398,10 @@ class SetupManager:
         procs = list(self._ready_processes_list)
         if procs:
             stages.append(("processes", lambda: self._ready_processes(procs)))
+        # 카메라 init(fsync)은 recording 보다 먼저 — 카메라가 init 돼야 녹화가 시작되고
+        # ISP 레지스터도 그 시점 이후에야 유효하다.
+        if self._ready_fsync:
+            stages.append(("camera_init", self._ready_dmesg_fsync))
         rec_paths = list(self._ready_recording_paths)
         if rec_paths:
             stages.append(("recording", lambda: self._ready_recording(rec_paths)))
@@ -416,7 +522,7 @@ class SetupManager:
             self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
 
     def run_setup(self, setup_config: dict, ready_processes=None,
-                  ready_recording_paths=None) -> bool:
+                  ready_recording_paths=None, ready_fsync: bool = False) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
         지원 키:
@@ -436,6 +542,8 @@ class SetupManager:
         # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
         self._ready_processes_list = list(ready_processes or [])
         self._ready_recording_paths = list(ready_recording_paths or [])
+        self._ready_fsync = bool(ready_fsync)
+        self._fsync_seen_at = None  # 이번 setup 의 settle 타이머 초기화
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")

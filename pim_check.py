@@ -29,7 +29,7 @@ from checks.custom import item_results as _custom_item_results
 from config import load_profile
 from engine import Engine
 from reporter import Reporter
-from setup import SetupManager
+from setup import SetupManager, readiness_kwargs
 from ssh import SshClient
 from verify_retry import run_verify_with_retry
 
@@ -460,8 +460,11 @@ def run_case(case_name, host, user, password, duration, save_json=False,
     setup_mgr = SetupManager(ssh)
     setup_changed = False
     if setup_config:
+        # 리부트 후 안정화 readiness 주입 (plan 경로와 동일, setup.readiness_kwargs 단일 출처):
+        # processes / recording / camera_init(fsync, 카메라 케이스만).
         try:
-            setup_changed = setup_mgr.run_setup(setup_config)
+            setup_changed = setup_mgr.run_setup(
+                setup_config, **readiness_kwargs(profile))
         except TimeoutError as e:
             print(f"ERROR: Setup failed - {e}")
             return 1
