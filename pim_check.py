@@ -81,7 +81,15 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="promote 대상 결과 JSON 경로 (생략 시 가장 최근)")
     parser.add_argument("--baseline-label", type=str, default=None, metavar="LABEL",
                         help="baseline 파일 라벨 (예: v1_2). 생략 시 source 파일명 그대로")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # --password 미지정 시 PIM_PASSWORD 환경변수로 대체 — 비밀번호를 argv(ps/proc 노출)
+    # 대신 env 로 전달하기 위함(웹 제어판 spawn 경로에서 사용). 모든 다운스트림
+    # args.password 사용처가 자동으로 env 값을 받는다.
+    if args.password is None:
+        env_pw = os.environ.get("PIM_PASSWORD")
+        if env_pw:
+            args.password = env_pw
+    return args
 
 
 def list_cases(include_generated: bool = False, tag: str | None = None) -> list[str]:
