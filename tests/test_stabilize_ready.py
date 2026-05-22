@@ -281,3 +281,34 @@ class TestProfileIsCamera:
         assert profile_is_camera({}) is False
         assert profile_is_camera({"checks": None}) is False
         assert profile_is_camera({"checks": {}}) is False
+
+    def test_not_camera_when_profile_is_none(self):
+        # (None or {}) 처리 — 명시 검증
+        assert profile_is_camera(None) is False
+
+
+class TestReadinessKwargs:
+    def test_camera_profile_enables_fsync_and_paths(self):
+        from setup import readiness_kwargs, RECORDING_DIRS
+        prof = {"checks": {
+            "processes": {"required": ["gstApp", "chk_cam_operate"]},
+            "custom_commands": [
+                {"name": "fps", "command": "dmesg | grep max9296_fsync fps"}]}}
+        kw = readiness_kwargs(prof)
+        assert kw["ready_processes"] == ["gstApp", "chk_cam_operate"]
+        assert kw["ready_recording_paths"] == RECORDING_DIRS
+        assert kw["ready_fsync"] is True
+
+    def test_non_camera_profile_disables_fsync(self):
+        from setup import readiness_kwargs
+        prof = {"checks": {"custom_commands": [
+            {"name": "cfg", "command": "jq . /root/conf.json"}]}}
+        kw = readiness_kwargs(prof)
+        assert kw["ready_fsync"] is False
+        assert kw["ready_processes"] == []
+
+    def test_handles_missing_checks(self):
+        from setup import readiness_kwargs
+        kw = readiness_kwargs({})
+        assert kw["ready_processes"] == []
+        assert kw["ready_fsync"] is False

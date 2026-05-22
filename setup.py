@@ -3,6 +3,7 @@ from __future__ import annotations
 setup.py - SetupManager: edgeconf 설정 변경 및 복원 엔진
 """
 import json
+import os
 import subprocess
 import time
 
@@ -35,7 +36,13 @@ RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 # (recording readiness 는 reboot 직전 /mnt/sd_cam 잔여 파일로 false-positive 가능 —
 #  fsync 로그는 ring buffer 초기화로 그 위험이 없어 ISP 게이트로 더 정확하다.)
 FSYNC_MARKER = "max9296_fsync fps :"
-FSYNC_SETTLE_SEC = 2
+# 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
+# 보드별 튜닝을 위해 환경변수 PIM_FSYNC_SETTLE_SEC 로 override 가능
+# (verify_retry 의 PIM_VERIFY_* 와 동일한 패턴).
+try:
+    FSYNC_SETTLE_SEC = float(os.environ.get("PIM_FSYNC_SETTLE_SEC", "2"))
+except ValueError:
+    FSYNC_SETTLE_SEC = 2.0
 
 # Setup 단계 SSH retry — 정책은 verify_retry 중앙 모듈에서 가져와
 # verify_retry 환경변수(PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT)
@@ -59,7 +66,15 @@ def profile_is_camera(profile: dict) -> bool:
 
     이 케이스만 reboot 후 카메라 init(fsync) readiness 게이트가 필요하다 — ISP
     레지스터 검사가 카메라 init 완료 후에야 유효하기 때문. config/network 등
-    비카메라 케이스는 fsync 로그가 안 떠서 게이트를 켜면 안 된다(불필요한 대기)."""
+    비카메라 케이스는 fsync 로그가 안 떠서 게이트를 켜면 안 된다(불필요한 대기).
+
+    [컨벤션] 카메라 init 게이트는 'profile 에 max9296_fsync 체크가 있으면 카메라'
+    라는 단일 신호로 추론한다. 따라서:
+      - 카메라 케이스는 반드시 `dmesg ... max9296_fsync fps` 체크를 포함할 것
+        (없으면 게이트가 꺼져 init 전 ISP read race 가 재발한다).
+      - 비카메라 체크 command 에 'max9296_fsync' 문자열을 우연히 넣지 말 것
+        (게이트가 잘못 켜져 불필요한 대기가 생긴다).
+    더 강한 보장이 필요하면 명시 키(예: setup.camera_init_required)로 전환 검토."""
     checks = (profile or {}).get("checks") or {}
     if not isinstance(checks, dict):
         return False
@@ -67,6 +82,26 @@ def profile_is_camera(profile: dict) -> bool:
         if "max9296_fsync" in (cmd.get("command") or ""):
             return True
     return False
+
+
+def readiness_kwargs(profile: dict) -> dict:
+    """reboot 후 안정화 readiness 단계 주입 인자를 profile 에서 산출한다
+    (plan / run_case 공용 — 중복 제거).
+
+    Returns dict(run_setup 키워드):
+      - ready_processes: checks.processes.required (코어 프로세스 생존 단계)
+      - ready_recording_paths: RECORDING_DIRS (영상파일 생성 단계 고정 인프라 경로)
+      - ready_fsync: 카메라 케이스만 True (카메라 init(fsync) 게이트)
+    """
+    checks = (profile or {}).get("checks") or {}
+    procs = []
+    if isinstance(checks, dict):
+        procs = ((checks.get("processes") or {}).get("required") or [])
+    return {
+        "ready_processes": list(procs),
+        "ready_recording_paths": RECORDING_DIRS,
+        "ready_fsync": profile_is_camera(profile),
+    }
 
 
 class SetupManager:
@@ -331,6 +366,9 @@ class SetupManager:
         except Exception:
             self._fsync_seen_at = None
             return False
+        # grep -c 는 0건이면 exit 1 → ssh.run 이 None 반환(ssh.py 규약). 따라서
+        # out is None == '매칭 없음' 이므로 'out or "0"' 로 count=0 처리한다.
+        # (out.strip() 로 바꾸면 None 에서 AttributeError 가 나므로 주의.)
         try:
             count = int((out or "0").strip().split()[0])
         except (ValueError, IndexError):

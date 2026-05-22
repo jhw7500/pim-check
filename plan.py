@@ -502,17 +502,12 @@ def _run_single_case(ssh, profile: dict, case_name: str,
     # Setup (edgeconf 변경 + reboot, 있으면)
     setup_cfg = profile.get("setup")
     if setup_cfg and setup_factory is not None:
-        # 리부트 후 안정화 readiness 주입:
-        #  - 2차(코어 프로세스): profile 의 checks.processes.required (단일 출처)
-        #  - 3차(영상파일 생성): 고정 인프라 경로 RECORDING_DIRS (RAM fallback + SD)
-        required_procs = (((profile.get("checks") or {}).get("processes") or {})
-                          .get("required") or [])
-        from setup import RECORDING_DIRS, profile_is_camera
+        # 리부트 후 안정화 readiness 주입 (processes / recording / camera_init(fsync)).
+        # 추출 로직은 setup.readiness_kwargs 단일 출처 (run_case 와 공용).
+        from setup import readiness_kwargs
         try:
             setup_mgr = setup_factory(ssh)
-            setup_mgr.run_setup(setup_cfg, ready_processes=required_procs,
-                                ready_recording_paths=RECORDING_DIRS,
-                                ready_fsync=profile_is_camera(profile))
+            setup_mgr.run_setup(setup_cfg, **readiness_kwargs(profile))
         except TimeoutError as exc:
             return [], False, f"SETUP_TIMEOUT: {exc}"
         except Exception as exc:
