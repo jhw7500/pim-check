@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import copy
+import re
 import time
+
+# fail reason 에서 변동 측정값(숫자)을 마스킹해 sample 간 노이즈를 제거하기 위한 패턴.
+_DIGITS_RE = re.compile(r"\d+")
 
 from checks import ALL_CHECKS
 from ssh import SshClient, SshTimeoutError, SshConnectionError
@@ -103,20 +107,23 @@ class Engine:
 
         NEED_2_FINALIZES / recovering / process 미기동 등 '준비 중' 신호는 제외한다
         (그건 시간이 지나면 풀릴 수 있으므로 조기 종료 대상이 아님). 실제 fail 이 없으면
-        None, 있으면 실패 중인 check name 들의 frozenset.
+        None, 있으면 (name, 정규화 reason) 쌍의 frozenset.
 
-        시그니처는 check name 만 쓴다(reason 제외). reason 에는 측정값(bitrate/온도 등)이
-        박혀 sample 마다 미세하게 흔들리므로(예: 5596 vs 5601kbps), reason 을 포함하면
-        시그니처가 매번 달라져 조기 종료가 절대 트리거되지 않는다 — 정작 그 동적 fail 이
-        조기 종료가 노리는 대상이다. "같은 check 가 연속 fail" = 지속 결함으로 본다.
+        시그니처는 (name, 숫자를 마스킹한 reason)을 쓴다:
+          - reason 의 측정값(bitrate/온도 등)은 sample 마다 흔들리므로(5596 vs 5601kbps)
+            숫자를 '#'로 치환해 같은 fail 로 본다 → 동적 측정값 fail 도 조기 종료가 동작.
+          - 하지만 reason 의 '종류'(어떤 항목/메시지)는 보존한다 → custom_commands 처럼
+            여러 sub-command 를 묶는 집계 체크에서, 수렴 중 서로 다른 sub-command 가
+            샘플마다 다르게 실패하면 시그니처가 달라져 조기 종료하지 않고 계속 샘플링한다
+            (name-only 로 접으면 이 경우를 지속 결함으로 오판해 false 종료 — PR #27 codex 지적).
         """
         if not snap:
             return None
         sig = frozenset(
-            r.get("name")
+            (r.get("name"), _DIGITS_RE.sub("#", r.get("reason") or ""))
             for r in snap
             if isinstance(r, dict) and not r.get("passed")
-            and not is_stabilization_reason(r.get("reason", ""))
+            and not is_stabilization_reason(r.get("reason") or "")
         )
         return sig or None
 
