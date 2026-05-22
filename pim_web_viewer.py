@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -29,9 +30,12 @@ from viewer_state import ViewerState
 PRODUCER_LOST_AFTER = 10.0
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 PROFILES_DIR = os.path.join(REPO_DIR, "profiles")
+# start_run 의 check-then-spawn 을 직렬화한다. ThreadingHTTPServer 는 요청마다 스레드라
+# 동시 /start 2건이 단일-런 가드를 모두 통과해 프로듀서가 2개 뜨는 TOCTOU 를 막는다.
+_START_LOCK = threading.Lock()
 
 
-def _events_dir() -> str:
+def _producer_events_dir() -> str:
     # 제어(control state/guard)는 spawn 될 producer 가 실제로 쓰는 디렉터리에 고정한다.
     # producer(pim_check)는 뷰어의 read 경로와 무관하게 default_events_dir 에 기록·
     # current.jsonl 을 repoint 하므로, 여기에 맞춰야 단일-런 가드/상태가 일관된다.
@@ -47,7 +51,7 @@ def _list_plans() -> list[str]:
 
 def control_status() -> dict:
     """관리 중인 런 상태 + 선택 가능한 plan 목록 (UI 제어판용)."""
-    events_dir = _events_dir()
+    events_dir = _producer_events_dir()
     pid = run_control.active_pid(events_dir)
     info = run_control.read_control(events_dir) or {}
     return {
@@ -58,43 +62,52 @@ def control_status() -> dict:
 
 
 def start_run(params: dict) -> tuple[int, dict]:
-    """plan 런 spawn. (http_status, body) 반환. 단일 런만 허용(current.jsonl 공유)."""
-    events_dir = _events_dir()
-    if run_control.active_pid(events_dir) is not None:
-        return 409, {"ok": False, "error": "이미 실행 중인 런이 있습니다"}
-    # 외부(CLI/nohup)로 시작된 런도 감지 — producer 가 쓰는 default current.jsonl 이
-    # 살아있으면 거부(공유 충돌 방지). 뷰어 read 경로가 아니라 producer write 경로 기준.
-    st = build_state(_events_path())
-    if st.get("exists") and not st.get("run_ended") and not st.get("producer_lost"):
-        return 409, {"ok": False, "error": "이미 진행 중인 런이 있습니다 (외부 시작 포함)"}
-    ok, err, clean = run_control.validate_start_request(params, _list_plans())
-    if not ok:
-        return 400, {"ok": False, "error": err}
-    try:
-        os.makedirs(events_dir, exist_ok=True)
-        # with 블록: Popen 이 생성자에서 fd 를 자식으로 dup 하므로, spawn 직후 부모 핸들을
-        # 닫아도 자식은 계속 기록한다. (안 닫으면 /start 반복 시 부모 FD 누수)
-        with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
-            proc = subprocess.Popen(
-                [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
-                 "--plan", clean["plan"], "--host", clean["host"],
-                 "--user", clean["user"], "--password", clean["password"],
-                 "--json", "--html", "--log"],
-                cwd=REPO_DIR, stdout=logf, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, start_new_session=True,
-            )
-    except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
-        return 500, {"ok": False, "error": f"spawn 실패: {e}"}
-    run_control.write_control(events_dir, {
-        "pid": proc.pid, "plan": clean["plan"], "host": clean["host"],
-        "started_at": time.time(),
-    })
+    """plan 런 spawn. (http_status, body) 반환. 단일 런만 허용(current.jsonl 공유).
+
+    check-then-spawn 전체를 _START_LOCK 으로 직렬화해 동시 /start 의 TOCTOU(프로듀서
+    중복 spawn)를 막는다. 비밀번호는 argv 가 아니라 PIM_PASSWORD env 로 전달해
+    ps/proc 노출을 피한다.
+    """
+    events_dir = _producer_events_dir()
+    with _START_LOCK:
+        if run_control.active_pid(events_dir) is not None:
+            return 409, {"ok": False, "error": "이미 실행 중인 런이 있습니다"}
+        # 외부(CLI/nohup)로 시작된 런도 감지 — producer 가 쓰는 default current.jsonl 이
+        # 살아있으면 거부(공유 충돌 방지). 뷰어 read 경로가 아니라 producer write 경로 기준.
+        st = build_state(_events_path())
+        if st.get("exists") and not st.get("run_ended") and not st.get("producer_lost"):
+            return 409, {"ok": False, "error": "이미 진행 중인 런이 있습니다 (외부 시작 포함)"}
+        ok, err, clean = run_control.validate_start_request(params, _list_plans())
+        if not ok:
+            return 400, {"ok": False, "error": err}
+        try:
+            os.makedirs(events_dir, exist_ok=True)
+            # 비밀번호는 env(PIM_PASSWORD)로만 전달 — argv 에 두면 ps/proc 에 노출된다.
+            # with 블록: Popen 이 생성자에서 fd 를 자식으로 dup 하므로 spawn 직후 부모
+            # 핸들을 닫아도 자식은 계속 기록한다(반복 /start 시 부모 FD 누수 방지).
+            child_env = {**os.environ, "PIM_PASSWORD": clean["password"]}
+            with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
+                proc = subprocess.Popen(
+                    [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
+                     "--plan", clean["plan"], "--host", clean["host"],
+                     "--user", clean["user"],
+                     "--json", "--html", "--log"],
+                    cwd=REPO_DIR, env=child_env, stdout=logf,
+                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+        except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
+            return 500, {"ok": False, "error": f"spawn 실패: {e}"}
+        run_control.write_control(events_dir, {
+            "pid": proc.pid, "plan": clean["plan"], "host": clean["host"],
+            "started_at": time.time(),
+        })
     return 200, {"ok": True, "pid": proc.pid, "plan": clean["plan"], "host": clean["host"]}
 
 
 def stop_run() -> tuple[int, dict]:
     """관리 중인 런 종료(SIGTERM→SIGKILL). (http_status, body) 반환."""
-    events_dir = _events_dir()
+    events_dir = _producer_events_dir()
     info = run_control.read_control(events_dir)
     pid = info.get("pid") if info else None
     if not isinstance(pid, int) or not run_control.pid_alive(pid):
@@ -494,7 +507,7 @@ async function tick(){
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
 }
 // --- 제어판(plan 선택 → 시작/중지) ---------------------------------------
-let PLANS_LOADED=false;
+let PLANS_KEY="";
 function setCtrlActive(active){
   document.getElementById('c_start').disabled=active;
   document.getElementById('c_stop').disabled=!active;
@@ -504,13 +517,18 @@ async function loadControl(){
   try{
     const r=await fetch('/control?_='+Date.now(),{cache:'no-store'});
     const d=await r.json();
-    if(!PLANS_LOADED && Array.isArray(d.plans)){
-      const sel=document.getElementById('c_plan');
-      sel.replaceChildren(...d.plans.map(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;return o;}));
-      PLANS_LOADED=true;
+    if(Array.isArray(d.plans)){
+      // 목록이 바뀐 경우에만 select 재구성(매 폴링마다 사용자 선택 초기화 방지).
+      const key=d.plans.join('|');
+      if(key!==PLANS_KEY){
+        const sel=document.getElementById('c_plan'); const cur=sel.value;
+        sel.replaceChildren(...d.plans.map(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;return o;}));
+        if(d.plans.includes(cur)) sel.value=cur;
+        PLANS_KEY=key;
+      }
     }
     setCtrlActive(!!d.active);
-  }catch(e){}
+  }catch(e){ cmsg('제어판 상태 갱신 실패: '+e,'err'); }
 }
 async function startRun(){
   const plan=document.getElementById('c_plan').value;
@@ -581,11 +599,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(build_state(self.events_path)).encode("utf-8"),
                        "application/json; charset=utf-8")
         elif self.path.startswith("/control"):
-            self._send(json.dumps(control_status()).encode("utf-8"),
-                       "application/json; charset=utf-8")
+            self._send_json(200, control_status())
         elif self.path.startswith("/plans"):
-            self._send(json.dumps(_list_plans()).encode("utf-8"),
-                       "application/json; charset=utf-8")
+            self._send_json(200, _list_plans())
         elif self.path == "/" or self.path.startswith("/?"):
             self._send(INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
         else:
