@@ -106,6 +106,18 @@ class TestStabilizationReason(unittest.TestCase):
         self.assertFalse(is_stabilization_reason("gstApp 죽음"))
         self.assertFalse(is_stabilization_reason(""))
 
+    def test_no_br_and_no_dur_are_settling(self):
+        # 부팅 경계 직후 파일 미완성으로 ffprobe 가 메타데이터를 읽지 못하는 경우.
+        # custom_commands validate() 가 생성하는 실제 reason 형식: "NAME: on_fail (got: FAIL:NO_BR)"
+        from verify_retry import is_stabilization_reason
+        self.assertTrue(is_stabilization_reason(
+            "ch1 BITRATE: 범위 벗어남 (got: FAIL:NO_BR)"))
+        self.assertTrue(is_stabilization_reason(
+            "ch1 duration: 범위 벗어남 (got: FAIL:NO_DUR)"))
+        # 다른 비트레이트 실패(숫자)는 settling 아님.
+        self.assertFalse(is_stabilization_reason(
+            "ch1 BITRATE: 범위 벗어남 (got: FAIL:8000kbps)"))
+
 
 class TestSerializeFailEvent(unittest.TestCase):
     def test_emits_single_line_valid_json(self):
@@ -267,15 +279,18 @@ class TestValidateAndEmit(unittest.TestCase):
         self.assertEqual(record["run_id"], "run-123")
         self.assertEqual(record["case_name"], "fault_gstapp_crash")
 
-    def test_pass_outcome_does_not_invoke_emitter(self):
-        # Pass 경로에서는 emitter 가 호출되지 않아야 ("exactly once on fail").
+    def test_pass_outcome_emits_check_pass_event(self):
+        # Pass 경로에서는 check_pass 이벤트가 한 번 emit 되어야 한다.
         emitter = MagicMock()
         check = _StubCheck((True, "OK"))
 
         passed, reason = check.validate_and_emit({}, {}, emitter=emitter)
 
         self.assertTrue(passed)
-        emitter.assert_not_called()
+        emitter.assert_called_once()
+        rec = json.loads(emitter.call_args[0][0])
+        self.assertEqual(rec["event_type"], "check_pass")
+        self.assertEqual(rec["check"], "stub")
 
     def test_no_emitter_is_backward_compatible(self):
         # emitter 미지정 시 예외 없이 (passed, reason) 만 반환한다.
@@ -324,15 +339,19 @@ class TestValidateFailProducesOneJsonlLine(unittest.TestCase):
             self.assertEqual(record["reason"], "gstApp CPU 412% out of range [0, 400]")
             self.assertEqual(record["case_name"], "fault_gstapp_crash")
 
-    def test_pass_validate_writes_no_line(self):
-        # "exactly one on fail" — Pass 결과는 JSONL 출력에 어떤 라인도 남기지 않는다.
+    def test_pass_validate_writes_check_pass_line(self):
+        # Pass 결과는 JSONL 출력에 check_pass 이벤트 한 줄을 남긴다.
         check = _StubCheck((True, "OK"))
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "events.jsonl")
             with open(path, "a", encoding="utf-8") as handle:
                 check.validate_and_emit({}, {}, emitter=self._file_emitter(handle))
             with open(path, "r", encoding="utf-8") as reader:
-                self.assertEqual(reader.read(), "")
+                content = reader.read().strip()
+            self.assertNotEqual(content, "")
+            rec = json.loads(content)
+            self.assertEqual(rec["event_type"], "check_pass")
+            self.assertEqual(rec["check"], "stub")
 
 
 if __name__ == "__main__":

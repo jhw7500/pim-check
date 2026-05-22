@@ -422,3 +422,97 @@ class TestPendingEvents:
         # 실제 fault 가 오면 pending 은 해제된다 (⚠ FAULT 와 ⏳ 준비 중 동시 표시 방지).
         assert st.pending_summaries == {}
         assert st.case_details["c1"]["pending"] is None
+
+
+class TestCheckPassEvent:
+    """check_pass 이벤트 — 체크가 통과했음을 실시간으로 뷰어에 알림."""
+
+    def _base_lines(self):
+        return [
+            _line({"event_type": "run_start", "elapsed_s": 0.0,
+                   "cases": ["c1"], "total_cases": 1}),
+            _line({"event_type": "case_start", "elapsed_s": 0.1,
+                   "case_name": "c1", "phase": "collect",
+                   "checklist": [
+                       {"name": "ch1 ROTATION", "command": "i2c...", "expected": "0x00"},
+                       {"name": "ch1 BITRATE", "command": "ffprobe...", "expected": "OK"},
+                   ]}),
+        ]
+
+    def test_check_pass_marks_checks_seen(self):
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "check_pass", "elapsed_s": 1.0,
+                   "check": "custom_commands", "case_name": "c1"}),
+        ])
+        # checks_seen 이 채워지면 첫 스냅샷 완료 → 아이템 추론 가능.
+        cd = st.case_details["c1"]
+        # 체크 통과만 왔고 실패 reason 없음 → 모든 항목 pass 로 추론.
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 ROTATION"] == "pass"
+        assert items["ch1 BITRATE"] == "pass"
+
+    def test_no_events_yet_all_running(self):
+        st = ViewerState.from_lines(self._base_lines())
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        # 첫 스냅샷 미완 → 모두 running.
+        assert items["ch1 ROTATION"] == "running"
+        assert items["ch1 BITRATE"] == "running"
+
+    def test_pending_event_shows_settling_items_correctly(self):
+        # ISP 통과, 파일 체크 settling → ROTATION=pass, BITRATE=pending.
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "pending", "elapsed_s": 1.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: 범위 벗어남 (got: FAIL:NO_BR)",
+                   "case_name": "c1"}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 ROTATION"] == "pass"   # pending reason 에 없음 → 통과
+        assert items["ch1 BITRATE"] == "pending"  # pending reason 에 있음 → settling
+
+    def test_fail_event_marks_item_as_fail_others_pass(self):
+        # 실제 fail — BITRATE 범위 초과, ROTATION 은 통과.
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "fail", "elapsed_s": 1.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: 범위 벗어남 (got: FAIL:8000kbps)",
+                   "case_name": "c1"}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 ROTATION"] == "pass"  # fail reason 에 없음 → 통과
+        assert items["ch1 BITRATE"] == "fail"   # fail reason 에 있음 → 실패
+
+    def test_check_pass_after_fail_clears_to_pass(self):
+        # 이전 스냅샷에서 fail, 다음 스냅샷에서 전체 통과(check_pass).
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "fail", "elapsed_s": 1.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: 범위 벗어남 (got: FAIL:8000kbps)",
+                   "case_name": "c1"}),
+            _line({"event_type": "check_pass", "elapsed_s": 62.0,
+                   "check": "custom_commands", "case_name": "c1"}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        # check_pass 가 latest_reason 을 제거 → 모두 pass 추론.
+        assert items["ch1 ROTATION"] == "pass"
+        assert items["ch1 BITRATE"] == "pass"
+
+    def test_case_end_pass_overrides_runtime_state(self):
+        # case 종료 후에는 runtime 추론 무시하고 case 결과가 최종 권위.
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "pending", "elapsed_s": 1.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: (got: FAIL:NO_BR)",
+                   "case_name": "c1"}),
+            _line({"event_type": "case_end", "elapsed_s": 62.0, "case_name": "c1",
+                   "phase": "validate", "result": "pass", "completed_cases": 1,
+                   "pass_count": 1, "fail_count": 0, "avg_case_duration_s": 62.0}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 ROTATION"] == "pass"
+        assert items["ch1 BITRATE"] == "pass"
