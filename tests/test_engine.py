@@ -99,6 +99,26 @@ class TestEngine:
         assert any(not r["passed"] for r in results)
 
     @patch("engine.time.sleep")
+    def test_run_monitor_stable_fail_with_varying_reason(self, mock_sleep):
+        # reason 의 측정값이 sample 마다 흔들려도 같은 check 가 연속 fail 이면 조기 종료.
+        # 시그니처가 name-only 라 reason 변동(5596/5601/5603kbps)에 영향받지 않는다.
+        from engine import Engine, STABLE_FAIL_SAMPLES
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 20, "interval_sec": 1}
+        engine = Engine(self.ssh, profile)
+        kbps = iter([5596, 5601, 5603, 5599, 5602])
+        engine.run_snapshot = MagicMock(side_effect=lambda *a, **k: [
+            {"name": "custom_commands", "passed": False,
+             "reason": f"ch3 bitrate (got: FAIL:{next(kbps)}kbps_ex=8192kbps)"}])
+
+        results, collected, total = engine.run_monitor(until_pass=True)
+
+        # reason 이 매번 달라도 name 이 같으므로 3 회 연속에서 끊긴다(이전엔 20 까지 갔음).
+        assert engine.run_snapshot.call_count == STABLE_FAIL_SAMPLES
+        assert collected == STABLE_FAIL_SAMPLES
+
+    @patch("engine.time.sleep")
     def test_run_monitor_stabilization_fail_does_not_early_exit(self, mock_sleep):
         # NEED_2_FINALIZES('준비 중')는 stable-fail 대상이 아니므로 끝까지 샘플링한다.
         from engine import Engine

@@ -103,12 +103,17 @@ class Engine:
 
         NEED_2_FINALIZES / recovering / process 미기동 등 '준비 중' 신호는 제외한다
         (그건 시간이 지나면 풀릴 수 있으므로 조기 종료 대상이 아님). 실제 fail 이 없으면
-        None, 있으면 (name, reason) 쌍의 frozenset.
+        None, 있으면 실패 중인 check name 들의 frozenset.
+
+        시그니처는 check name 만 쓴다(reason 제외). reason 에는 측정값(bitrate/온도 등)이
+        박혀 sample 마다 미세하게 흔들리므로(예: 5596 vs 5601kbps), reason 을 포함하면
+        시그니처가 매번 달라져 조기 종료가 절대 트리거되지 않는다 — 정작 그 동적 fail 이
+        조기 종료가 노리는 대상이다. "같은 check 가 연속 fail" = 지속 결함으로 본다.
         """
         if not snap:
             return None
         sig = frozenset(
-            (r.get("name"), r.get("reason"))
+            r.get("name")
             for r in snap
             if isinstance(r, dict) and not r.get("passed")
             and not is_stabilization_reason(r.get("reason", ""))
