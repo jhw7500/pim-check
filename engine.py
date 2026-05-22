@@ -120,10 +120,10 @@ class Engine:
         if not snap:
             return None
         sig = frozenset(
-            (r.get("name"), _DIGITS_RE.sub("#", str(r.get("reason") or "")))
+            (r.get("name"), _DIGITS_RE.sub("#", r.get("reason") or ""))
             for r in snap
             if isinstance(r, dict) and not r.get("passed")
-            and not is_stabilization_reason(r.get("reason", ""))
+            and not is_stabilization_reason(r.get("reason") or "")
         )
         return sig or None
 
