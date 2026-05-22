@@ -26,7 +26,8 @@ def validate_start_request(params: dict, available_plans: list[str]) -> tuple[bo
     """start 요청 파라미터 검증. (ok, error, clean) 반환.
 
     clean 은 검증 통과 시 {plan, host, user, password} (양끝 공백 제거).
-    password 는 형식 제한 없음(임의 비밀번호 허용) — argv 로만 전달되어 주입 불가.
+    password 는 형식 제한 없음(임의 비밀번호 허용) — 뷰어 spawn 시 argv 가 아니라
+    env(PIM_PASSWORD)로 전달되어 ps/proc 노출과 주입을 모두 회피한다.
     """
     if not isinstance(params, dict):
         return False, "invalid request body", {}
