@@ -4,6 +4,7 @@ setup.py - SetupManager: edgeconf 설정 변경 및 복원 엔진
 """
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -60,28 +61,32 @@ BOARD_NET_RECOVERY_CMD = "python3 /opt/cis/bin/update_network.py"
 HOST_WLAN_IFACE = "wlan0"             # 호스트 측 보드 접속 인터페이스
 
 
+# 카메라 채널 enable 키 — 예: ".VHL_CAM.i2c2.ch0.enable", ".VHL_CAM.i2c1.ch3.enable".
+_CAM_CH_ENABLE_RE = re.compile(r"\.VHL_CAM\.[^.]+\.ch\d+\.enable$")
+
+
 def profile_is_camera(profile: dict) -> bool:
-    """profile 의 custom_commands 중 max9296_fsync 를 참조하는 체크가 있으면
-    카메라(녹화) 케이스로 본다.
+    """카메라(녹화) 케이스인지 — reboot 후 카메라 init(fsync) readiness 게이트가
+    필요한 케이스인지 판정한다.
 
-    이 케이스만 reboot 후 카메라 init(fsync) readiness 게이트가 필요하다 — ISP
-    레지스터 검사가 카메라 init 완료 후에야 유효하기 때문. config/network 등
-    비카메라 케이스는 fsync 로그가 안 떠서 게이트를 켜면 안 된다(불필요한 대기).
+    판정 신호는 **setup 설정**을 본다(테스트 스텝 custom_commands 와 분리 — 테스트가
+    무엇을 검사하는지와 부팅 게이트가 독립적이도록):
+      1. `setup.camera_init_required` 가 명시돼 있으면 그 값을 그대로 사용(opt-in/out).
+      2. 없으면 `setup.edgeconf_changes` 가 카메라 채널을 켜는지로 자동 추론
+         (`.VHL_CAM.*.chN.enable: true` 가 하나라도 있으면 카메라).
 
-    [컨벤션] 카메라 init 게이트는 'profile 에 max9296_fsync 체크가 있으면 카메라'
-    라는 단일 신호로 추론한다. 따라서:
-      - 카메라 케이스는 반드시 `dmesg ... max9296_fsync fps` 체크를 포함할 것
-        (없으면 게이트가 꺼져 init 전 ISP read race 가 재발한다).
-      - 비카메라 체크 command 에 'max9296_fsync' 문자열을 우연히 넣지 말 것
-        (게이트가 잘못 켜져 불필요한 대기가 생긴다).
-    더 강한 보장이 필요하면 명시 키(예: setup.camera_init_required)로 전환 검토."""
-    checks = (profile or {}).get("checks") or {}
-    if not isinstance(checks, dict):
+    ISP 레지스터 검사(i2ctransfer)는 카메라 init 완료 후에야 유효하므로 카메라
+    케이스만 게이트를 켠다. config/network 등 비카메라는 fsync 로그가 안 떠서
+    게이트를 켜면 불필요하게 대기하게 된다."""
+    setup = (profile or {}).get("setup") or {}
+    if not isinstance(setup, dict):
         return False
-    for cmd in (checks.get("custom_commands") or []):
-        if "max9296_fsync" in (cmd.get("command") or ""):
-            return True
-    return False
+    if "camera_init_required" in setup:
+        return bool(setup["camera_init_required"])
+    edge = setup.get("edgeconf_changes") or {}
+    if not isinstance(edge, dict):
+        return False
+    return any(v is True and _CAM_CH_ENABLE_RE.search(k) for k, v in edge.items())
 
 
 def readiness_kwargs(profile: dict) -> dict:
@@ -99,6 +104,9 @@ def readiness_kwargs(profile: dict) -> dict:
         procs = ((checks.get("processes") or {}).get("required") or [])
     return {
         "ready_processes": list(procs),
+        # recording 단계는 카메라/비카메라 구분 없이 항상 주입(기존 plan.py 동작 보존).
+        # 비카메라 케이스는 녹화 파일이 안 생겨 stabilize_sec 까지 대기 후 진행(경고)하나,
+        # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_fsync 로 분리.
         "ready_recording_paths": RECORDING_DIRS,
         "ready_fsync": profile_is_camera(profile),
     }
@@ -361,17 +369,17 @@ class SetupManager:
         레지스터가 유효(settle)하다고 판단해 True 를 반환한다. 로그가 사라지거나 SSH
         실패면 settle 타이머를 리셋한다(재부팅/재초기화 대비)."""
         clock = _clock or time.monotonic
+        # '|| echo 0' 으로 명령 자체가 항상 exit 0 + 단일 정수를 출력하게 한다.
+        # (grep -c 는 0건이면 exit 1 이라 ssh.run 이 None 을 반환하는데, 그 ssh.py
+        #  규약에 의존하지 않도록 self-exiting-zero 로 만든다.)
         try:
-            out = self.ssh.run(f"dmesg 2>/dev/null | grep -c '{FSYNC_MARKER}'")
+            out = self.ssh.run(f"dmesg 2>/dev/null | grep -c '{FSYNC_MARKER}' || echo 0")
         except Exception:
             self._fsync_seen_at = None
             return False
-        # grep -c 는 0건이면 exit 1 → ssh.run 이 None 반환(ssh.py 규약). 따라서
-        # out is None == '매칭 없음' 이므로 'out or "0"' 로 count=0 처리한다.
-        # (out.strip() 로 바꾸면 None 에서 AttributeError 가 나므로 주의.)
         try:
-            count = int((out or "0").strip().split()[0])
-        except (ValueError, IndexError):
+            count = int(out.strip()) if out else 0
+        except ValueError:
             count = 0
         if count <= 0:
             self._fsync_seen_at = None

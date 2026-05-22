@@ -233,7 +233,7 @@ class TestStageCameraInitFsync:
         assert mgr._ready_dmesg_fsync() is False
         assert mgr._fsync_seen_at is None
 
-    def test_grep_command_uses_marker(self):
+    def test_grep_command_uses_marker_and_self_exits_zero(self):
         mgr = _mgr()
         mgr.ssh.run.return_value = "0"
         mgr._ready_dmesg_fsync(_clock=_FixedClock())
@@ -241,6 +241,17 @@ class TestStageCameraInitFsync:
         assert "dmesg" in cmd
         assert "max9296_fsync fps :" in cmd
         assert "grep -c" in cmd
+        # self-exiting-zero: ssh.run None 규약에 의존하지 않도록 '|| echo 0'
+        assert "|| echo 0" in cmd
+
+    def test_count_parsed_from_self_exiting_output(self):
+        mgr = _mgr()
+        # '|| echo 0' 덕에 board 는 0건이어도 None 이 아닌 "0" 을 반환
+        mgr.ssh.run.return_value = "0"
+        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+        # None(=SSH 비정상)도 안전하게 0 처리
+        mgr.ssh.run.return_value = None
+        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
 
     def test_camera_init_stage_before_recording_when_enabled(self):
         mgr = _mgr()
@@ -266,34 +277,58 @@ class TestStageCameraInitFsync:
 
 
 class TestProfileIsCamera:
-    def test_camera_when_fsync_check_present(self):
-        prof = {"checks": {"custom_commands": [
-            {"name": "dmesg max9296_fsync fps",
-             "command": "dmesg | grep -oE 'max9296_fsync fps : [0-9]+'"}]}}
+    """카메라 판정은 setup 설정 기반 (test-step custom_commands 와 분리)."""
+
+    def test_camera_when_edgeconf_enables_channel(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.vflip": False}}}
         assert profile_is_camera(prof) is True
 
-    def test_not_camera_without_fsync_check(self):
-        prof = {"checks": {"custom_commands": [
-            {"name": "config", "command": "jq . /root/shared_v/edgeconf_pim.json"}]}}
+    def test_camera_when_i2c1_channel_enabled(self):
+        prof = {"setup": {"edgeconf_changes": {".VHL_CAM.i2c1.ch3.enable": True}}}
+        assert profile_is_camera(prof) is True
+
+    def test_not_camera_when_no_channel_enable(self):
+        # VHL_CAM 키가 있어도 채널 enable 이 아니면 카메라 아님
+        prof = {"setup": {"edgeconf_changes": {".VHL_CAM.cam_width": 1280}}}
         assert profile_is_camera(prof) is False
 
-    def test_not_camera_when_no_checks(self):
+    def test_not_camera_for_network_config(self):
+        prof = {"setup": {"edgeconf_changes": {".NETWORK.wifi.ssid": "x"}}}
+        assert profile_is_camera(prof) is False
+
+    def test_channel_enable_false_is_not_camera(self):
+        prof = {"setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": False}}}
+        assert profile_is_camera(prof) is False
+
+    def test_explicit_key_opt_in_overrides(self):
+        # edgeconf 신호가 없어도 명시 키로 켤 수 있다
+        prof = {"setup": {"camera_init_required": True, "edgeconf_changes": {}}}
+        assert profile_is_camera(prof) is True
+
+    def test_explicit_key_opt_out_overrides_channel_signal(self):
+        # 채널 enable 이 있어도 명시 False 면 게이트 off
+        prof = {"setup": {"camera_init_required": False,
+                          "edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}}}
+        assert profile_is_camera(prof) is False
+
+    def test_not_camera_when_no_setup(self):
         assert profile_is_camera({}) is False
-        assert profile_is_camera({"checks": None}) is False
-        assert profile_is_camera({"checks": {}}) is False
+        assert profile_is_camera({"setup": None}) is False
+        assert profile_is_camera({"setup": {}}) is False
 
     def test_not_camera_when_profile_is_none(self):
-        # (None or {}) 처리 — 명시 검증
         assert profile_is_camera(None) is False
 
 
 class TestReadinessKwargs:
     def test_camera_profile_enables_fsync_and_paths(self):
         from setup import readiness_kwargs, RECORDING_DIRS
-        prof = {"checks": {
-            "processes": {"required": ["gstApp", "chk_cam_operate"]},
-            "custom_commands": [
-                {"name": "fps", "command": "dmesg | grep max9296_fsync fps"}]}}
+        prof = {
+            "setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}},
+            "checks": {"processes": {"required": ["gstApp", "chk_cam_operate"]}},
+        }
         kw = readiness_kwargs(prof)
         assert kw["ready_processes"] == ["gstApp", "chk_cam_operate"]
         assert kw["ready_recording_paths"] == RECORDING_DIRS
@@ -301,8 +336,8 @@ class TestReadinessKwargs:
 
     def test_non_camera_profile_disables_fsync(self):
         from setup import readiness_kwargs
-        prof = {"checks": {"custom_commands": [
-            {"name": "cfg", "command": "jq . /root/conf.json"}]}}
+        prof = {"setup": {"edgeconf_changes": {".NETWORK.wifi.ssid": "x"}},
+                "checks": {"custom_commands": [{"name": "cfg", "command": "jq ."}]}}
         kw = readiness_kwargs(prof)
         assert kw["ready_fsync"] is False
         assert kw["ready_processes"] == []
