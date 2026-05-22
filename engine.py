@@ -4,8 +4,12 @@ import copy
 import re
 import time
 
-# fail reason 에서 변동 측정값(숫자)을 마스킹해 sample 간 노이즈를 제거하기 위한 패턴.
-_DIGITS_RE = re.compile(r"\d+")
+# fail reason 에서 변동 측정값(숫자)만 마스킹해 sample 간 노이즈를 제거한다.
+# lookbehind (?<![A-Za-z0-9]) 로 '영숫자에 붙은 숫자'(chN/i2cN 같은 식별자)는 보존하고,
+# 구분자(공백/콜론/= 등) 뒤에서 시작하는 숫자(측정값: bitrate/fps/temp)만 '#'로 친다.
+# 식별자 숫자까지 마스킹하면 ch1↔ch3 실패가 같은 시그니처로 접혀 false 조기종료(PR #29 claude).
+# 0-9 도 lookbehind 에 넣어야 다중 자리(ch10→ch1#)에서 뒷자리만 매칭되는 버그를 막는다(PR #30 gemini).
+_MEASUREMENT_RE = re.compile(r"(?<![A-Za-z0-9])\d+")
 
 from checks import ALL_CHECKS
 from ssh import SshClient, SshTimeoutError, SshConnectionError
@@ -116,11 +120,13 @@ class Engine:
             여러 sub-command 를 묶는 집계 체크에서, 수렴 중 서로 다른 sub-command 가
             샘플마다 다르게 실패하면 시그니처가 달라져 조기 종료하지 않고 계속 샘플링한다
             (name-only 로 접으면 이 경우를 지속 결함으로 오판해 false 종료 — PR #27 codex 지적).
+          - 마스킹은 측정값에만 적용한다(_MEASUREMENT_RE): chN/i2cN 같은 식별자 숫자는
+            보존해 ch1↔ch3 실패가 같은 시그니처로 접히는 false 종료를 막는다(PR #29 claude 지적).
         """
         if not snap:
             return None
         sig = frozenset(
-            (r.get("name"), _DIGITS_RE.sub("#", r.get("reason") or ""))
+            (r.get("name"), _MEASUREMENT_RE.sub("#", r.get("reason") or ""))
             for r in snap
             if isinstance(r, dict) and not r.get("passed")
             and not is_stabilization_reason(r.get("reason") or "")

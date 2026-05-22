@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from unittest.mock import MagicMock, patch
 
 
@@ -101,8 +102,6 @@ class TestEngine:
     @patch("engine.time.sleep")
     def test_run_monitor_stable_fail_with_varying_reason(self, mock_sleep):
         # reason 의 측정값(숫자)만 sample 마다 흔들리면 정규화 후 동일 시그니처 → 조기 종료.
-        import itertools
-
         from engine import Engine, STABLE_FAIL_SAMPLES
 
         profile = dict(self.profile)
@@ -125,9 +124,7 @@ class TestEngine:
         # 같은 집계 체크(custom_commands)라도 '실패 종류'(reason 텍스트)가 sample 마다
         # 다르면(수렴 중 다른 sub-command fail) 시그니처가 달라 조기 종료하지 않는다.
         # name-only 였다면 3 회에서 false 종료했을 시나리오 (PR #27 codex 지적).
-        import itertools
-
-        from engine import Engine
+        from engine import STABLE_FAIL_SAMPLES, Engine
 
         profile = dict(self.profile)
         profile["monitor"] = {"duration_sec": 5, "interval_sec": 1}  # samples_total=5
@@ -139,8 +136,31 @@ class TestEngine:
 
         results, collected, total = engine.run_monitor(until_pass=True)
 
-        # 3 회에 끊기지 않고 samples_total(5)까지 간다.
-        assert collected == 5
+        # streak 임계를 넘겨 끝까지 샘플링했음을 self-documenting 하게 검증.
+        assert total > STABLE_FAIL_SAMPLES
+        assert collected == total
+
+    @patch("engine.time.sleep")
+    def test_run_monitor_varying_channel_keeps_sampling(self, mock_sleep):
+        # 측정값만 마스킹하므로 채널번호(chN)는 보존된다. 수렴 중 ch1↔ch3 가 번갈아
+        # 실패하면(측정값도 변동) 시그니처가 달라 조기 종료하지 않는다 (PR #29 claude 지적).
+        from engine import STABLE_FAIL_SAMPLES, Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 5, "interval_sec": 1}  # samples_total=5
+        engine = Engine(self.ssh, profile)
+        # 다중 자리 채널(ch10/ch11)로 lookbehind 가 뒷자리만 마스킹하는 버그도 함께 검증.
+        chans = itertools.cycle(["ch10", "ch11"])
+        kbps = itertools.count(5500)
+        engine.run_snapshot = MagicMock(side_effect=lambda *a, **k: [
+            {"name": "custom_commands", "passed": False,
+             "reason": f"{next(chans)} bitrate (got: {next(kbps)}kbps)"}])
+
+        results, collected, total = engine.run_monitor(until_pass=True)
+
+        # ch1/ch3 가 구분되므로(측정값만 #) 3 회에서 끊기지 않고 끝까지 간다.
+        assert total > STABLE_FAIL_SAMPLES
+        assert collected == total
 
     @patch("engine.time.sleep")
     def test_run_monitor_stabilization_fail_does_not_early_exit(self, mock_sleep):
