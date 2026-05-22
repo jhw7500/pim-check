@@ -501,6 +501,41 @@ class TestCheckPassEvent:
         assert items["ch1 ROTATION"] == "pass"
         assert items["ch1 BITRATE"] == "pass"
 
+    def test_two_pending_checks_both_show_pending(self):
+        # Gemini 리뷰 지적: CheckA pending + CheckB pending 시 두 항목 모두 pending 이어야 함.
+        # (이전 구현: _case_pending 이 마지막 pending reason 만 보존해 첫 항목이 fail 로 잘못 추론됨)
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "pending", "elapsed_s": 1.0,
+                   "check": "custom_commands",
+                   "reason": "ch1 ROTATION: (got: FAIL:NO_BR)",
+                   "case_name": "c1"}),
+            _line({"event_type": "pending", "elapsed_s": 1.1,
+                   "check": "recording",
+                   "reason": "ch1 BITRATE: (got: FAIL:NO_BR)",
+                   "case_name": "c1"}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 ROTATION"] == "pending"
+        assert items["ch1 BITRATE"] == "pending"
+
+    def test_pending_then_fail_other_check_correct_status(self):
+        # Check A pending + Check B fail → A항목=pending, B항목=fail (혼용 케이스)
+        st = ViewerState.from_lines(self._base_lines() + [
+            _line({"event_type": "pending", "elapsed_s": 1.0,
+                   "check": "recording",
+                   "reason": "ch1 ROTATION: settling (got: FAIL:NO_BR)",
+                   "case_name": "c1"}),
+            _line({"event_type": "fail", "elapsed_s": 1.1,
+                   "check": "custom_commands",
+                   "reason": "ch1 BITRATE: 범위 초과 (got: 9000kbps)",
+                   "case_name": "c1"}),
+        ])
+        cd = st.case_details["c1"]
+        items = {it["name"]: it["status"] for it in cd["checklist"]}
+        assert items["ch1 ROTATION"] == "pending"
+        assert items["ch1 BITRATE"] == "fail"
+
     def test_case_end_pass_overrides_runtime_state(self):
         # case 종료 후에는 runtime 추론 무시하고 case 결과가 최종 권위.
         st = ViewerState.from_lines(self._base_lines() + [
