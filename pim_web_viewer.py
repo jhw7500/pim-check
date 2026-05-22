@@ -87,11 +87,14 @@ def start_run(params: dict) -> tuple[int, dict]:
             # 핸들을 닫아도 자식은 계속 기록한다(반복 /start 시 부모 FD 누수 방지).
             child_env = {**os.environ, "PIM_PASSWORD": clean["password"]}
             with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
+                argv = [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
+                        "--plan", clean["plan"], "--host", clean["host"],
+                        "--user", clean["user"],
+                        "--json", "--html", "--log"]
+                if params.get("until_pass"):
+                    argv.append("--until-pass")
                 proc = subprocess.Popen(
-                    [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
-                     "--plan", clean["plan"], "--host", clean["host"],
-                     "--user", clean["user"],
-                     "--json", "--html", "--log"],
+                    argv,
                     cwd=REPO_DIR, env=child_env, stdout=logf,
                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                     start_new_session=True,
@@ -635,6 +638,17 @@ def main(argv=None) -> int:
                     help="JSONL 경로 (기본: events/current.jsonl)")
     ap.add_argument("--host", default="0.0.0.0", help="바인드 호스트 (기본 0.0.0.0)")
     ap.add_argument("--port", type=int, default=8077, help="포트 (기본 8077)")
+    # 자동 시작 옵션 — 브라우저에서 수동 시작 없이 CLI 한 줄로 뷰어+플랜 실행.
+    ap.add_argument("--plan", dest="auto_plan", default=None,
+                    help="자동 시작할 플랜명 (지정 시 서버 기동 후 즉시 실행)")
+    ap.add_argument("--target-host", default=None,
+                    help="DUT SSH 호스트 (--plan 과 함께)")
+    ap.add_argument("--user", default="root",
+                    help="DUT SSH 사용자 (기본 root)")
+    ap.add_argument("--password", default=None,
+                    help="DUT SSH 비밀번호 (미지정 시 PIM_PASSWORD 환경변수)")
+    ap.add_argument("--until-pass", action="store_true", dest="until_pass",
+                    help="모든 체크 통과 시 자동 종료 (--plan 과 함께)")
     args = ap.parse_args(argv)
     _Handler.events_path = _events_path(args.path)
     # spawn 한 plan 런 자식 프로세스가 종료/중지 시 좀비로 남지 않도록 자동 reap.
@@ -645,6 +659,27 @@ def main(argv=None) -> int:
         pass  # 비-POSIX 또는 비-메인스레드: 좀비 누적 감수
     srv = ThreadingHTTPServer((args.host, args.port), _Handler)
     print(f"pim_web_viewer: http://localhost:{args.port}  (events: {_Handler.events_path})", flush=True)
+    if args.auto_plan:
+        import threading as _threading
+
+        def _auto_start() -> None:
+            import time as _time
+            _time.sleep(0.3)  # 서버 bind 완료 대기
+            password = args.password or os.environ.get("PIM_PASSWORD", "")
+            params = {
+                "plan": args.auto_plan,
+                "host": args.target_host or "",
+                "user": args.user,
+                "password": password,
+                "until_pass": args.until_pass,
+            }
+            code, body = start_run(params)
+            if code == 200:
+                print(f"pim_web_viewer: auto-start OK — plan={args.auto_plan} pid={body.get('pid')}", flush=True)
+            else:
+                print(f"pim_web_viewer: auto-start FAIL — {body.get('error')}", flush=True)
+
+        _threading.Thread(target=_auto_start, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
