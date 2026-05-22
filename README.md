@@ -107,6 +107,21 @@ python3 pim_check.py --list-plans
 | `--init-config` | ~/.pim-check.yaml 기본 설정 생성 |
 | `--version` | 버전 출력 |
 
+## 실시간 진행 모니터 & 웹 제어판
+
+실행 중인 plan 의 진행 상황을 실시간으로 보고, 브라우저에서 타겟·플랜을 골라
+테스트를 시작/중지할 수 있다(이벤트 스트림 `events/current.jsonl` 기반).
+
+```bash
+python3 pim_web_viewer.py          # http://localhost:8077 (제어판 + 실시간 뷰)
+python3 pim_viewer.py              # 터미널(TUI) 뷰어
+```
+
+상세 사용법(2-pane 구조, 제어판 시작/중지, 경과 시계, 드릴다운 측정 vs 기대,
+monitor_until_pass, 엔드포인트, 트러블슈팅): **[docs/realtime-monitor-guide.md](docs/realtime-monitor-guide.md)**.
+
+> 아래 "웹 대시보드"(`web.py`, 8080)는 별개의 구버전 도구다.
+
 ## 웹 대시보드
 
 ```bash
