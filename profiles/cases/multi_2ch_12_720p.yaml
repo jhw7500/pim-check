@@ -126,8 +126,10 @@ checks:
     on_fail: 'ch2 last_ok이 stale (frame drop 또는 채널 죽음)'
   - name: ch1 BITRATE (~4096kbps ±20%, file-delta 5s)
     command: |-
-      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
+      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       BR=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv=p=0 "$F" 2>/dev/null)
       [ -z "$BR" ] && echo FAIL:NO_BR && exit 0
       K=$((BR / 1000)); [ $K -ge 3276 ] && [ $K -le 4915 ] && echo OK || echo FAIL:${K}kbps
@@ -135,8 +137,10 @@ checks:
     on_fail: 'ch1 실측 bitrate 범위(3276~4915kbps) 벗어남'
   - name: ch2 BITRATE (~8192kbps ±20%, file-delta 5s)
     command: |-
-      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
+      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       BR=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv=p=0 "$F" 2>/dev/null)
       [ -z "$BR" ] && echo FAIL:NO_BR && exit 0
       K=$((BR / 1000)); [ $K -ge 6553 ] && [ $K -le 9830 ] && echo OK || echo FAIL:${K}kbps
@@ -144,8 +148,10 @@ checks:
     on_fail: 'ch2 실측 bitrate 범위(6553~9830kbps) 벗어남'
   - name: ch1 파일 무결성 (codec=h264, 1280x720, .mp4)
     command: |-
-      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
+      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       EXT="${F##*.}"
       [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
       P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
@@ -157,8 +163,10 @@ checks:
     on_fail: 'ch1 파일 무결성 (codec/dim/ext) 미일치'
   - name: ch2 파일 무결성 (codec=h264, 1280x720, .mp4)
     command: |-
-      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
+      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       EXT="${F##*.}"
       [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
       P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
@@ -170,8 +178,10 @@ checks:
     on_fail: 'ch2 파일 무결성 (codec/dim/ext) 미일치'
   - name: ch1 duration (~60s ±5s)
     command: |-
-      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
+      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
       [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
       LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
@@ -180,8 +190,10 @@ checks:
     on_fail: 'ch1 녹화 길이 60s ±5s 벗어남'
   - name: ch2 duration (~60s ±5s)
     command: |-
-      F=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:NO_FILE && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
+      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
+      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
       [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
       LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
