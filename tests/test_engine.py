@@ -100,23 +100,47 @@ class TestEngine:
 
     @patch("engine.time.sleep")
     def test_run_monitor_stable_fail_with_varying_reason(self, mock_sleep):
-        # reason 의 측정값이 sample 마다 흔들려도 같은 check 가 연속 fail 이면 조기 종료.
-        # 시그니처가 name-only 라 reason 변동(5596/5601/5603kbps)에 영향받지 않는다.
+        # reason 의 측정값(숫자)만 sample 마다 흔들리면 정규화 후 동일 시그니처 → 조기 종료.
+        import itertools
+
         from engine import Engine, STABLE_FAIL_SAMPLES
 
         profile = dict(self.profile)
         profile["monitor"] = {"duration_sec": 20, "interval_sec": 1}
         engine = Engine(self.ssh, profile)
-        kbps = iter([5596, 5601, 5603, 5599, 5602])
+        kbps = itertools.count(5596)  # STABLE_FAIL_SAMPLES 가 커져도 StopIteration 없음
         engine.run_snapshot = MagicMock(side_effect=lambda *a, **k: [
             {"name": "custom_commands", "passed": False,
              "reason": f"ch3 bitrate (got: FAIL:{next(kbps)}kbps_ex=8192kbps)"}])
 
         results, collected, total = engine.run_monitor(until_pass=True)
 
-        # reason 이 매번 달라도 name 이 같으므로 3 회 연속에서 끊긴다(이전엔 20 까지 갔음).
+        # 숫자만 달라지므로 정규화 시그니처가 같아 3 회 연속에서 끊긴다(이전엔 20 까지 갔음).
         assert engine.run_snapshot.call_count == STABLE_FAIL_SAMPLES
         assert collected == STABLE_FAIL_SAMPLES
+        assert any(not r["passed"] for r in results)
+
+    @patch("engine.time.sleep")
+    def test_run_monitor_changing_failure_kind_keeps_sampling(self, mock_sleep):
+        # 같은 집계 체크(custom_commands)라도 '실패 종류'(reason 텍스트)가 sample 마다
+        # 다르면(수렴 중 다른 sub-command fail) 시그니처가 달라 조기 종료하지 않는다.
+        # name-only 였다면 3 회에서 false 종료했을 시나리오 (PR #27 codex 지적).
+        import itertools
+
+        from engine import Engine
+
+        profile = dict(self.profile)
+        profile["monitor"] = {"duration_sec": 5, "interval_sec": 1}  # samples_total=5
+        engine = Engine(self.ssh, profile)
+        subcmds = itertools.cycle(["fps check", "bps check", "i2c check"])
+        engine.run_snapshot = MagicMock(side_effect=lambda *a, **k: [
+            {"name": "custom_commands", "passed": False,
+             "reason": f"{next(subcmds)}: mismatch"}])  # 종류가 매번 다름(숫자 무관)
+
+        results, collected, total = engine.run_monitor(until_pass=True)
+
+        # 3 회에 끊기지 않고 samples_total(5)까지 간다.
+        assert collected == 5
 
     @patch("engine.time.sleep")
     def test_run_monitor_stabilization_fail_does_not_early_exit(self, mock_sleep):
