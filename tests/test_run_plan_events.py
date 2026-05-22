@@ -80,7 +80,7 @@ def test_run_plan_emits_full_event_stream(tmp_path, monkeypatch):
 
     args = argparse.Namespace(
         plan="smoke", host="192.168.0.5", user=None, password=None,
-        duration=None, quiet=True,
+        duration=None, quiet=True, until_pass=False,
     )
     rc = pim_check._run_plan(args)
     assert rc == 1  # FAIL verdict
@@ -154,7 +154,8 @@ def test_run_plan_engine_factory_emits_realtime_check_fail(tmp_path, monkeypatch
     monkeypatch.setattr(plan_mod, "execute_plan", fake_execute_plan)
 
     args = argparse.Namespace(plan="comprehensive", host="192.168.0.5",
-                              user=None, password=None, duration=None, quiet=True)
+                              user=None, password=None, duration=None, quiet=True,
+                              until_pass=False)
     pim_check._run_plan(args)
 
     recs = _read(os.path.join(events_dir, "current.jsonl"))
@@ -196,7 +197,59 @@ def test_run_plan_runs_even_if_event_layer_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(plan_mod, "execute_plan", fake_execute_plan)
 
     args = argparse.Namespace(plan="smoke", host="192.168.0.5", user=None,
-                              password=None, duration=None, quiet=True)
+                              password=None, duration=None, quiet=True,
+                              until_pass=False)
     # 이벤트 레이어가 죽어도 예외 없이 verdict exit code 를 돌려준다.
     rc = pim_check._run_plan(args)
     assert rc == 1
+
+
+def _until_pass_setup(monkeypatch, tmp_path):
+    """_run_plan 의 외부 의존을 fake 로 치환하고, execute_plan 에 전달된 plan 을
+    캡처하는 헬퍼. 반환 dict 의 'plan' 으로 monitor_until_pass 를 검증한다."""
+    monkeypatch.setattr(run_stream, "default_events_dir",
+                        lambda: str(tmp_path / "events"))
+    fake_plan = types.SimpleNamespace(
+        name="comprehensive", description="d",
+        execution={"stop_on_fail": False, "case_retry": 0,
+                   "monitor_until_pass": False},
+        gate={},
+    )
+    monkeypatch.setattr(plan_mod, "load_plan", lambda path: fake_plan)
+    monkeypatch.setattr(plan_mod, "load_baseline", lambda ref, root: (None, None))
+    monkeypatch.setattr(plan_mod, "evaluate_gate", lambda *a, **k: _Gate())
+    monkeypatch.setattr(plan_mod, "render_reports", lambda *a, **k: [])
+    monkeypatch.setattr(plan_mod, "resolve_cases",
+                        lambda plan, profiles_dir: [("regression", "c1")])
+    captured = {}
+
+    def fake_execute_plan(plan, profiles_dir, *, ssh_factory, setup_factory,
+                          engine_factory, cli_args, progress, on_case_start):
+        captured["plan"] = plan
+        ex = _Exec("regression", "c1", True,
+                   [{"name": "cpu", "passed": True, "reason": "OK"}])
+        on_case_start(1, 1, "c1", "regression")
+        progress(1, 1, "c1", ex)
+        return [ex]
+    monkeypatch.setattr(plan_mod, "execute_plan", fake_execute_plan)
+    return captured
+
+
+def test_run_plan_until_pass_overrides_execution(tmp_path, monkeypatch):
+    # --until-pass 면 execute_plan 에 넘어가는 plan.execution.monitor_until_pass 가 True.
+    captured = _until_pass_setup(monkeypatch, tmp_path)
+    args = argparse.Namespace(plan="comprehensive", host="192.168.0.5", user=None,
+                              password=None, duration=None, quiet=True,
+                              until_pass=True)
+    pim_check._run_plan(args)
+    assert captured["plan"].execution["monitor_until_pass"] is True
+
+
+def test_run_plan_without_until_pass_keeps_execution(tmp_path, monkeypatch):
+    # 플래그 없으면 plan 의 원래 monitor_until_pass(False) 가 그대로 유지된다.
+    captured = _until_pass_setup(monkeypatch, tmp_path)
+    args = argparse.Namespace(plan="comprehensive", host="192.168.0.5", user=None,
+                              password=None, duration=None, quiet=True,
+                              until_pass=False)
+    pim_check._run_plan(args)
+    assert captured["plan"].execution["monitor_until_pass"] is False

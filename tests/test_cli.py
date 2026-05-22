@@ -48,6 +48,14 @@ class TestParseArgs(unittest.TestCase):
         args = pim_check.parse_args(["--learn"])
         self.assertTrue(args.learn)
 
+    def test_until_pass_flag(self):
+        args = pim_check.parse_args(["--plan", "comprehensive", "--until-pass"])
+        self.assertTrue(args.until_pass)
+
+    def test_until_pass_default_false(self):
+        args = pim_check.parse_args(["--plan", "comprehensive"])
+        self.assertFalse(args.until_pass)
+
 
 class TestMainFlow(unittest.TestCase):
     @patch("pim_check.Reporter")

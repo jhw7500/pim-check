@@ -48,6 +48,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--user", type=str, default=None, help="SSH 유저")
     parser.add_argument("--password", type=str, default=None, help="SSH 비밀번호")
     parser.add_argument("--duration", type=int, default=None, help="모니터 duration 오버라이드 (초)")
+    parser.add_argument("--until-pass", action="store_true",
+                        help="plan.execution.monitor_until_pass 를 일회성으로 켜 조기종료 "
+                             "(지속검증 gate plan 을 빠르게 검증; plan YAML 불변)")
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
     parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드")
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
@@ -208,6 +211,12 @@ def _run_plan(args) -> int:
         print(f"ERROR: {exc}")
         return 3
 
+    # CLI --until-pass: plan.execution 의 monitor_until_pass 를 일회성으로 켠다.
+    # comprehensive 처럼 지속검증 gate(첫 통과 후 drift 관측)인 plan 을 빠르게 검증할 때
+    # 사용 — plan YAML 은 불변(gate 의미 보존), 이번 실행에만 조기종료 적용.
+    if args.until_pass:
+        plan.execution["monitor_until_pass"] = True
+
     # CLI 오버라이드 dict 구성
     cli_args: dict = {}
     if args.host or args.user or args.password:
@@ -238,7 +247,9 @@ def _run_plan(args) -> int:
         print(f"Plan: {plan.name}")
         print(f"  description: {plan.description}")
         print(f"  execution: stop_on_fail={plan.execution['stop_on_fail']}, "
-              f"case_retry={plan.execution['case_retry']}")
+              f"case_retry={plan.execution['case_retry']}, "
+              f"monitor_until_pass={plan.execution.get('monitor_until_pass', False)}"
+              f"{' (CLI override)' if args.until_pass else ''}")
         if baseline:
             print(f"  baseline: {baseline_ref.get('file')} "
                   f"({len(baseline.get('executions', []))} prior cases)")
@@ -590,6 +601,9 @@ def _main_run(args) -> int:
         else:
             print("No plans found in profiles/plans/")
         return 0
+
+    if args.until_pass and not args.plan:
+        print("WARNING: --until-pass 는 --plan 실행에만 적용됩니다 (무시됨).")
 
     if args.plan:
         return _run_plan(args)
