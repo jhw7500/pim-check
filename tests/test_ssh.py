@@ -11,6 +11,9 @@ from ssh import SshClient, SshTimeoutError, SshConnectionError
 class TestSshClientRun(unittest.TestCase):
     def setUp(self):
         self.client = SshClient(host="192.168.1.100", user="root", password="root")
+        # 이 테스트는 sshpass+subprocess 폴백 경로를 검증한다.
+        # paramiko 가 설치된 환경에서도 결정적으로 fallback 경로로 강제한다.
+        self.client._use_paramiko = False
 
     @patch("ssh.subprocess.run")
     def test_run_returns_stdout(self, mock_run):
@@ -65,6 +68,8 @@ class TestSshClientRun(unittest.TestCase):
 class TestSshClientCheckConnectivity(unittest.TestCase):
     def setUp(self):
         self.client = SshClient(host="192.168.1.100")
+        # sshpass+subprocess 폴백 경로 검증 — paramiko 설치 무관하게 강제.
+        self.client._use_paramiko = False
 
     @patch("ssh.subprocess.run")
     def test_check_connectivity_true(self, mock_run):
@@ -82,6 +87,8 @@ class TestSshClientCheckConnectivity(unittest.TestCase):
 class TestSshClientPreflightCheck(unittest.TestCase):
     def setUp(self):
         self.client = SshClient(host="192.168.1.100")
+        # sshpass+subprocess 폴백 경로 검증 — paramiko 설치 무관하게 강제.
+        self.client._use_paramiko = False
 
     @patch("ssh.subprocess.run")
     def test_preflight_check_all_present(self, mock_run):

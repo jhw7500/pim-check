@@ -30,7 +30,12 @@ def _has_paramiko() -> bool:
 
 
 class SshClient:
-    """SSH 클라이언트. paramiko 우선, 없으면 sshpass 폴백."""
+    """SSH 클라이언트. paramiko 우선(persistent connection), 없으면 sshpass 폴백.
+
+    paramiko 경로는 단일 SSHClient 를 캐싱해 run() 마다 TCP/auth 핸드셰이크를
+    재사용한다. DUT 측 sshd auth fork 누적(체크당 수십~수백 ssh handshake)을
+    한 connect 로 줄여 카메라 처리 jitter 와 wtmp/journald 부담을 완화한다.
+    """
 
     def __init__(
         self,
@@ -46,6 +51,8 @@ class SshClient:
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
         self._use_paramiko = _has_paramiko()
+        # paramiko persistent client (None 이면 다음 호출에서 connect).
+        self._client = None  # type: ignore[assignment]
 
     def run(self, command: str, retries: int = 0, retry_wait: int | None = None) -> str | None:
         """타겟에서 명령을 실행하고 stdout을 반환한다.
@@ -81,9 +88,20 @@ class SshClient:
             return self._run_paramiko(command)
         return self._run_subprocess(command)
 
-    def _run_paramiko(self, command: str) -> str | None:
-        """paramiko를 사용한 SSH 명령 실행."""
+    def _get_paramiko_client(self):
+        """캐시된 paramiko client 반환. 없거나 transport 비활성이면 새로 connect."""
         import paramiko
+
+        if self._client is not None:
+            transport = self._client.get_transport()
+            if transport is not None and transport.is_active():
+                return self._client
+            # 끊긴 client 정리 후 재연결
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001 — close 실패는 무시하고 새로 생성
+                pass
+            self._client = None
 
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -111,6 +129,21 @@ class SshClient:
                 f"SSH connection failed to {self.user}@{self.host}: {e}"
             )
 
+        # idle TCP drop / NAT timeout 방어 — 체크 사이 공백에서 sshd 가 끊지 않도록.
+        transport = client.get_transport()
+        if transport is not None:
+            transport.set_keepalive(15)
+
+        self._client = client
+        return client
+
+    def _run_paramiko(self, command: str) -> str | None:
+        """paramiko persistent client 로 SSH 명령 실행.
+
+        실패(timeout/connection error) 시 캐시된 client 를 invalidate 해
+        다음 호출에서 자동 재연결되도록 한다.
+        """
+        client = self._get_paramiko_client()
         try:
             _stdin, stdout, stderr = client.exec_command(
                 command, timeout=self.command_timeout
@@ -118,6 +151,12 @@ class SshClient:
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode("utf-8", errors="replace").strip()
         except Exception as e:
+            # client 가 broken 일 수 있다 — 캐시 무효화 후 적절한 예외로 변환.
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._client = None
             err_str = str(e).lower()
             if "timed out" in err_str or "timeout" in err_str:
                 raise SshTimeoutError(
@@ -126,12 +165,25 @@ class SshClient:
             raise SshConnectionError(
                 f"SSH command failed on {self.user}@{self.host}: {e}"
             )
-        finally:
-            client.close()
 
         if exit_code != 0:
             return None
         return output
+
+    def close(self) -> None:
+        """persistent client 명시적 종료. 같은 인스턴스로 이후 호출 시 재연결됨."""
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001 — 정리 실패 무시
+                pass
+            self._client = None
+
+    def __enter__(self) -> "SshClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
     def _run_subprocess(self, command: str) -> str | None:
         """sshpass + subprocess를 사용한 SSH 명령 실행 (Linux 폴백)."""
