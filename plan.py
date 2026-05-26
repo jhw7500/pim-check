@@ -632,6 +632,14 @@ def execute_plan(plan: Plan, profiles_dir: str,
             retries_used = 0
             max_retry = plan.execution["case_retry"]
             for attempt in range(max_retry + 1):
+                # 이전 attempt 의 ssh 를 정리 — paramiko persistent transport
+                # 가 attempt 사이에 점유되지 않도록. (last_ssh 는 매 attempt
+                # 마다 갱신되며 finally 의 teardown 에 쓰일 마지막 인스턴스만 유지.)
+                if last_ssh is not None:
+                    try:
+                        last_ssh.close()
+                    except Exception:  # noqa: BLE001 — close 실패는 무시
+                        pass
                 ssh = ssh_factory(host, user, password)
                 # 마지막 활성 ssh + setup_cfg 추적 (finally teardown용)
                 last_ssh = ssh
@@ -680,6 +688,12 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 _teardown_mgr.run_teardown(last_setup_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
+        # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
+        if last_ssh is not None:
+            try:
+                last_ssh.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     return executions
 

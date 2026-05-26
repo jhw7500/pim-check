@@ -168,6 +168,10 @@ class SshClient:
             )
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode("utf-8", errors="replace").strip()
+            # stderr 도 EOF 까지 읽어 채널 버퍼를 비운다 — 미소비 시 큰 stderr 출력이
+            # 원격 buffer 를 채워 다음 명령 송수신을 block 할 수 있다(persistent
+            # transport 라 영향이 누적). 반환값엔 포함하지 않는다.
+            stderr.read()
         except Exception as e:
             # client 가 broken 일 수 있다 — 캐시 무효화 후 적절한 예외로 변환.
             # lock 안에서 invalidate 해 다른 스레드가 이 사이 새 client 를 만들었으면
