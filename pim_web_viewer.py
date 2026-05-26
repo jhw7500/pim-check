@@ -650,6 +650,11 @@ def main(argv=None) -> int:
     ap.add_argument("--until-pass", action="store_true", dest="until_pass",
                     help="모든 체크 통과 시 자동 종료 (--plan 과 함께)")
     args = ap.parse_args(argv)
+    # --plan 사용 시 --target-host 필수 — 자식 spawn 시점에 발견하지 말고
+    # CLI 진입점에서 명확한 에러로 차단(빈 host 가 subprocess 깊은 곳까지 흘러가는 silent fail 방지).
+    if args.auto_plan and not args.target_host:
+        print("pim_web_viewer: --plan 사용 시 --target-host 필요", file=sys.stderr)
+        return 2
     _Handler.events_path = _events_path(args.path)
     # spawn 한 plan 런 자식 프로세스가 종료/중지 시 좀비로 남지 않도록 자동 reap.
     # (start_run 은 fire-and-forget Popen 이라 wait() 하지 않음)
@@ -660,15 +665,13 @@ def main(argv=None) -> int:
     srv = ThreadingHTTPServer((args.host, args.port), _Handler)
     print(f"pim_web_viewer: http://localhost:{args.port}  (events: {_Handler.events_path})", flush=True)
     if args.auto_plan:
-        import threading as _threading
-
         def _auto_start() -> None:
-            import time as _time
-            _time.sleep(0.3)  # 서버 bind 완료 대기
+            # 서버 bind 는 ThreadingHTTPServer() 가 동기 완료해 thread 시작 시점엔 이미 listen 중.
+            # start_run() 도 HTTP 가 아니라 Python 함수 호출이라 server-ready 대기 불필요.
             password = args.password or os.environ.get("PIM_PASSWORD", "")
             params = {
                 "plan": args.auto_plan,
-                "host": args.target_host or "",
+                "host": args.target_host,
                 "user": args.user,
                 "password": password,
                 "until_pass": args.until_pass,
@@ -677,9 +680,9 @@ def main(argv=None) -> int:
             if code == 200:
                 print(f"pim_web_viewer: auto-start OK — plan={args.auto_plan} pid={body.get('pid')}", flush=True)
             else:
-                print(f"pim_web_viewer: auto-start FAIL — {body.get('error')}", flush=True)
+                print(f"pim_web_viewer: auto-start FAIL — {body.get('error')}", file=sys.stderr, flush=True)
 
-        _threading.Thread(target=_auto_start, daemon=True).start()
+        threading.Thread(target=_auto_start, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

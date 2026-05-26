@@ -8,8 +8,10 @@ sshpass 불필요. paramiko가 없으면 subprocess + sshpass 폴백.
 """
 from __future__ import annotations
 
+import atexit
 import os
 import subprocess
+import threading
 import time
 
 
@@ -30,7 +32,12 @@ def _has_paramiko() -> bool:
 
 
 class SshClient:
-    """SSH 클라이언트. paramiko 우선, 없으면 sshpass 폴백."""
+    """SSH 클라이언트. paramiko 우선(persistent connection), 없으면 sshpass 폴백.
+
+    paramiko 경로는 단일 SSHClient 를 캐싱해 run() 마다 TCP/auth 핸드셰이크를
+    재사용한다. DUT 측 sshd auth fork 누적(체크당 수십~수백 ssh handshake)을
+    한 connect 로 줄여 카메라 처리 jitter 와 wtmp/journald 부담을 완화한다.
+    """
 
     def __init__(
         self,
@@ -46,6 +53,14 @@ class SshClient:
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
         self._use_paramiko = _has_paramiko()
+        # paramiko persistent client (None 이면 다음 호출에서 connect).
+        self._client = None  # type: ignore[assignment]
+        # _client 갱신/invalidate 직렬화 — 단일 스레드 caller 에서도 atexit 와의
+        # 경합을 막아 transport 가 close 중 새로 만들어지는 race 를 차단한다.
+        self._client_lock = threading.Lock()
+        # 인터프리터 종료 시 paramiko transport thread/socket 정리.
+        # close() 는 멱등이라 명시적 호출 / atexit 가 중복돼도 안전.
+        atexit.register(self.close)
 
     def run(self, command: str, retries: int = 0, retry_wait: int | None = None) -> str | None:
         """타겟에서 명령을 실행하고 stdout을 반환한다.
@@ -81,43 +96,93 @@ class SshClient:
             return self._run_paramiko(command)
         return self._run_subprocess(command)
 
-    def _run_paramiko(self, command: str) -> str | None:
-        """paramiko를 사용한 SSH 명령 실행."""
+    def _get_paramiko_client(self):
+        """캐시된 paramiko client 반환. 없거나 transport 비활성이면 새로 connect.
+
+        cache check + connect + assign 전체를 lock 으로 직렬화해 동시 호출이
+        중복 connect 를 만들지 않도록 한다. lock 은 connect 동안 유지되므로
+        connect_timeout 만큼 다른 caller 가 대기할 수 있다.
+        """
         import paramiko
 
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        with self._client_lock:
+            if self._client is not None:
+                transport = self._client.get_transport()
+                if transport is not None and transport.is_active():
+                    return self._client
+                # 끊긴 client 정리 후 재연결
+                try:
+                    self._client.close()
+                except Exception:  # noqa: BLE001 — close 실패는 무시하고 새로 생성
+                    pass
+                self._client = None
 
-        try:
-            client.connect(
-                hostname=self.host,
-                username=self.user,
-                password=self.password,
-                timeout=self.connect_timeout,
-                allow_agent=False,
-                look_for_keys=False,
-            )
-        except paramiko.AuthenticationException:
-            raise SshConnectionError(
-                f"SSH authentication failed to {self.user}@{self.host}"
-            )
-        except Exception as e:
-            err_str = str(e).lower()
-            if "timed out" in err_str or "timeout" in err_str:
-                raise SshTimeoutError(
-                    f"SSH connect timed out after {self.connect_timeout}s to {self.user}@{self.host}"
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            try:
+                client.connect(
+                    hostname=self.host,
+                    username=self.user,
+                    password=self.password,
+                    timeout=self.connect_timeout,
+                    # banner_timeout: 카메라 ISR 부하로 DUT sshd 의 초기 protocol
+                    # banner 전송이 지연될 때 "Error reading SSH protocol banner"
+                    # 일시 실패를 방지한다 (paramiko 기본 15s → 30s).
+                    banner_timeout=30,
+                    allow_agent=False,
+                    look_for_keys=False,
                 )
-            raise SshConnectionError(
-                f"SSH connection failed to {self.user}@{self.host}: {e}"
-            )
+            except paramiko.AuthenticationException:
+                raise SshConnectionError(
+                    f"SSH authentication failed to {self.user}@{self.host}"
+                )
+            except Exception as e:
+                err_str = str(e).lower()
+                if "timed out" in err_str or "timeout" in err_str:
+                    raise SshTimeoutError(
+                        f"SSH connect timed out after {self.connect_timeout}s to {self.user}@{self.host}"
+                    )
+                raise SshConnectionError(
+                    f"SSH connection failed to {self.user}@{self.host}: {e}"
+                )
 
+            # idle TCP drop / NAT timeout 방어 — 체크 사이 공백에서 sshd 가 끊지 않도록.
+            transport = client.get_transport()
+            if transport is not None:
+                transport.set_keepalive(15)
+
+            self._client = client
+            return client
+
+    def _run_paramiko(self, command: str) -> str | None:
+        """paramiko persistent client 로 SSH 명령 실행.
+
+        실패(timeout/connection error) 시 캐시된 client 를 invalidate 해
+        다음 호출에서 자동 재연결되도록 한다.
+        """
+        client = self._get_paramiko_client()
         try:
             _stdin, stdout, stderr = client.exec_command(
                 command, timeout=self.command_timeout
             )
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode("utf-8", errors="replace").strip()
+            # stderr 도 EOF 까지 읽어 채널 버퍼를 비운다 — 미소비 시 큰 stderr 출력이
+            # 원격 buffer 를 채워 다음 명령 송수신을 block 할 수 있다(persistent
+            # transport 라 영향이 누적). 반환값엔 포함하지 않는다.
+            stderr.read()
         except Exception as e:
+            # client 가 broken 일 수 있다 — 캐시 무효화 후 적절한 예외로 변환.
+            # lock 안에서 invalidate 해 다른 스레드가 이 사이 새 client 를 만들었으면
+            # 그것을 보존한다(우리 것만 close 하고 캐시를 비우지 않음).
+            with self._client_lock:
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                if self._client is client:
+                    self._client = None
             err_str = str(e).lower()
             if "timed out" in err_str or "timeout" in err_str:
                 raise SshTimeoutError(
@@ -126,12 +191,35 @@ class SshClient:
             raise SshConnectionError(
                 f"SSH command failed on {self.user}@{self.host}: {e}"
             )
-        finally:
-            client.close()
 
         if exit_code != 0:
             return None
         return output
+
+    def close(self) -> None:
+        """persistent client 명시적 종료. 같은 인스턴스로 이후 호출 시 재연결됨.
+
+        atexit 와 명시적 호출 양쪽에서 안전(멱등). lock 안에서 self._client 를
+        교체해 동시 호출/연결이 충돌하지 않도록 한다. 또한 atexit 큐의 본인
+        엔트리를 제거해 plan 런처럼 SshClient 를 반복 생성하는 caller 에서
+        atexit 가 인스턴스를 strong-ref 로 붙잡아 GC 를 막는 것을 방지한다.
+        """
+        # close() 후엔 atexit 큐에 우리 엔트리가 남을 이유가 없다.
+        # unregister 는 등록 안 된 항목에 호출돼도 noop 이라 안전.
+        atexit.unregister(self.close)
+        with self._client_lock:
+            if self._client is not None:
+                try:
+                    self._client.close()
+                except Exception:  # noqa: BLE001 — 정리 실패 무시
+                    pass
+                self._client = None
+
+    def __enter__(self) -> "SshClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
     def _run_subprocess(self, command: str) -> str | None:
         """sshpass + subprocess를 사용한 SSH 명령 실행 (Linux 폴백)."""

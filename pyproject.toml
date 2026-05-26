@@ -10,11 +10,11 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "pyyaml>=5.0",
+    "paramiko>=2.0",
 ]
 
 [project.optional-dependencies]
-windows = ["paramiko>=2.0"]
-all = ["paramiko>=2.0", "rich>=13"]
+all = ["rich>=13"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
 # pim_viewer TUI 용. 없으면 viewer 는 plain-text 폴백으로 동작한다.
 viewer = ["rich>=13"]
