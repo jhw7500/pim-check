@@ -126,6 +126,10 @@ class SshClient:
                     username=self.user,
                     password=self.password,
                     timeout=self.connect_timeout,
+                    # banner_timeout: 카메라 ISR 부하로 DUT sshd 의 초기 protocol
+                    # banner 전송이 지연될 때 "Error reading SSH protocol banner"
+                    # 일시 실패를 방지한다 (paramiko 기본 15s → 30s).
+                    banner_timeout=30,
                     allow_agent=False,
                     look_for_keys=False,
                 )
@@ -192,8 +196,13 @@ class SshClient:
         """persistent client 명시적 종료. 같은 인스턴스로 이후 호출 시 재연결됨.
 
         atexit 와 명시적 호출 양쪽에서 안전(멱등). lock 안에서 self._client 를
-        교체해 동시 호출/연결이 충돌하지 않도록 한다.
+        교체해 동시 호출/연결이 충돌하지 않도록 한다. 또한 atexit 큐의 본인
+        엔트리를 제거해 plan 런처럼 SshClient 를 반복 생성하는 caller 에서
+        atexit 가 인스턴스를 strong-ref 로 붙잡아 GC 를 막는 것을 방지한다.
         """
+        # close() 후엔 atexit 큐에 우리 엔트리가 남을 이유가 없다.
+        # unregister 는 등록 안 된 항목에 호출돼도 noop 이라 안전.
+        atexit.unregister(self.close)
         with self._client_lock:
             if self._client is not None:
                 try:

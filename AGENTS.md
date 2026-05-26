@@ -12,7 +12,7 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 | `pim_check.py` | CLI 엔트리포인트. argparse 기반 명령행 인터페이스 (`--case`, `--all`, `--parallel`, `--watch`, `--plan`, `--list-plans`, `--promote-baseline` 등) |
 | `engine.py` | QA 체크 엔진. 스냅샷 1회 실행(`run_snapshot`) 및 모니터 루프(`run_monitor`) + thermal shutdown 복구 |
 | `plan.py` | Declarative Release Plan layer — load/lint/resolve/execute/gate/render. case 묶음 + 합격선 + reporting을 plan YAML 1개에 표현. 6개 누적 run_*.py 통합 wedge. |
-| `ssh.py` | SSH 클라이언트 래퍼. paramiko 우선, sshpass 폴백. `SshClient`, `SshTimeoutError`, `SshConnectionError` |
+| `ssh.py` | SSH 클라이언트 래퍼. paramiko persistent client (필수 의존성) + sshpass 호환 폴백. `SshClient`, `SshTimeoutError`, `SshConnectionError` |
 | `config.py` | YAML 설정 로더. `base.yaml` + `cases/{name}.yaml` 딥 머지 패턴 |
 | `setup.py` | `SetupManager` — edgeconf JSON 변경, 백업/복원, 재부팅 대기 |
 | `reporter.py` | 텍스트/JSON 결과 리포터 |
@@ -33,7 +33,7 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 | `runner_loop.py` | Docker 컨테이너용 정기 실행 루프 |
 | `Dockerfile` | Python 3.11-slim 기반 컨테이너 이미지 |
 | `docker-compose.yml` | dashboard + runner 2-서비스 구성 |
-| `pyproject.toml` | 빌드 설정. Python >=3.9, 의존성: pyyaml, 선택: paramiko |
+| `pyproject.toml` | 빌드 설정. Python >=3.9, 의존성: pyyaml, paramiko |
 | `requirements.txt` | pip 의존성 목록 |
 
 ## Subdirectories
@@ -86,6 +86,6 @@ CLI (pim_check.py)
 
 ### External
 - `pyyaml` — YAML 파싱 (필수)
-- `paramiko` — SSH 클라이언트 (선택, Windows 필수)
+- `paramiko` — SSH 클라이언트 (필수, 전 platform). persistent transport 재사용으로 DUT sshd 부하 감소. 부수 패키지(`cryptography`, `bcrypt`, `cffi`, `pynacl`) ~10MB 설치 증가 trade-off — 매 호출 새 connect 의 누적 부담을 제거하는 게 우선.
 
 <!-- MANUAL: -->
