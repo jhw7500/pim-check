@@ -790,6 +790,11 @@ function renderDetail(d){
 // (단순 return 만 하면 클릭 → silently drop → 1초까지 stale UI 가 됨; Claude r3 권고)
 let mtTicking2 = false;
 let mtTickPending = false;
+// MT_SELECTED_HOST 도 여기에 미리 선언 — tickOnce() 가 첫 statement 에서 sync 로
+// 읽기 때문에, 아래 line 902 의 tick() 초기 호출 시점에 TDZ (let 은 hoist 안 됨)
+// 에 있으면 ReferenceError 가 try/catch 에 swallow 되어 첫 폴링이 silent fail.
+// 한 곳에 같이 두어 결합 관계도 명확히 (Claude r4 critical).
+let MT_SELECTED_HOST = null;
 async function tick(){
   if(mtTicking2){ mtTickPending = true; return; }
   do {
@@ -908,9 +913,8 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // 초기 fallback — /api/active 응답의 max_concurrent 로 매 tick 마다 업데이트되므로
 // 서버 MAX_CONCURRENT_TARGETS 가 바뀌어도 UI 가 silently diverge 하지 않는다.
 let MT_MAX = 4;
-// 다음 tick() 호출이 어느 host 의 state 를 가져올지 — null 이면 legacy /state
-// (events/current.jsonl, last-started host). 컬럼 클릭으로 set, 다시 클릭하면 해제.
-let MT_SELECTED_HOST = null;
+// MT_SELECTED_HOST 는 tick() 가 첫 호출에서 sync 로 읽기 때문에 line ~797 으로
+// hoist 됐다. 여기서 다시 선언하면 SyntaxError (Identifier already declared).
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
