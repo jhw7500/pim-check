@@ -75,18 +75,28 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install deps
-        run: |
-          pip install pyyaml pytest playwright
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install deps (lockfile-respecting)
+        # uv sync 가 pyproject.toml [project.optional-dependencies] 의 js-smoke
+        # extra (playwright>=1.40) 와 dev (pytest 등) 를 uv.lock 의 정확한 버전
+        # 으로 설치 — `pip install playwright` 가 lockfile bypass 해 latest 가
+        # 들어와 환경 drift 발생하는 것을 회피.
+        run: uv sync --extra js-smoke --extra dev
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}
+          # uv.lock 해시를 key 에 포함 — playwright 버전 bump 시 cache 자동 무효화.
+          # 안 그러면 stale chromium 으로 fail 가능 (Claude 권고).
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
 
       - name: Install chromium
-        run: playwright install --with-deps chromium
+        run: uv run playwright install --with-deps chromium
 
       - name: Run JS smoke test
-        run: python -m pytest tests/test_viewer_js_smoke.py -v
+        run: uv run pytest tests/test_viewer_js_smoke.py -v
