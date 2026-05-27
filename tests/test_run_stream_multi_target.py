@@ -118,10 +118,10 @@ class TestStartRunFileWithHost(unittest.TestCase):
 
     def test_host_registers_in_active_hosts_json(self):
         events_dir = self._events_dir()
-        run_a = start_run_file(
+        start_run_file(
             "smoke", "host-a", events_dir=events_dir, ts="T1", host="host-a",
         )
-        run_b = start_run_file(
+        start_run_file(
             "comprehensive", "host-b", events_dir=events_dir, ts="T2", host="host-b",
         )
         active = read_active_hosts(events_dir)
