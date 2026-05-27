@@ -421,7 +421,7 @@ def build_state(path: str) -> dict:
     }
 
 
-INDEX_HTML = """<!doctype html>
+INDEX_HTML = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pim_viewer (web)</title>
@@ -1152,10 +1152,9 @@ async function stopAll(){
 async function startMulti(){
   const btn = document.getElementById('mt_start');
   if(btn.disabled) return;  // double-submit 가드 — 빠른 연속 클릭으로 spawn 중복 방지.
-  // 주의: backslash-n 을 JS 문자열로 쓰려면 Python 삼중따옴표 안에서 backslash 를
-  // 두 번 써야 한다 (한 번이면 Python 이 newline 으로 치환해 JS unterminated string
-  // literal 이 되어 전체 script parse 실패).
-  const hosts = document.getElementById('mt_hosts').value.split('\\n')
+  // INDEX_HTML 이 Python raw string 이라 backslash escape 를 처리하지 않는다 —
+  // JS 의 newline escape 등이 그대로 출력 단계까지 전달됨. 단일 backslash 로 OK.
+  const hosts = document.getElementById('mt_hosts').value.split('\n')
     .map(s => s.trim()).filter(Boolean);
   const plan = document.getElementById('c_plan').value;
   const user = document.getElementById('c_user').value.trim();

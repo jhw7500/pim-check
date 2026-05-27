@@ -18,6 +18,10 @@ all = ["rich>=13"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
 # pim_viewer TUI 용. 없으면 viewer 는 plain-text 폴백으로 동작한다.
 viewer = ["rich>=13"]
+# JS smoke test (tests/test_viewer_js_smoke.py) — INDEX_HTML 의 임베디드 JS 가
+# 실제 브라우저에서 parse + 실행되는지 검증. CI 의 js-smoke job 에서만 설치
+# (chromium 약 150MB). 일반 dev 환경엔 자동 포함 안 함.
+js-smoke = ["playwright>=1.40"]
 
 [project.scripts]
 pim-check = "pim_check:main"
