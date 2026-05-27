@@ -911,6 +911,9 @@ function mtCol(host, plan, st){
   // type="button" 명시 — 기본 type="submit" 인데 향후 columns 가 form 안으로 들어가도
   // 의도치 않은 폼 제출이 발생하지 않도록 방어.
   stop.type = 'button';
+  // data-host 로 stopHost 가 element 를 다시 찾아 disabled 토글 — closure 캡처보다
+  // 다음 tick 재구성 후에도 안전 (host 이름 기반 lookup).
+  stop.setAttribute('data-host', host);
   stop.onclick = (ev) => { ev.stopPropagation(); stopHost(host); };
   hd.appendChild(stop);
   col.appendChild(hd);
@@ -955,6 +958,9 @@ async function tickMulti(){
   if(mtTicking) return;  // 직전 tick in-flight → 중복 실행 방지 (race window 차단)
   // 백그라운드 탭에서는 사용자가 보지 않는데 5 fetches/1.5s 로 무의미한 트래픽 누적.
   // 5초 간격으로 늦춰 reload 시 즉시 fresh 상태로 회복은 유지.
+  // mtTicking 을 굳이 set 하지 않는다 — tick chain 은 단일 setTimeout 이라 동시
+  // 실행이 발생할 수 없고, set 하면 throttle window 안 일찍 다른 caller (예:
+  // visibilitychange 핸들러 추가 시) 가 fast-path 진입을 못 한다.
   if(document.hidden){ setTimeout(tickMulti, 5000); return; }
   mtTicking = true;
   try {
@@ -1002,31 +1008,42 @@ async function mtPostJSON(url, payload){
   } catch(e){ return {ok: false, body: {error: String(e)}, status: 0}; }
 }
 async function stopHost(host){
-  if(!confirm('Stop host '+host+'?')) return;
-  const res = await mtPostJSON('/stop', {host: host});
-  if(!res.ok) alert('Stop 실패: '+(res.body.error || ('HTTP '+res.status)));
-  // 다음 tick 이 곧 fire 되므로 명시 호출 불필요. mtTicking flag 와 충돌 회피.
+  // per-host Stop 버튼 (각 컬럼별로 새 element 라 element-scoped 참조).
+  // ev 가 없는 경로(예: 코드에서 직접 호출) 대비 host 별 button query 로 통일.
+  const btn = document.querySelector('.mt-col .stop[data-host="'+CSS.escape(host)+'"]');
+  // disabled 는 *모든 await 이전에* 동기적으로 설정 — 그렇지 않으면 두 연속
+  // 클릭이 모두 비동기 guard 를 통과해 confirm dialog 가 두 번 뜬다.
+  if(btn) { if(btn.disabled) return; btn.disabled = true; }
+  try {
+    if(!confirm('Stop host '+host+'?')) return;
+    const res = await mtPostJSON('/stop', {host: host});
+    if(!res.ok) alert('Stop 실패: '+(res.body.error || ('HTTP '+res.status)));
+    // 다음 tick 이 곧 fire 되므로 명시 호출 불필요.
+  } finally { if(btn) btn.disabled = false; }
 }
 async function stopAll(){
   const btn = document.getElementById('mt_stop_all');
-  if(btn.disabled) return;  // double-submit 가드
-  const data = await fetchActive();
-  if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
-  const hosts = (data.hosts||[]).map(h => h.host);
-  if(hosts.length === 0) return;
-  // 활성 host 만 필터 — server 가 spawn 시점에 MAX_CONCURRENT_TARGETS 를 강제하므로
-  // running.length 가 MT_MAX 를 넘는 일은 정상 흐름에 없음. 만약 초과한다면 server
-  // cap 변경 / stale active.json edge case 신호 — 잘라내 묵음 처리하기보다 console
-  // 경고로 노출 (silently skip 했다가 사용자가 "왜 일부만 멈춰?" 가 더 혼란스럽다).
-  const states = await Promise.all(hosts.map(h => fetchHostState(h)));
-  const running = mtRunningHosts(hosts, states);
-  if(running.length > MT_MAX){
-    console.warn('mt: running.length('+running.length+') > MT_MAX('+MT_MAX+') — server limit drift 의심');
-  }
-  if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
-  if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
+  // disabled 를 *모든 await 이전에* 설정 — fetchActive/Promise.all 등 await 도중
+  // 두 번째 click 이 들어와도 두 동시 호출 모두 guard 를 통과해서 confirm 가
+  // 중복 뜨고 stop 도 중복 전송되는 race 를 막는다.
+  if(btn.disabled) return;
   btn.disabled = true;
   try {
+    const data = await fetchActive();
+    if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
+    const hosts = (data.hosts||[]).map(h => h.host);
+    if(hosts.length === 0) return;
+    // 활성 host 만 필터 — server 가 spawn 시점에 MAX_CONCURRENT_TARGETS 를 강제하므로
+    // running.length 가 MT_MAX 를 넘는 일은 정상 흐름에 없음. 만약 초과한다면 server
+    // cap 변경 / stale active.json edge case 신호 — 잘라내 묵음 처리하기보다 console
+    // 경고로 노출 (silently skip 했다가 사용자가 "왜 일부만 멈춰?" 가 더 혼란스럽다).
+    const states = await Promise.all(hosts.map(h => fetchHostState(h)));
+    const running = mtRunningHosts(hosts, states);
+    if(running.length > MT_MAX){
+      console.warn('mt: running.length('+running.length+') > MT_MAX('+MT_MAX+') — server limit drift 의심');
+    }
+    if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
+    if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
     const res = await mtPostJSON('/stop', {targets: running});
     if(!res.ok) alert('Stop All 실패: '+(res.body.error || ('HTTP '+res.status)));
   } finally { btn.disabled = false; }
@@ -1112,9 +1129,10 @@ class _Handler(BaseHTTPRequestHandler):
             # multi-target viewer 의 host enumerate 용 — 별도 라우트로 두어 기존
             # /state (단일 stream) 와 명확히 분리한다. max_concurrent 도 함께 노출해
             # 클라이언트가 JS 상수와 server cap 의 single source of truth 를 유지.
-            body = active_hosts()
-            body["max_concurrent"] = MAX_CONCURRENT_TARGETS
-            self._send_json(200, body)
+            # spread 로 새 dict 생성 — active_hosts() 가 dict 를 그대로 반환할 때
+            # in-place 변경되는 것을 막아 향후 caching 도입 시에도 안전.
+            self._send_json(200, {**active_hosts(),
+                                  "max_concurrent": MAX_CONCURRENT_TARGETS})
         elif self.path.startswith("/api/events"):
             # per-host state — viewer 가 host 별 컬럼마다 폴링한다. 다른 JSON
             # endpoint 들과 일관성 있게 _send_json 사용 (Content-Type / Cache-Control
