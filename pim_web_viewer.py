@@ -123,8 +123,7 @@ def start_run(params: dict) -> tuple[int, dict]:
         try:
             # spawn 자체는 single source of truth (_spawn_one_target) 에 위임.
             # 비밀번호 env / argv 조립 / start_new_session 처리가 single·multi 양쪽
-            # 동일하게 유지된다 — 이후 인자 추가 시 한 곳만 수정하면 된다
-            # (claude[bot] 리뷰: 두 경로 분기로 가지치기 회귀 방지).
+            # 동일하게 유지된다 — 이후 인자 추가 시 한 곳만 수정하면 된다.
             pid = _spawn_one_target(events_dir, clean, bool(params.get("until_pass")))
         except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
             return 500, {"ok": False, "error": f"spawn 실패: {e}"}
@@ -186,7 +185,7 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
             return 400, {"ok": False, "error": f"target[{i}] 형식 오류"}
         # `.get(k) or ""` 패턴 — JSON `{"host": null}` 같은 명시 null 도 빈 문자열로
         # 정규화. `t.get("host", "")` 만 쓰면 null 이 그대로 통과해 ``str(None)='None'``
-        # 이 호스트 정규식을 통과하는 잘못된 검증을 유발한다 (Gemini 리뷰 M1).
+        # 이 호스트 정규식을 통과하는 잘못된 검증을 유발한다.
         req = {
             "plan": plan_name,
             "host": t.get("host") or "",
@@ -202,7 +201,7 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
     # 이유: per-target 디렉터리는 host_slug(host) 로 만들어지므로, raw 호스트가
     # 달라도 같은 slug 로 collapse 되면 (예: "a.b" 와 "a-b", "Host-A" 와 "host-a")
     # 같은 events/by-target/<slug>/ 를 두 자식이 동시에 쓰게 된다 — control 파일과
-    # current.jsonl 경합. Codex/Gemini 리뷰 합동 권고.
+    # current.jsonl 경합.
     seen_slugs = [run_stream.host_slug(c["host"]) for c in cleaned]
     if len(set(seen_slugs)) != len(seen_slugs):
         raw = [c["host"] for c in cleaned]
@@ -234,7 +233,7 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
                 # *반드시* write_control 보다 먼저 started 에 추가한다.
                 # write_control 이 디스크 풀/권한 등으로 raise 하면 그 사이 자식은
                 # 살아있는데 started 에 없어 cleanup 이 종료시키지 못한다 — 추적 안
-                # 되는 좀비 producer 가 된다 (Gemini 리뷰 HIGH).
+                # 되는 좀비 producer 가 된다.
                 started.append({
                     "host": clean["host"], "plan": clean["plan"], "pid": pid,
                 })
@@ -243,26 +242,41 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
                     "started_at": time.time(),
                 })
         except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
-            # 이미 spawn 한 자식 정리: stop_run 과 동일한 SIGTERM → 짧은 대기 →
-            # SIGKILL fallback 패턴. SIGTERM 만 보내고 끝나면 stuck 한 자식이
-            # 'control 파일은 사라졌지만 살아있는 좀비' 가 될 수 있어 위험하다.
-            # waitpid 는 쓰지 않는다 — 우리는 요청 핸들러 스레드 안이라 blocking
-            # wait 는 서버 응답을 지연시킨다. 대신 pid_alive 폴링(최대 3초).
+            # 이미 spawn 한 자식 정리: 각 자식별로 SIGTERM → 3s 대기 → SIGKILL
+            # 패턴을 *병렬* 실행. 합쳐서 폴링하면 한 느린 자식이 빠른 자식까지
+            # 함께 기다리게 만들어 응답이 max(3s) 가 아니라 단순히 3s 가 된다.
+            # 병렬화하면 전체 latency = max(개별) ≈ 3s — 동일하지만 SIGKILL 이
+            # 라거드(laggard)에게만 즉시 적용된다.
+            # waitpid 는 쓰지 않는다 — 요청 핸들러 스레드라 blocking wait 가
+            # 서버 응답을 지연시킨다. 대신 pid_alive 폴링.
+            if started:
+                with ThreadPoolExecutor(max_workers=len(started)) as cleanup_ex:
+                    list(cleanup_ex.map(_terminate_pid, [s["pid"] for s in started]))
             for s in started:
-                _signal_pid(s["pid"], signal.SIGTERM)
-            for _ in range(30):
-                if not any(run_control.pid_alive(s["pid"]) for s in started):
-                    break
-                time.sleep(0.1)
-            for s in started:
-                if run_control.pid_alive(s["pid"]):
-                    _signal_pid(s["pid"], signal.SIGKILL)
                 per_dir = run_stream.target_events_dir(base_events_dir, s["host"])
                 run_control.clear_control(per_dir)
             return 500, {"ok": False, "error": f"spawn 실패: {e}",
-                          "partial_started": started}
+                          "partial_started": started,
+                          "cleanup_attempted": True}
 
     return 200, {"ok": True, "started": started}
+
+
+def _terminate_pid(pid: int) -> None:
+    """SIGTERM → 최대 3s pid_alive 폴링 → 살아있으면 SIGKILL. control 정리는 caller.
+
+    bulk stop / spawn 실패 cleanup 양쪽이 자식 종료의 단일 규칙을 공유하도록
+    분리. 폴링 간격 100ms × 30회 ≈ 3초 (POSIX signal 전달 + graceful exit
+    예산). waitpid 대신 pid_alive 폴링: 요청 핸들러 스레드에서 blocking wait
+    가 응답 지연을 만든다.
+    """
+    _signal_pid(pid, signal.SIGTERM)
+    for _ in range(30):
+        if not run_control.pid_alive(pid):
+            return
+        time.sleep(0.1)
+    if run_control.pid_alive(pid):
+        _signal_pid(pid, signal.SIGKILL)
 
 
 def _stop_in_events_dir(events_dir: str) -> dict:
@@ -277,13 +291,7 @@ def _stop_in_events_dir(events_dir: str) -> dict:
     if not isinstance(pid, int) or not run_control.pid_alive(pid):
         run_control.clear_control(events_dir)
         return {"stopped": False, "pid": None, "note": "관리 중인 런 없음"}
-    _signal_pid(pid, signal.SIGTERM)
-    for _ in range(30):
-        if not run_control.pid_alive(pid):
-            break
-        time.sleep(0.1)
-    if run_control.pid_alive(pid):
-        _signal_pid(pid, signal.SIGKILL)
+    _terminate_pid(pid)
     run_control.clear_control(events_dir)
     return {"stopped": True, "pid": pid}
 
@@ -291,7 +299,7 @@ def _stop_in_events_dir(events_dir: str) -> dict:
 def stop_run(params: dict | None = None) -> tuple[int, dict]:
     """관리 중인 런 종료. (http_status, body) 반환.
 
-    body 형태 세 가지를 받는다 (multi-target 지원, Codex P2):
+    body 형태 세 가지를 받는다 (multi-target 지원):
       1) **body 없음 / 빈 dict**: legacy 단일 런 (events/ 직속 control). 기존 동작.
       2) **{host: "..."}**: 해당 host 의 per-target control 만 종료.
          host 가 유효하지 않으면 400.
@@ -311,21 +319,23 @@ def stop_run(params: dict | None = None) -> tuple[int, dict]:
             if not run_control.is_valid_host(h):
                 return 400, {"ok": False, "error": f"invalid host: {h!r}"}
         # 병렬 stop — 순차 실행 시 host 마다 3s 까지 SIGTERM 대기가 누적돼 4 host
-        # 비응답 시 응답이 최대 12s 까지 지연된다 (Gemini/claude 리뷰 공통 권고).
-        # 각 stop 은 독립이라 thread pool 로 안전하게 병렬화. max 응답 시간 ≈ 3s.
+        # 비응답 시 응답이 최대 12s 까지 지연된다. 각 stop 은 독립이라 thread pool
+        # 로 안전하게 병렬화 — max 응답 시간 ≈ 3s.
+        # 빈 targets:[] 는 idempotent stop 으로 200 반환 (start 쪽 빈 list 거부와의
+        # 의도된 비대칭): /stop 은 멱등성을 우선 — "혹시 실행 중이면 멈춰라" 가
+        # 자연스러운 시맨틱.
         results: list[dict] = []
         if hosts:
             with ThreadPoolExecutor(max_workers=len(hosts)) as ex:
-                stop_futures = {
-                    ex.submit(_stop_in_events_dir,
-                              run_stream.target_events_dir(base, h)): h
+                # host → Future 직접 매핑 — 입력 host 순서를 그대로 보존해 결과
+                # 수집 시 동일 순서로 .result() 호출.
+                future_by_host = {
+                    h: ex.submit(_stop_in_events_dir,
+                                 run_stream.target_events_dir(base, h))
                     for h in hosts
                 }
-                # 결과는 입력 host 순서를 보존해 caller 가 매핑하기 쉽게.
-                future_by_host = {h: fut for fut, h in stop_futures.items()}
                 for h in hosts:
-                    r = future_by_host[h].result()
-                    results.append({"host": h, **r})
+                    results.append({"host": h, **future_by_host[h].result()})
         return 200, {"ok": True, "stopped": results}
 
     # (2) per-host stop
