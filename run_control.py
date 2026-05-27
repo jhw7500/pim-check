@@ -19,6 +19,16 @@ import re
 _HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,253}$")
 # 유저: 일반 유닉스 계정 문자.
 _USER_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
+
+
+def is_valid_host(host) -> bool:
+    """multi-target API 가 query/body 의 host 입력을 검증할 때 공유하는 게이트.
+
+    spawn 검증(``validate_start_request``)이 쓰는 ``_HOST_RE`` 와 동일한 규칙이라
+    read endpoint(예: /api/events?host=) 와 write endpoint(/start)가 같은
+    안전 경계를 갖는다. directory traversal 등 path 주입을 1차 차단한다.
+    """
+    return isinstance(host, str) and bool(_HOST_RE.match(host))
 _CONTROL_FILE = ".control.json"
 
 

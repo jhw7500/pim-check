@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import plan as plan_mod
 import run_control
@@ -30,6 +31,9 @@ from viewer_state import ViewerState
 PRODUCER_LOST_AFTER = 10.0
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 PROFILES_DIR = os.path.join(REPO_DIR, "profiles")
+# multi-target 동시 실행 상한 — DUT 측 자원(특히 사내망 SSH/카메라 처리) 보호용 가드.
+# Step 1~2 의 small-scale 합의 (yaml/UI ad-hoc 2~4 타겟). 초과 시 spawn 전 400 으로 차단.
+MAX_CONCURRENT_TARGETS = 4
 # start_run 의 check-then-spawn 을 직렬화한다. ThreadingHTTPServer 는 요청마다 스레드라
 # 동시 /start 2건이 단일-런 가드를 모두 통과해 프로듀서가 2개 뜨는 TOCTOU 를 막는다.
 _START_LOCK = threading.Lock()
@@ -61,13 +65,48 @@ def control_status() -> dict:
     }
 
 
+def active_hosts() -> dict:
+    """multi-target viewer 가 enumerate 할 host 목록을 events/active.json 에서 반환.
+
+    Step 1 의 ``run_stream.register_active_host`` 가 기록한 그대로를 노출한다.
+    파일 없음/손상은 ``{"hosts": []}`` 로 graceful fallback — viewer 가 빈 화면을
+    렌더하면 그만이지, 깨지면 안 된다.
+    """
+    return run_stream.read_active_hosts(_producer_events_dir())
+
+
+def host_events_state(host) -> dict:
+    """주어진 ``host`` 의 per-target current.jsonl 을 접어 평면 state 를 반환.
+
+    multi-target viewer 가 host 별 컬럼을 그릴 때 폴링한다. 비유효 host(빈 값,
+    path 주입 문자 등)는 즉시 ``{"exists": False}`` 로 reject — 디렉터리
+    traversal 방어 (``run_control.is_valid_host`` 게이트).
+    """
+    if not run_control.is_valid_host(host):
+        return {"exists": False}
+    per_target_dir = run_stream.target_events_dir(_producer_events_dir(), host)
+    current = os.path.join(per_target_dir, run_stream.CURRENT_SYMLINK_NAME)
+    return build_state(current)
+
+
 def start_run(params: dict) -> tuple[int, dict]:
-    """plan 런 spawn. (http_status, body) 반환. 단일 런만 허용(current.jsonl 공유).
+    """plan 런 spawn. (http_status, body) 반환.
+
+    두 형태의 요청 body 를 받는다:
+      1) **single-host (legacy)**: ``{plan, host, user, password, until_pass?}`` —
+         현재 events/current.jsonl 을 쓰는 기존 동작 그대로. external 동시 실행 가드.
+      2) **multi-target**: ``{plan, targets:[{host,user,password},...], until_pass?}`` —
+         각 host 마다 ``events/by-target/<slug>/`` scope 로 별도 pim_check.py spawn.
+         per-host control 로 같은 host 의 동시 실행만 차단(다른 host 끼리는 동시 OK).
 
     check-then-spawn 전체를 _START_LOCK 으로 직렬화해 동시 /start 의 TOCTOU(프로듀서
     중복 spawn)를 막는다. 비밀번호는 argv 가 아니라 PIM_PASSWORD env 로 전달해
     ps/proc 노출을 피한다.
     """
+    # multi-target 분기 — targets 가 list 면 dedicated path. 빈 list 도 명시 의도 거부.
+    if isinstance(params, dict) and "targets" in params:
+        return _start_multi_target(params)
+
     events_dir = _producer_events_dir()
     with _START_LOCK:
         if run_control.active_pid(events_dir) is not None:
@@ -106,6 +145,108 @@ def start_run(params: dict) -> tuple[int, dict]:
             "started_at": time.time(),
         })
     return 200, {"ok": True, "pid": proc.pid, "plan": clean["plan"], "host": clean["host"]}
+
+
+def _spawn_one_target(events_dir: str, clean: dict, until_pass: bool) -> int:
+    """단일 target 의 pim_check.py 를 spawn 하고 PID 를 반환. 비밀번호는 env 로만 전달.
+
+    caller (single/multi 양쪽) 가 공유하는 작은 헬퍼 — argv 조립과 비밀번호 env 처리
+    의 단일 진실 지점을 두어 두 경로의 차이가 우연히 벌어지지 않게 한다.
+    """
+    os.makedirs(events_dir, exist_ok=True)
+    child_env = {**os.environ, "PIM_PASSWORD": clean["password"]}
+    with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
+        argv = [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
+                "--plan", clean["plan"], "--host", clean["host"],
+                "--user", clean["user"],
+                "--json", "--html", "--log"]
+        if until_pass:
+            argv.append("--until-pass")
+        proc = subprocess.Popen(
+            argv,
+            cwd=REPO_DIR, env=child_env, stdout=logf,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    return proc.pid
+
+
+def _start_multi_target(params: dict) -> tuple[int, dict]:
+    """``targets:[...]`` 배열 형태의 multi-target spawn 처리.
+
+    all-or-nothing 정책 — 한 target 이라도 검증 실패하거나 per-host conflict 면
+    spawn 자체를 안 한다(partial-start 가 되면 stop/cleanup 책임이 복잡해진다).
+    """
+    base_events_dir = _producer_events_dir()
+    plan_name = str(params.get("plan", "")).strip()
+    until_pass = bool(params.get("until_pass"))
+    targets = params.get("targets")
+
+    if not isinstance(targets, list) or not targets:
+        return 400, {"ok": False, "error": "targets 는 비어있지 않은 list 여야 합니다"}
+    if len(targets) > MAX_CONCURRENT_TARGETS:
+        return 400, {
+            "ok": False,
+            "error": f"동시 타겟 수 상한 초과 ({len(targets)} > {MAX_CONCURRENT_TARGETS})",
+        }
+
+    # 1단계: 모든 target 을 validate (one shared plan + per-target host/user/password).
+    cleaned: list[dict] = []
+    plans = _list_plans()
+    for i, t in enumerate(targets):
+        if not isinstance(t, dict):
+            return 400, {"ok": False, "error": f"target[{i}] 형식 오류"}
+        req = {
+            "plan": plan_name,
+            "host": t.get("host", ""),
+            "user": t.get("user", "root"),
+            "password": t.get("password", ""),
+        }
+        ok, err, clean = run_control.validate_start_request(req, plans)
+        if not ok:
+            return 400, {"ok": False, "error": f"target[{i}] {t.get('host','?')}: {err}"}
+        cleaned.append(clean)
+
+    # 같은 요청 안에서 host 중복은 명백한 오류 (같은 host 에 두 번 spawn).
+    seen_hosts = [c["host"] for c in cleaned]
+    if len(set(seen_hosts)) != len(seen_hosts):
+        return 400, {"ok": False, "error": f"targets 중복 host: {seen_hosts}"}
+
+    # 2단계: 락 안에서 per-host conflict 점검 → 모두 통과해야 spawn (all-or-nothing).
+    with _START_LOCK:
+        for clean in cleaned:
+            per_dir = run_stream.target_events_dir(base_events_dir, clean["host"])
+            os.makedirs(per_dir, exist_ok=True)
+            if run_control.active_pid(per_dir) is not None:
+                return 409, {
+                    "ok": False,
+                    "error": f"host '{clean['host']}' 에 이미 실행 중인 런이 있습니다",
+                }
+
+        # 3단계: 모두 spawn — 실패 시 이미 spawn 한 자식은 stop 으로 정리해야 하므로
+        # try 안에서 누적 추적한다. spawn 실패 자체는 매우 드물지만 안전하게.
+        started: list[dict] = []
+        try:
+            for clean in cleaned:
+                per_dir = run_stream.target_events_dir(base_events_dir, clean["host"])
+                pid = _spawn_one_target(per_dir, clean, until_pass)
+                run_control.write_control(per_dir, {
+                    "pid": pid, "plan": clean["plan"], "host": clean["host"],
+                    "started_at": time.time(),
+                })
+                started.append({
+                    "host": clean["host"], "plan": clean["plan"], "pid": pid,
+                })
+        except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
+            # 이미 spawn 한 자식 정리는 best-effort (signal SIGTERM, control 파일 삭제).
+            for s in started:
+                _signal_pid(s["pid"], signal.SIGTERM)
+                per_dir = run_stream.target_events_dir(base_events_dir, s["host"])
+                run_control.clear_control(per_dir)
+            return 500, {"ok": False, "error": f"spawn 실패: {e}",
+                          "partial_started": started}
+
+    return 200, {"ok": True, "started": started}
 
 
 def stop_run() -> tuple[int, dict]:
@@ -604,6 +745,21 @@ class _Handler(BaseHTTPRequestHandler):
                        "application/json; charset=utf-8")
         elif self.path.startswith("/control"):
             self._send_json(200, control_status())
+        elif self.path.startswith("/api/active"):
+            # multi-target viewer 의 host enumerate 용 — 별도 라우트로 두어 기존
+            # /state (단일 stream) 와 명확히 분리한다.
+            self._send_json(200, active_hosts())
+        elif self.path.startswith("/api/events"):
+            # per-host state — viewer 가 host 별 컬럼마다 폴링한다.
+            qs = parse_qs(urlsplit(self.path).query)
+            hosts = qs.get("host") or []
+            if not hosts:
+                self._send_json(400, {"ok": False, "error": "host query 가 필요합니다"})
+            else:
+                self._send(
+                    json.dumps(host_events_state(hosts[0])).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
         elif self.path.startswith("/plans"):
             self._send_json(200, _list_plans())
         elif self.path == "/" or self.path.startswith("/?"):
