@@ -22,6 +22,16 @@ _USER_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 _CONTROL_FILE = ".control.json"
 
 
+def is_valid_host(host) -> bool:
+    """multi-target API 가 query/body 의 host 입력을 검증할 때 공유하는 게이트.
+
+    spawn 검증(``validate_start_request``)이 쓰는 ``_HOST_RE`` 와 동일한 규칙이라
+    read endpoint(예: /api/events?host=) 와 write endpoint(/start)가 같은
+    안전 경계를 갖는다. directory traversal 등 path 주입을 1차 차단한다.
+    """
+    return isinstance(host, str) and bool(_HOST_RE.match(host))
+
+
 def validate_start_request(params: dict, available_plans: list[str]) -> tuple[bool, str | None, dict]:
     """start 요청 파라미터 검증. (ok, error, clean) 반환.
 
