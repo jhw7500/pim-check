@@ -86,7 +86,9 @@ jobs:
         # extra (playwright>=1.40) 와 dev (pytest 등) 를 uv.lock 의 정확한 버전
         # 으로 설치 — `pip install playwright` 가 lockfile bypass 해 latest 가
         # 들어와 환경 drift 발생하는 것을 회피.
-        run: uv sync --extra js-smoke --extra dev
+        # --frozen: lockfile 이 stale 이면 silently re-solve 하지 말고 fail.
+        # CI 에선 명시적 lockfile enforcement 가 의도된 동작.
+        run: uv sync --frozen --extra js-smoke --extra dev
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4

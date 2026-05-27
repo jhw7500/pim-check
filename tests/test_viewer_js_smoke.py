@@ -42,16 +42,14 @@ def _free_port() -> int:
 def _viewer(port: int):
     """pim_web_viewer 를 BG 로 spawn 하고 종료 시 정리.
 
-    실패 시 stderr 를 PIPE 로 캡처해 RuntimeError 에 포함 — CI 환경에서
-    "viewer failed to start" 만 보고 디버깅 못 하는 silent fail 방지.
-
-    stdout=DEVNULL 로 둠 (PIPE 였다면 happy path 에서 drain 안 해 64KB pipe
-    buffer 채워지면 자식 write block + proc.wait deadlock). stderr 만 capture.
+    happy path 에서는 stdout/stderr 모두 DEVNULL — PIPE 였다면 viewer 가 64KB
+    pipe buffer 채울 때 child write block + proc.wait deadlock. 기동 실패는
+    매우 드물고, 실패 진단이 필요하면 사용자가 viewer 를 별도 실행해서 확인.
     """
     proc = subprocess.Popen(
         [sys.executable, "pim_web_viewer.py",
          "--host", "127.0.0.1", "--port", str(port)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
         # HTTP ready 까지 대기 (최대 5초). connect 가능해지면 즉시 진행.
@@ -70,17 +68,16 @@ def _viewer(port: int):
                 # 일시 오류 (서버 not yet listening). retry.
                 time.sleep(0.1)
         else:
-            # 기동 실패 — 자식 stderr 를 모아 디버깅 정보로 포함.
+            # 기동 실패 — 자식은 deadlock 회피 위해 stdout/stderr=DEVNULL 라 진단
+            # 정보 캡처 불가. 사용자가 별도로 `python pim_web_viewer.py --port N`
+            # 직접 실행해 stderr 확인하면 됨.
             proc.terminate()
             try:
-                _, stderr = proc.communicate(timeout=2)
+                proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                _, stderr = proc.communicate()
-            raise RuntimeError(
-                f"viewer failed to start within 5s on port {port}\n"
-                f"stderr:\n{stderr.decode('utf-8', errors='replace')}"
-            )
+                proc.wait()
+            raise RuntimeError(f"viewer failed to start within 5s on port {port}")
         yield port
     finally:
         proc.terminate()
