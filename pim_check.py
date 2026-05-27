@@ -286,10 +286,22 @@ def _run_plan(args) -> int:
 
     sess = None
     try:
-        sess = EventSession(run_id, args.plan, board)
+        # multi-target 라우팅은 사용자가 명시한 --host 가 있을 때만 활성화한다.
+        # args.host=None 이면 EventSession(host=None) 으로 legacy 경로 유지
+        # (events/<file>.jsonl + events/current.jsonl, by-target/active.json 없음).
+        # host_for_meta 의 fallback "192.168.0.5" 가 라우팅을 잘못 트리거해서
+        # legacy 단일-타겟 실행이 by-target/192-168-0-5/ 로 흘러가는 회귀를 방지.
+        sess = EventSession(run_id, args.plan, board, host=args.host)
         sess.__enter__()
-    except Exception:
+    except Exception as _e:
+        # 이벤트 스트림은 best-effort 라 plan 실행을 막진 않지만, 실패가 silent 하면
+        # user 가 viewer/HTML 결과 누락을 늦게 깨닫는다. 한 줄 경고로 표면화한다.
         sess = None
+        if not args.quiet:
+            print(
+                f"WARNING: 이벤트 스트림 초기화 실패 — viewer/실시간 진행 표시 비활성: {_e}",
+                file=sys.stderr,
+            )
 
     def _plan_summary(case_name):
         """케이스 설명 + 검증 항목(custom_commands) 추출 (best-effort)."""

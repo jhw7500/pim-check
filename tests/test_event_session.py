@@ -120,6 +120,53 @@ class TestHeartbeat:
         assert n_later == n_after_exit
 
 
+class TestHostRouting:
+    """host 지정 시 EventSession 이 per-target 디렉터리로 라우팅한다.
+
+    backward compat: host 미지정(=None)은 기존 events_dir 직속 동작 유지.
+    multi-target 시: events_dir/by-target/<slug>/ 하위에 run 파일 생성 + per-host
+    current.jsonl + legacy events_dir/current.jsonl 동시 갱신 + active.json 등록.
+    """
+
+    def test_no_host_keeps_legacy_layout(self, tmp_path):
+        events_dir = str(tmp_path / "events")
+        with EventSession("r1", "p", "b", events_dir=events_dir) as sess:
+            assert os.path.dirname(sess.run_path) == events_dir
+            assert not os.path.exists(os.path.join(events_dir, "by-target"))
+            assert not os.path.exists(os.path.join(events_dir, "active.json"))
+
+    def test_host_routes_run_path_into_by_target_subdir(self, tmp_path):
+        events_dir = str(tmp_path / "events")
+        with EventSession("r1", "smoke", "192.168.0.5",
+                          events_dir=events_dir, host="192.168.0.5") as sess:
+            expected_dir = os.path.join(events_dir, "by-target", "192-168-0-5")
+            assert os.path.dirname(sess.run_path) == expected_dir
+            # emit 도 per-target 파일에 쓰여야 한다.
+            sess.emit_run_start(cases=["c1"])
+        recs = _read_lines(sess.run_path)
+        assert any(r["event_type"] == "run_start" for r in recs)
+
+    def test_host_updates_legacy_current_symlink_for_tui(self, tmp_path):
+        # TUI viewer 호환 — legacy events/current.jsonl 도 갱신돼야 한다.
+        events_dir = str(tmp_path / "events")
+        with EventSession("r1", "p", "host-a",
+                          events_dir=events_dir, host="host-a") as sess:
+            legacy = os.path.join(events_dir, "current.jsonl")
+            assert os.path.islink(legacy)
+            assert os.path.realpath(legacy) == os.path.realpath(sess.run_path)
+
+    def test_host_registers_in_active_hosts(self, tmp_path):
+        events_dir = str(tmp_path / "events")
+        with EventSession("r1", "smoke", "host-a",
+                          events_dir=events_dir, host="host-a"):
+            active_path = os.path.join(events_dir, "active.json")
+            assert os.path.exists(active_path)
+            with open(active_path) as f:
+                data = json.load(f)
+            hosts = [h["host"] for h in data["hosts"]]
+            assert "host-a" in hosts
+
+
 class TestThreadSafety:
     def test_concurrent_emit_lines_stay_valid_json(self, tmp_path):
         events_dir = str(tmp_path / "events")

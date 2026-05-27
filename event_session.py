@@ -24,12 +24,16 @@ DEFAULT_HEARTBEAT_INTERVAL = 5.0
 class EventSession:
     def __init__(self, run_id: str, plan: str, board: str, *,
                  events_dir: str | None = None,
+                 host: str | None = None,
                  heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL,
                  clock=None) -> None:
         self.run_id = run_id
         self.plan = plan
         self.board = board
         self.events_dir = events_dir
+        # multi-target 라우팅 — None 이면 기존(events/ 직속) 동작, 값이 있으면
+        # events/by-target/<slug>/ 로 라우팅 + active.json 등록 + legacy current 갱신.
+        self.host = host
         self.heartbeat_interval = heartbeat_interval
         self._clock = clock if clock is not None else time.monotonic
         self.run_path: str | None = None
@@ -43,7 +47,7 @@ class EventSession:
     # --- lifecycle ---------------------------------------------------------
     def __enter__(self) -> "EventSession":
         self.run_path = run_stream.start_run_file(
-            self.plan, self.board, events_dir=self.events_dir,
+            self.plan, self.board, events_dir=self.events_dir, host=self.host,
         )
         self._handle = open(self.run_path, "a", encoding="utf-8")
         self._start = self._clock()
