@@ -286,7 +286,11 @@ def _run_plan(args) -> int:
 
     sess = None
     try:
-        sess = EventSession(run_id, args.plan, board)
+        # host=host_for_meta — multi-target viewer 가 events/by-target/<slug>/ 로
+        # per-target 라우팅을 받도록 한다. 단일 host 시나리오에서도 active.json
+        # 등록 + per-host symlink 가 추가될 뿐, 기존 events/current.jsonl 도
+        # 갱신되므로 TUI viewer 호환은 그대로다.
+        sess = EventSession(run_id, args.plan, board, host=host_for_meta)
         sess.__enter__()
     except Exception:
         sess = None
