@@ -784,12 +784,19 @@ function renderDetail(d){
 
 async function tick(){
   try{
-    const r = await fetch('/state?_='+Date.now(), {cache:'no-store'});
+    // MT_SELECTED_HOST 가 set 이면 그 host 의 per-target state, 아니면 legacy
+    // /state (events/current.jsonl). 두 endpoint 모두 build_state 결과 형식
+    // 동일이라 아래 렌더링 코드는 한 path 만 유지.
+    const url = MT_SELECTED_HOST
+      ? '/api/events?host='+encodeURIComponent(MT_SELECTED_HOST)+'&_='+Date.now()
+      : '/state?_='+Date.now();
+    const r = await fetch(url, {cache:'no-store'});
     const d = await r.json();
     LAST = d;
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
-    document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?');
+    const hostTag = MT_SELECTED_HOST ? '  [◉ '+MT_SELECTED_HOST+']' : '';
+    document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?')+hostTag;
     // 런 경계 감지: run_id 가 바뀌면 새 런의 elapsed_s 로 baseline 을 리셋한다.
     // (안 그러면 아래 max 클램프가 이전 런의 높은 elapsed 를 그대로 끌고 와 새 런 시계가 오염됨)
     const runChanged = (d.run_id != null && d.run_id !== LAST_RUN);
@@ -877,6 +884,9 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // 초기 fallback — /api/active 응답의 max_concurrent 로 매 tick 마다 업데이트되므로
 // 서버 MAX_CONCURRENT_TARGETS 가 바뀌어도 UI 가 silently diverge 하지 않는다.
 let MT_MAX = 4;
+// 다음 tick() 호출이 어느 host 의 state 를 가져올지 — null 이면 legacy /state
+// (events/current.jsonl, last-started host). 컬럼 클릭으로 set, 다시 클릭하면 해제.
+let MT_SELECTED_HOST = null;
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
@@ -911,7 +921,21 @@ function mtBadge(st){
 }
 function mtCol(host, plan, st){
   const col = document.createElement('div');
-  col.className = 'mt-col';
+  col.className = 'mt-col' + (host === MT_SELECTED_HOST ? ' cur' : '');
+  // 컬럼 클릭 → legacy single-view 가 이 host 로 전환. 같은 컬럼 다시 클릭하면 해제
+  // (null = events/current.jsonl, last-started host).
+  col.onclick = () => {
+    MT_SELECTED_HOST = (MT_SELECTED_HOST === host) ? null : host;
+    // 즉시 tick 호출 — 1초 폴링 다음 cycle 까지 기다리지 않고 전환 즉시 반영.
+    // SEL / OPEN 도 초기화 — 이전 host 의 드릴다운 상태가 새 host case 이름과
+    // 다를 수 있으므로 깨끗한 상태로 시작.
+    SEL = null; OPEN.clear();
+    tick();
+    // 컬럼들 시각 갱신 — selected/unselected border 다음 tickMulti 까지 기다리지 않음.
+    document.querySelectorAll('.mt-col').forEach(c => {
+      c.classList.toggle('cur', c.querySelector('.host') && c.querySelector('.host').textContent === MT_SELECTED_HOST);
+    });
+  };
   const hd = document.createElement('div'); hd.className='hd';
   const h = document.createElement('span'); h.className='host'; h.textContent=host; hd.appendChild(h);
   const p = document.createElement('span'); p.className='plan'; p.textContent='plan='+(plan||'?'); hd.appendChild(p);
@@ -987,7 +1011,14 @@ async function tickMulti(){
     const wrap = document.getElementById('wrap');
     if(hosts.length === 0){
       bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
+      // 활성 host 모두 사라지면 selection 도 자동 해제 — 다음 tick 이 legacy /state
+      // 로 자동 복귀.
+      MT_SELECTED_HOST = null;
       return;
+    }
+    // 선택된 host 가 active.json 에서 사라졌으면 자동 해제 (run 종료/stop 후).
+    if(MT_SELECTED_HOST && !hosts.some(h => h.host === MT_SELECTED_HOST)){
+      MT_SELECTED_HOST = null;
     }
     // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
     wrap.classList.add('mt');
