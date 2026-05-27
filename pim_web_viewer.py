@@ -551,6 +551,11 @@ INDEX_HTML = """<!doctype html>
   .mtform .row2 { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .mtform button { border:none; border-radius:6px; padding:6px 12px; font-size:12px;
                     cursor:pointer; background:#16a34a; color:#fff; }
+  /* + Multi-target 토글 버튼 — .ctrl 안에 있어 .mt-bar .add 룰이 적용되지 않으므로
+     별도 클래스를 두어 인라인 스타일을 회피 (CSS 단일 진실 지점). */
+  .ctrl .btn-mt-add { margin-left:auto; background:#1e40af; color:#dbeafe;
+                       border:none; border-radius:6px; padding:6px 12px;
+                       font-size:12px; cursor:pointer; }
 </style></head>
 <body><div class="wrap" id="wrap">
   <h1 id="title">pim_viewer (web)</h1>
@@ -562,7 +567,7 @@ INDEX_HTML = """<!doctype html>
       <input class="cred" id="c_pass" type="password" value="root" title="SSH 비밀번호">
       <button class="start" id="c_start">▶ 시작</button>
       <button class="stop" id="c_stop" disabled>■ 중지</button>
-      <button class="add" id="c_mt_toggle" style="margin-left:auto; background:#1e40af; color:#dbeafe; border:none; border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer;">+ Multi-target</button>
+      <button class="btn-mt-add" id="c_mt_toggle">+ Multi-target</button>
     </div>
     <div class="cmsg" id="c_msg"></div>
     <!-- multi-target start form (collapsible) -->
@@ -864,19 +869,23 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // 단일-host 뷰가 그대로 보이고 (backward compat), 1개 이상이면 multi-grid 활성.
 // 서버 MAX_CONCURRENT_TARGETS 와 매칭 — UI 에서도 즉시 차단.
 const MT_MAX = 4;
-let MT_HOSTS_KEY = '';
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
-// network error 시 null 로 구분 (빈 hosts {} 와 다름) — caller 가 UI 를 깜빡이지
-// 않게 이전 상태 유지.
+// network error 또는 HTTP error 시 null 로 구분 (빈 hosts {} 와 다름) — caller 가
+// UI 를 깜빡이지 않게 이전 상태 유지. r.ok 검사로 5xx HTML 페이지가 r.json() 에서
+// SyntaxError 던지는 것도 막는다.
 async function fetchActive(){
-  try { const r = await fetch('/api/active?_='+Date.now(), {cache:'no-store'}); return await r.json(); }
-  catch(e){ return null; }
+  try {
+    const r = await fetch('/api/active?_='+Date.now(), {cache:'no-store'});
+    if(!r.ok) return null;
+    return await r.json();
+  } catch(e){ return null; }
 }
 async function fetchHostState(host){
   try {
     const r = await fetch('/api/events?host='+encodeURIComponent(host)+'&_='+Date.now(), {cache:'no-store'});
+    if(!r.ok) return null;
     return await r.json();
   } catch(e){ return null; }
 }
@@ -949,7 +958,6 @@ async function tickMulti(){
     const wrap = document.getElementById('wrap');
     if(hosts.length === 0){
       bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
-      MT_HOSTS_KEY = '';
       return;
     }
     // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
@@ -958,10 +966,8 @@ async function tickMulti(){
     document.getElementById('mtCount').textContent = hosts.length+' host'+(hosts.length>1?'s':'');
     // 모든 host 의 state 를 병렬 fetch (실패한 host 는 null → mtCol 이 대기 표시).
     const states = await Promise.all(hosts.map(h => fetchHostState(h.host)));
-    // 호스트 순서가 바뀌었을 때만 키 갱신 (캐시 무효화 표시).
-    const key = hosts.map(h => h.host).join('|');
-    MT_HOSTS_KEY = key;
-    // 새 컬럼으로 교체 — 4개 이하라 성능 영향 미미.
+    // 매 tick 마다 grid 전체 재구성 — N<=4 라 성능 영향 미미. 부분 갱신/diff 는 향후
+    // 필요 시 mtCol 에 update path 추가하는 식으로 확장 가능 (현재는 단순성 우선).
     grid.replaceChildren(...hosts.map((h, i) => mtCol(h.host, h.plan, states[i])));
   } finally {
     mtTicking = false;
@@ -970,17 +976,27 @@ async function tickMulti(){
     setTimeout(tickMulti, 1500);
   }
 }
+// r.ok / r.json() 처리를 한 헬퍼로 모은다 — 500 HTML 페이지를 r.json() 이 받아
+// SyntaxError 를 던지는 패턴을 막고, 모든 호출이 동일한 (ok, body, status) 모양을
+// 보게 한다. fetch 자체 실패(네트워크) 도 ok:false 로 매핑.
+async function mtPostJSON(url, payload){
+  try {
+    const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify(payload)});
+    let body = {};
+    try { body = await r.json(); } catch(_e){ body = {error: 'invalid JSON response'}; }
+    return {ok: r.ok && body.ok !== false, body: body, status: r.status};
+  } catch(e){ return {ok: false, body: {error: String(e)}, status: 0}; }
+}
 async function stopHost(host){
   if(!confirm('Stop host '+host+'?')) return;
-  try {
-    const r = await fetch('/stop', {method:'POST', headers:{'Content-Type':'application/json'},
-                                    body: JSON.stringify({host: host})});
-    const d = await r.json();
-    if(!d.ok) alert('Stop 실패: '+(d.error||r.status));
-  } catch(e){ alert('Stop 오류: '+e); }
+  const res = await mtPostJSON('/stop', {host: host});
+  if(!res.ok) alert('Stop 실패: '+(res.body.error || ('HTTP '+res.status)));
   // 다음 tick 이 곧 fire 되므로 명시 호출 불필요. mtTicking flag 와 충돌 회피.
 }
 async function stopAll(){
+  const btn = document.getElementById('mt_stop_all');
+  if(btn.disabled) return;  // double-submit 가드
   const data = await fetchActive();
   if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
   const hosts = (data.hosts||[]).map(h => h.host);
@@ -990,14 +1006,15 @@ async function stopAll(){
   const running = mtRunningHosts(hosts, states).slice(0, MT_MAX);
   if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
   if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
+  btn.disabled = true;
   try {
-    const r = await fetch('/stop', {method:'POST', headers:{'Content-Type':'application/json'},
-                                    body: JSON.stringify({targets: running})});
-    const d = await r.json();
-    if(!d.ok) alert('Stop All 실패: '+(d.error||r.status));
-  } catch(e){ alert('Stop All 오류: '+e); }
+    const res = await mtPostJSON('/stop', {targets: running});
+    if(!res.ok) alert('Stop All 실패: '+(res.body.error || ('HTTP '+res.status)));
+  } finally { btn.disabled = false; }
 }
 async function startMulti(){
+  const btn = document.getElementById('mt_start');
+  if(btn.disabled) return;  // double-submit 가드 — 빠른 연속 클릭으로 spawn 중복 방지.
   const hosts = document.getElementById('mt_hosts').value.split('\n')
     .map(s => s.trim()).filter(Boolean);
   const plan = document.getElementById('c_plan').value;
@@ -1011,19 +1028,18 @@ async function startMulti(){
   }
   const targets = hosts.map(h => ({host: h, user: user, password: password}));
   msg.textContent='시작 중…'; msg.className='cmsg';
+  btn.disabled = true;
   try {
-    const r = await fetch('/start', {method:'POST', headers:{'Content-Type':'application/json'},
-                                     body: JSON.stringify({plan: plan, targets: targets})});
-    const d = await r.json();
-    if(d.ok){
-      msg.textContent = '시작됨 — '+(d.started||[]).length+' host';
+    const res = await mtPostJSON('/start', {plan: plan, targets: targets});
+    if(res.ok){
+      msg.textContent = '시작됨 — '+(res.body.started||[]).length+' host';
       msg.className='cmsg ok';
       document.getElementById('mtform').classList.remove('open');
     } else {
-      msg.textContent = '실패: '+(d.error||r.status);
+      msg.textContent = '실패: '+(res.body.error || ('HTTP '+res.status));
       msg.className='cmsg err';
     }
-  } catch(e){ msg.textContent='요청 오류: '+e; msg.className='cmsg err'; }
+  } finally { btn.disabled = false; }
 }
 document.getElementById('mt_stop_all').onclick = stopAll;
 document.getElementById('mt_start').onclick = startMulti;
