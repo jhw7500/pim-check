@@ -22,8 +22,9 @@ from contextlib import contextmanager
 import pytest
 
 # playwright 가 설치 안 됐으면 전체 모듈 skip — 다른 환경에서 dev 흐름 막지 않음.
-# 반환값 사용 안 함 — 단순 import 가능 여부만 확인하고 sync_playwright 는 아래에서 import.
 pytest.importorskip("playwright.sync_api")
+# importorskip 이후 안전하게 module-top import — 일반적인 import 레이아웃 유지.
+from playwright.sync_api import sync_playwright  # noqa: E402
 
 
 def _free_port() -> int:
@@ -87,6 +88,7 @@ def _viewer(port: int):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait()  # SIGKILL 즉시 — wait 로 reap 해 zombie 잔류 방지
 
 
 def test_index_html_js_loads_without_pageerror():
@@ -102,19 +104,23 @@ def test_index_html_js_loads_without_pageerror():
     """
     port = _free_port()
     with _viewer(port):
-        from playwright.sync_api import sync_playwright
+        # headless=True 명시 — Playwright 기본도 True 지만, 미래 default 변경에
+        # 대비한 CI 의도 self-documenting.
         with sync_playwright() as p:
-            browser = p.chromium.launch()
+            browser = p.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
                 errors: list[str] = []
                 console_errors: list[str] = []
                 # pageerror = uncaught exception in page (SyntaxError, ReferenceError 포함)
                 page.on("pageerror", lambda e: errors.append(str(e)))
+
                 # console error 도 추적 — uncaught 가 아닌 JS 실패 (failed fetch
-                # 외의 라이브러리 에러 등) 도 catch.
-                page.on("console", lambda msg:
-                        console_errors.append(msg.text) if msg.type == "error" else None)
+                # 외 라이브러리 에러 등) 도 catch. 함수로 분리 (lambda multiline 회피).
+                def _on_console(msg):
+                    if msg.type == "error":
+                        console_errors.append(msg.text)
+                page.on("console", _on_console)
                 # goto 의 기본 wait = 'load' — 우리 검증에 충분.
                 page.goto(f"http://127.0.0.1:{port}/")
 
