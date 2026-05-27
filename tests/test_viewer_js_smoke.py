@@ -5,8 +5,8 @@ PR #42 의 silent JS SyntaxError (split 의 Python escape 함정) 같은 회귀�
 pytest 단위 테스트 + ruff lint 를 모두 통과한 사례 → 브라우저에서 실제 페이지를
 로드해 핵심 함수가 정의됐는지 확인하는 가드가 필요.
 
-playwright 가 설치돼 있어야 한다 (dev extra). CI 의 별도 job 으로 분리:
-- ``pip install playwright && playwright install chromium``
+playwright 가 설치돼 있어야 한다 (js-smoke extra). CI 의 별도 job 으로 분리:
+- ``uv sync --extra js-smoke && uv run playwright install chromium``
 - 일반 ``pip install pim-check[dev]`` 사용자 환경에는 영향 없음.
 """
 from __future__ import annotations
@@ -18,6 +18,11 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from pathlib import Path
+
+# pim_web_viewer.py 의 절대 경로 — 테스트 호출 위치 (repo root vs tests/) 와 무관하게
+# 일관된 spawn 보장. 상대 경로면 CWD 의존으로 silent 5s timeout fail 위험.
+_VIEWER_SCRIPT = str(Path(__file__).resolve().parent.parent / "pim_web_viewer.py")
 
 import pytest
 
@@ -47,7 +52,7 @@ def _viewer(port: int):
     매우 드물고, 실패 진단이 필요하면 사용자가 viewer 를 별도 실행해서 확인.
     """
     proc = subprocess.Popen(
-        [sys.executable, "pim_web_viewer.py",
+        [sys.executable, _VIEWER_SCRIPT,
          "--host", "127.0.0.1", "--port", str(port)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
