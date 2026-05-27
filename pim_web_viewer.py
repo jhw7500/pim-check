@@ -9,6 +9,13 @@ viewer_state.ViewerState 를 재사용해 같은 JSONL 을 웹으로 보여준�
 producer-lost(파일 mtime 기반 — heartbeat 가 5초마다 파일을 갱신하므로 10초 무갱신
 이면 producer 사망 추정)를 JSON 으로 반환한다. 브라우저는 1초마다 /state 를 폴링해
 렌더하므로, 페이지를 새로 열어도 처음부터 상태가 복원된다(재접속 = state snapshot).
+
+보안 모델 (중요):
+  이 뷰어는 **localhost / 사내 신뢰 네트워크 전용**이다. /start 요청 body 는
+  SSH 비밀번호 (`password` / `targets[].password`) 를 평문 JSON 으로 전송하므로
+  HTTPS 가 아닌 환경에서 외부망에 노출하면 패스워드 누설된다. 자식 process 에는
+  argv 가 아닌 PIM_PASSWORD env 로 전달해 ps/proc 노출은 피한다 (이 부분만
+  방어). 외부 노출 필요 시 reverse proxy + TLS + auth 를 caller 가 책임진다.
 """
 from __future__ import annotations
 
@@ -521,7 +528,6 @@ INDEX_HTML = """<!doctype html>
   .mt-bar button { margin-left:auto; border:none; border-radius:6px; padding:5px 10px;
                    font-size:12px; cursor:pointer; }
   .mt-bar .stopall { background:#7c1d1d; color:#fde68a; }
-  .mt-bar .add { background:#1e40af; color:#dbeafe; margin-left:8px; }
   .mt-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
              gap:12px; margin-bottom:14px; }
   .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px; }
@@ -551,8 +557,8 @@ INDEX_HTML = """<!doctype html>
   .mtform .row2 { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .mtform button { border:none; border-radius:6px; padding:6px 12px; font-size:12px;
                     cursor:pointer; background:#16a34a; color:#fff; }
-  /* + Multi-target 토글 버튼 — .ctrl 안에 있어 .mt-bar .add 룰이 적용되지 않으므로
-     별도 클래스를 두어 인라인 스타일을 회피 (CSS 단일 진실 지점). */
+  /* + Multi-target 토글 버튼 — .ctrl 패널 안의 액션 버튼. 인라인 스타일을 회피해
+     CSS 단일 진실 지점 유지. */
   .ctrl .btn-mt-add { margin-left:auto; background:#1e40af; color:#dbeafe;
                        border:none; border-radius:6px; padding:6px 12px;
                        font-size:12px; cursor:pointer; }
@@ -991,6 +997,9 @@ async function tickMulti(){
     const states = await Promise.all(hosts.map(h => fetchHostState(h.host)));
     // 매 tick 마다 grid 전체 재구성 — N<=4 라 성능 영향 미미. 부분 갱신/diff 는 향후
     // 필요 시 mtCol 에 update path 추가하는 식으로 확장 가능 (현재는 단순성 우선).
+    // h.slug 는 디버그/식별 메타데이터로 응답에 포함되지만 UI 는 raw host name 만
+    // 표시 (사용자 친숙성 우선). slug 는 server 측 by-target/ 경로 매핑에만 쓰이고,
+    // 클라이언트는 항상 host 를 그대로 보내면 server 가 slug 변환.
     grid.replaceChildren(...hosts.map((h, i) => mtCol(h.host, h.plan, states[i])));
   } finally {
     mtTicking = false;
