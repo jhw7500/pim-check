@@ -9,6 +9,13 @@ viewer_state.ViewerState 를 재사용해 같은 JSONL 을 웹으로 보여준�
 producer-lost(파일 mtime 기반 — heartbeat 가 5초마다 파일을 갱신하므로 10초 무갱신
 이면 producer 사망 추정)를 JSON 으로 반환한다. 브라우저는 1초마다 /state 를 폴링해
 렌더하므로, 페이지를 새로 열어도 처음부터 상태가 복원된다(재접속 = state snapshot).
+
+보안 모델 (중요):
+  이 뷰어는 **localhost / 사내 신뢰 네트워크 전용**이다. /start 요청 body 는
+  SSH 비밀번호 (`password` / `targets[].password`) 를 평문 JSON 으로 전송하므로
+  HTTPS 가 아닌 환경에서 외부망에 노출하면 패스워드 누설된다. 자식 process 에는
+  argv 가 아닌 PIM_PASSWORD env 로 전달해 ps/proc 노출은 피한다 (이 부분만
+  방어). 외부 노출 필요 시 reverse proxy + TLS + auth 를 caller 가 책임진다.
 """
 from __future__ import annotations
 
@@ -512,8 +519,51 @@ INDEX_HTML = """<!doctype html>
   .ctrl button:disabled { opacity:.4; cursor:not-allowed; }
   .ctrl .cmsg { font-size:11px; margin-top:6px; min-height:14px; color:#9ca3af; }
   .ctrl .cmsg.err { color:#fca5a5; } .ctrl .cmsg.ok { color:#86efac; }
+  /* multi-target view: 페이지 자체 너비 확장 + grid 컬럼 */
+  .wrap.mt { max-width: 1600px; }
+  .mt-bar { display:flex; align-items:center; gap:10px; margin:8px 0 12px;
+            padding:8px 12px; background:#0f1722; border:1px solid #1f2a3a; border-radius:8px; }
+  .mt-bar .title { color:#9ad; font-size:13px; font-weight:700; }
+  .mt-bar .count { color:#7a8; font-size:11px; }
+  .mt-bar button { margin-left:auto; border:none; border-radius:6px; padding:5px 10px;
+                   font-size:12px; cursor:pointer; }
+  .mt-bar .stopall { background:#7c1d1d; color:#fde68a; }
+  .mt-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+             gap:12px; margin-bottom:14px; }
+  .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px; }
+  .mt-col.cur { border-color:#3b82f6; box-shadow:0 0 0 1px #3b82f6 inset; }
+  .mt-col .hd { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .mt-col .hd .host { font-weight:700; color:#cdd6f4; font-size:13px; }
+  .mt-col .hd .plan { color:#9ad; font-size:11px; }
+  .mt-col .hd .stop { margin-left:auto; border:none; border-radius:5px; padding:2px 8px;
+                       background:#52111a; color:#fca5a5; font-size:11px; cursor:pointer; }
+  .mt-col .hd .stop:hover { background:#7c1d1d; }
+  .mt-col .mt-meta { color:#7a8; font-size:11px; margin-bottom:4px; }
+  .mt-col .mt-bar2 { height:8px; background:#1b1f2a; border-radius:4px; overflow:hidden; margin:4px 0; }
+  .mt-col .mt-bar2 > i { display:block; height:100%; background:linear-gradient(90deg,#3b82f6,#22d3ee); width:0; transition:width .4s; }
+  .mt-col .mt-stats { display:flex; gap:14px; font-size:11px; margin-top:4px; }
+  .mt-col .mt-stats span b { font-size:14px; font-variant-numeric:tabular-nums; }
+  .mt-col .mt-cur { color:#fbbf24; font-size:12px; font-weight:600; margin-top:4px;
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mt-col .mt-empty { color:#5b647a; font-size:12px; padding:6px 0; }
+  /* multi-target start form (확장 패널) */
+  .mtform { background:#0f1722; border:1px solid #1f2a3a; border-radius:8px;
+            padding:10px 12px; margin:8px 0; display:none; }
+  .mtform.open { display:block; }
+  .mtform textarea { width:100%; min-height:60px; background:#0b1220; color:#e5e7eb;
+                     border:1px solid #334155; border-radius:6px; padding:6px 8px;
+                     font-family:inherit; font-size:12px; box-sizing:border-box; }
+  .mtform .hint { color:#7a8; font-size:11px; margin:4px 0 6px; }
+  .mtform .row2 { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .mtform button { border:none; border-radius:6px; padding:6px 12px; font-size:12px;
+                    cursor:pointer; background:#16a34a; color:#fff; }
+  /* + Multi-target 토글 버튼 — .ctrl 패널 안의 액션 버튼. 인라인 스타일을 회피해
+     CSS 단일 진실 지점 유지. */
+  .ctrl .btn-mt-add { margin-left:auto; background:#1e40af; color:#dbeafe;
+                       border:none; border-radius:6px; padding:6px 12px;
+                       font-size:12px; cursor:pointer; }
 </style></head>
-<body><div class="wrap">
+<body><div class="wrap" id="wrap">
   <h1 id="title">pim_viewer (web)</h1>
   <div class="ctrl" id="ctrl">
     <div class="crow">
@@ -523,9 +573,26 @@ INDEX_HTML = """<!doctype html>
       <input class="cred" id="c_pass" type="password" value="root" title="SSH 비밀번호">
       <button class="start" id="c_start">▶ 시작</button>
       <button class="stop" id="c_stop" disabled>■ 중지</button>
+      <button class="btn-mt-add" id="c_mt_toggle">+ Multi-target</button>
     </div>
     <div class="cmsg" id="c_msg"></div>
+    <!-- multi-target start form (collapsible) -->
+    <div class="mtform" id="mtform">
+      <div class="hint">여러 타겟을 한 번에 시작 — 호스트를 한 줄에 하나씩 입력 (최대 4개). 위의 plan/user/password 가 모든 타겟에 공유됩니다.</div>
+      <textarea id="mt_hosts" rows="5" placeholder="192.168.214.4&#10;192.168.214.5"></textarea>
+      <div class="row2" style="margin-top:6px;">
+        <button id="mt_start">▶ Start All</button>
+        <span class="cmsg" id="mt_msg"></span>
+      </div>
+    </div>
   </div>
+  <!-- multi-target dashboard: hosts.length > 0 일 때만 표시 -->
+  <div class="mt-bar" id="mtBar" style="display:none">
+    <span class="title">Multi-target 실행 중</span>
+    <span class="count" id="mtCount">0 hosts</span>
+    <button class="stopall" id="mt_stop_all">■ Stop All</button>
+  </div>
+  <div class="mt-grid" id="mtGrid" style="display:none"></div>
   <div class="sub" id="meta">waiting for event stream…</div>
   <div id="badge" class="badge b-run"><span class="dot run"></span>…</div>
   <div class="clocks">
@@ -802,6 +869,241 @@ document.getElementById('c_start').onclick=startRun;
 document.getElementById('c_stop').onclick=stopRun;
 loadControl(); setInterval(loadControl, 3000);
 tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
+// --- Multi-target view --------------------------------------------------
+// /api/active 로 host 목록을 가져온 뒤 각 host 의 /api/events?host=<>
+// 를 병렬 폴링해 컬럼 그리드를 그린다. hosts.length === 0 이면 기존
+// 단일-host 뷰가 그대로 보이고 (backward compat), 1개 이상이면 multi-grid 활성.
+// 서버 MAX_CONCURRENT_TARGETS 와 매칭 — UI 에서도 즉시 차단.
+// 초기 fallback — /api/active 응답의 max_concurrent 로 매 tick 마다 업데이트되므로
+// 서버 MAX_CONCURRENT_TARGETS 가 바뀌어도 UI 가 silently diverge 하지 않는다.
+let MT_MAX = 4;
+// 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
+// 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
+let mtTicking = false;
+// 진행 중인 per-host stop 추적 — DOM 의 button 은 매 tick replaceChildren 으로
+// 교체돼 click 과 두번째 click 사이에 사라질 수 있다. host name 키 Set 이
+// DOM lifecycle 와 무관하게 in-flight 가드로 안정적.
+const mtInFlightStops = new Set();
+// network error 또는 HTTP error 시 null 로 구분 (빈 hosts {} 와 다름) — caller 가
+// UI 를 깜빡이지 않게 이전 상태 유지. r.ok 검사로 5xx HTML 페이지가 r.json() 에서
+// SyntaxError 던지는 것도 막는다.
+async function fetchActive(){
+  try {
+    const r = await fetch('/api/active?_='+Date.now(), {cache:'no-store'});
+    if(!r.ok) return null;
+    return await r.json();
+  } catch(e){ return null; }
+}
+async function fetchHostState(host){
+  try {
+    const r = await fetch('/api/events?host='+encodeURIComponent(host)+'&_='+Date.now(), {cache:'no-store'});
+    if(!r.ok) return null;
+    return await r.json();
+  } catch(e){ return null; }
+}
+function mtFmtClock(s){ s=Math.max(0,Math.floor(s||0)); const m=Math.floor(s/60); return m?(m+"m "+(s%60)+"s"):(s+"s"); }
+function mtBadge(st){
+  // st 가 null (network error) 이거나 stream 없으면 대기 표시 — guard 로 TypeError 방지.
+  if(!st || !st.exists) return ['b-lost','대기'];
+  if(st.producer_lost) return ['b-lost','Producer lost'];
+  if(st.run_ended) return ['b-done','DONE'];
+  return ['b-run','RUNNING'];
+}
+function mtCol(host, plan, st){
+  const col = document.createElement('div');
+  col.className = 'mt-col';
+  const hd = document.createElement('div'); hd.className='hd';
+  const h = document.createElement('span'); h.className='host'; h.textContent=host; hd.appendChild(h);
+  const p = document.createElement('span'); p.className='plan'; p.textContent='plan='+(plan||'?'); hd.appendChild(p);
+  const [bcls, btxt] = mtBadge(st);
+  const b = document.createElement('span'); b.className='badge '+bcls; b.style.fontSize='10px'; b.style.padding='2px 8px'; b.textContent=btxt; hd.appendChild(b);
+  const stop = document.createElement('button'); stop.className='stop'; stop.textContent='■ Stop';
+  // type="button" 명시 — 기본 type="submit" 인데 향후 columns 가 form 안으로 들어가도
+  // 의도치 않은 폼 제출이 발생하지 않도록 방어.
+  stop.type = 'button';
+  // data-host 로 stopHost 가 element 를 다시 찾아 disabled 토글 — closure 캡처보다
+  // 다음 tick 재구성 후에도 안전 (host 이름 기반 lookup).
+  stop.setAttribute('data-host', host);
+  stop.onclick = (ev) => { ev.stopPropagation(); stopHost(host); };
+  hd.appendChild(stop);
+  col.appendChild(hd);
+  if(!st || !st.exists){
+    const e = document.createElement('div'); e.className='mt-empty'; e.textContent='이벤트 스트림 없음 (시작 대기)'; col.appendChild(e);
+    return col;
+  }
+  const meta = document.createElement('div'); meta.className='mt-meta';
+  meta.textContent = 'run='+(st.run_id||'?')+'  ·  경과 '+mtFmtClock(st.elapsed_s);
+  col.appendChild(meta);
+  const bar = document.createElement('div'); bar.className='mt-bar2';
+  const i = document.createElement('i'); const pct = st.total ? Math.round(100*st.completed/st.total) : 0;
+  i.style.width = pct+'%'; bar.appendChild(i); col.appendChild(bar);
+  const sub = document.createElement('div'); sub.className='mt-meta';
+  sub.textContent = st.completed+' / '+st.total+' ('+pct+'%)';
+  col.appendChild(sub);
+  // PASS/FAIL: createElement 만 사용 (innerHTML 회피 — 파일 전체 정책 일관성).
+  const stats = document.createElement('div'); stats.className='mt-stats';
+  const sp = document.createElement('span'); sp.appendChild(document.createTextNode('PASS '));
+  const spb = document.createElement('b'); spb.style.color='#4ade80'; spb.textContent=String(st['pass']);
+  sp.appendChild(spb);
+  const sf = document.createElement('span'); sf.appendChild(document.createTextNode('FAIL '));
+  const sfb = document.createElement('b'); sfb.style.color='#f87171'; sfb.textContent=String(st.fail);
+  sf.appendChild(sfb);
+  stats.appendChild(sp); stats.appendChild(sf); col.appendChild(stats);
+  if(st.current){
+    const cur = document.createElement('div'); cur.className='mt-cur'; cur.textContent='▶ '+st.current+(st.pending?' (⏳ 준비 중)':'');
+    col.appendChild(cur);
+  } else if(st.run_ended){
+    const done = document.createElement('div'); done.className='mt-cur'; done.style.color='#7aa2f7';
+    done.textContent = '완료 — '+st['pass']+'/'+st.total+' pass'; col.appendChild(done);
+  }
+  return col;
+}
+// 활성 호스트만 추려 stop 대상으로 사용 — active.json 에 누적된 stale 항목까지
+// 보내면 MT_MAX 초과로 stop 자체가 400 에 막힌다.
+function mtRunningHosts(hosts, states){
+  return hosts.filter((h, i) => states[i] && states[i].exists
+                       && !states[i].run_ended && !states[i].producer_lost);
+}
+async function tickMulti(){
+  if(mtTicking) return;  // 직전 tick in-flight → 중복 실행 방지 (race window 차단)
+  // 백그라운드 탭에서는 사용자가 보지 않는데 5 fetches/1.5s 로 무의미한 트래픽 누적.
+  // 5초 간격으로 늦춰 reload 시 즉시 fresh 상태로 회복은 유지.
+  // mtTicking 을 굳이 set 하지 않는다 — tick chain 은 단일 setTimeout 이라 동시
+  // 실행이 발생할 수 없고, set 하면 throttle window 안 일찍 다른 caller (예:
+  // visibilitychange 핸들러 추가 시) 가 fast-path 진입을 못 한다.
+  if(document.hidden){ setTimeout(tickMulti, 5000); return; }
+  mtTicking = true;
+  try {
+    const data = await fetchActive();
+    if(data === null) return;  // network error → 이전 UI 유지, 다음 tick 재시도
+    // server cap 을 매 tick 마다 동기화 — MAX_CONCURRENT_TARGETS 가 서버에서 바뀌면
+    // 다음 tick 부터 UI 도 새 한도로 검증.
+    if(typeof data.max_concurrent === 'number' && data.max_concurrent > 0){
+      MT_MAX = data.max_concurrent;
+    }
+    const hosts = data.hosts || [];
+    const bar = document.getElementById('mtBar');
+    const grid = document.getElementById('mtGrid');
+    const wrap = document.getElementById('wrap');
+    if(hosts.length === 0){
+      bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
+      return;
+    }
+    // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
+    wrap.classList.add('mt');
+    bar.style.display='flex'; grid.style.display='grid';
+    document.getElementById('mtCount').textContent = hosts.length+' host'+(hosts.length>1?'s':'');
+    // 모든 host 의 state 를 병렬 fetch (실패한 host 는 null → mtCol 이 대기 표시).
+    const states = await Promise.all(hosts.map(h => fetchHostState(h.host)));
+    // 매 tick 마다 grid 전체 재구성 — N<=4 라 성능 영향 미미. 부분 갱신/diff 는 향후
+    // 필요 시 mtCol 에 update path 추가하는 식으로 확장 가능 (현재는 단순성 우선).
+    // h.slug 는 디버그/식별 메타데이터로 응답에 포함되지만 UI 는 raw host name 만
+    // 표시 (사용자 친숙성 우선). slug 는 server 측 by-target/ 경로 매핑에만 쓰이고,
+    // 클라이언트는 항상 host 를 그대로 보내면 server 가 slug 변환.
+    grid.replaceChildren(...hosts.map((h, i) => mtCol(h.host, h.plan, states[i])));
+  } finally {
+    mtTicking = false;
+    // setInterval 대신 setTimeout 재예약 — async 가 1.5s 안에 끝나지 못해도 중복 fire
+    // 안 되고, 다음 tick 은 항상 완료 후 1.5s 시작 (실제 폴링 간격이 일정해진다).
+    setTimeout(tickMulti, 1500);
+  }
+}
+// r.ok / r.json() 처리를 한 헬퍼로 모은다 — 500 HTML 페이지를 r.json() 이 받아
+// SyntaxError 를 던지는 패턴을 막고, 모든 호출이 동일한 (ok, body, status) 모양을
+// 보게 한다. fetch 자체 실패(네트워크) 도 ok:false 로 매핑.
+async function mtPostJSON(url, payload){
+  try {
+    const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify(payload)});
+    let body = {};
+    try { body = await r.json(); } catch(_e){ body = {error: 'invalid JSON response'}; }
+    return {ok: r.ok && body.ok !== false, body: body, status: r.status};
+  } catch(e){ return {ok: false, body: {error: String(e)}, status: 0}; }
+}
+async function stopHost(host){
+  // Set 기반 in-flight 추적 — DOM 버튼은 매 tick replaceChildren 으로 교체돼
+  // 두 번째 클릭 시점에 querySelector(null) 로 guard 가 silent 우회되는 race
+  // 가 있었다. host name 키는 DOM lifecycle 무관.
+  if(mtInFlightStops.has(host)) return;
+  mtInFlightStops.add(host);
+  // 버튼 시각 비활성화도 함께 (사용자 피드백) — 다음 tick 까지만 효과지만
+  // 그 사이 두 번째 클릭 동기 guard 로 mtInFlightStops 가 빠르게 거른다.
+  const btn = document.querySelector('.mt-col .stop[data-host="'+CSS.escape(host)+'"]');
+  if(btn) btn.disabled = true;
+  try {
+    if(!confirm('Stop host '+host+'?')) return;
+    const res = await mtPostJSON('/stop', {host: host});
+    if(!res.ok) alert('Stop 실패: '+(res.body.error || ('HTTP '+res.status)));
+    // 다음 tick 이 곧 fire 되므로 명시 호출 불필요.
+  } finally {
+    mtInFlightStops.delete(host);
+    // btn 은 이미 replaceChildren 으로 사라졌을 수 있어 null check 후 re-enable.
+    if(btn && btn.isConnected) btn.disabled = false;
+  }
+}
+async function stopAll(){
+  const btn = document.getElementById('mt_stop_all');
+  // disabled 를 *모든 await 이전에* 설정 — fetchActive/Promise.all 등 await 도중
+  // 두 번째 click 이 들어와도 두 동시 호출 모두 guard 를 통과해서 confirm 가
+  // 중복 뜨고 stop 도 중복 전송되는 race 를 막는다.
+  if(btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const data = await fetchActive();
+    if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
+    const hosts = (data.hosts||[]).map(h => h.host);
+    if(hosts.length === 0) return;
+    // 활성 host 만 필터 — server 가 spawn 시점에 MAX_CONCURRENT_TARGETS 를 강제하므로
+    // running.length 가 MT_MAX 를 넘는 일은 정상 흐름에 없음. 만약 초과한다면 server
+    // cap 변경 / stale active.json edge case 신호 — 잘라내 묵음 처리하기보다 console
+    // 경고로 노출 (silently skip 했다가 사용자가 "왜 일부만 멈춰?" 가 더 혼란스럽다).
+    const states = await Promise.all(hosts.map(h => fetchHostState(h)));
+    const running = mtRunningHosts(hosts, states);
+    if(running.length > MT_MAX){
+      console.warn('mt: running.length('+running.length+') > MT_MAX('+MT_MAX+') — server limit drift 의심');
+    }
+    if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
+    if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
+    const res = await mtPostJSON('/stop', {targets: running});
+    if(!res.ok) alert('Stop All 실패: '+(res.body.error || ('HTTP '+res.status)));
+  } finally { btn.disabled = false; }
+}
+async function startMulti(){
+  const btn = document.getElementById('mt_start');
+  if(btn.disabled) return;  // double-submit 가드 — 빠른 연속 클릭으로 spawn 중복 방지.
+  const hosts = document.getElementById('mt_hosts').value.split('\n')
+    .map(s => s.trim()).filter(Boolean);
+  const plan = document.getElementById('c_plan').value;
+  const user = document.getElementById('c_user').value.trim();
+  const password = document.getElementById('c_pass').value;
+  const msg = document.getElementById('mt_msg');
+  if(!plan){ msg.textContent='plan 을 선택하세요'; msg.className='cmsg err'; return; }
+  if(hosts.length === 0){ msg.textContent='host 를 한 줄 이상 입력하세요'; msg.className='cmsg err'; return; }
+  if(hosts.length > MT_MAX){
+    msg.textContent='최대 '+MT_MAX+'개까지 가능 ('+hosts.length+'개 입력됨)'; msg.className='cmsg err'; return;
+  }
+  const targets = hosts.map(h => ({host: h, user: user, password: password}));
+  msg.textContent='시작 중…'; msg.className='cmsg';
+  btn.disabled = true;
+  try {
+    const res = await mtPostJSON('/start', {plan: plan, targets: targets});
+    if(res.ok){
+      msg.textContent = '시작됨 — '+(res.body.started||[]).length+' host';
+      msg.className='cmsg ok';
+      document.getElementById('mtform').classList.remove('open');
+    } else {
+      msg.textContent = '실패: '+(res.body.error || ('HTTP '+res.status));
+      msg.className='cmsg err';
+    }
+  } finally { btn.disabled = false; }
+}
+document.getElementById('mt_stop_all').onclick = stopAll;
+document.getElementById('mt_start').onclick = startMulti;
+document.getElementById('c_mt_toggle').onclick = () => {
+  document.getElementById('mtform').classList.toggle('open');
+};
+// 최초 1회 fire — 이후는 tickMulti 자체가 setTimeout 으로 재예약 (setInterval 회피).
+tickMulti();
 </script>
 </body></html>"""
 
@@ -845,8 +1147,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, control_status())
         elif self.path.startswith("/api/active"):
             # multi-target viewer 의 host enumerate 용 — 별도 라우트로 두어 기존
-            # /state (단일 stream) 와 명확히 분리한다.
-            self._send_json(200, active_hosts())
+            # /state (단일 stream) 와 명확히 분리한다. max_concurrent 도 함께 노출해
+            # 클라이언트가 JS 상수와 server cap 의 single source of truth 를 유지.
+            # spread 로 새 dict 생성 — active_hosts() 가 dict 를 그대로 반환할 때
+            # in-place 변경되는 것을 막아 향후 caching 도입 시에도 안전.
+            self._send_json(200, {**active_hosts(),
+                                  "max_concurrent": MAX_CONCURRENT_TARGETS})
         elif self.path.startswith("/api/events"):
             # per-host state — viewer 가 host 별 컬럼마다 폴링한다. 다른 JSON
             # endpoint 들과 일관성 있게 _send_json 사용 (Content-Type / Cache-Control
