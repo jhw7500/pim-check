@@ -24,6 +24,27 @@ def test_active_hosts_empty_when_no_file(tmp_path, monkeypatch):
     assert out == {"hosts": []}
 
 
+def test_active_hosts_roundtrip_via_register(tmp_path, monkeypatch):
+    """register_active_host → read_active_hosts → /api/active 라운드 트립.
+
+    Step 1 의 register 가 plan 을 쓰고, Step 2 의 /api/active 가 그대로 노출하며,
+    Step 3 UI 가 그 plan 을 컬럼 헤더에 표시한다. plan 필드가 어디서든 누락되면
+    UI 에 'plan=?' 로 보여 회귀가 silent — 이 라운드트립으로 묶어 가드.
+    """
+    import run_stream
+    events_dir = str(tmp_path / "events")
+    os.makedirs(events_dir, exist_ok=True)
+    _patch_dir(monkeypatch, events_dir)
+    run_stream.register_active_host(events_dir, "192.168.0.5", "smoke",
+                                     "192.168.0.5", "run.jsonl")
+    out = v.active_hosts()
+    assert len(out["hosts"]) == 1
+    entry = out["hosts"][0]
+    assert entry["host"] == "192.168.0.5"
+    assert entry["plan"] == "smoke"  # 핵심 — UI 컬럼 헤더가 의존하는 필드
+    assert entry["slug"] == "192-168-0-5"
+
+
 def test_active_hosts_returns_registered_entries(tmp_path, monkeypatch):
     events_dir = str(tmp_path / "events")
     os.makedirs(events_dir, exist_ok=True)

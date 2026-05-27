@@ -573,7 +573,7 @@ INDEX_HTML = """<!doctype html>
     <!-- multi-target start form (collapsible) -->
     <div class="mtform" id="mtform">
       <div class="hint">여러 타겟을 한 번에 시작 — 호스트를 한 줄에 하나씩 입력 (최대 4개). 위의 plan/user/password 가 모든 타겟에 공유됩니다.</div>
-      <textarea id="mt_hosts" placeholder="192.168.214.4&#10;192.168.214.5"></textarea>
+      <textarea id="mt_hosts" rows="5" placeholder="192.168.214.4&#10;192.168.214.5"></textarea>
       <div class="row2" style="margin-top:6px;">
         <button id="mt_start">▶ Start All</button>
         <span class="cmsg" id="mt_msg"></span>
@@ -874,6 +874,10 @@ let MT_MAX = 4;
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
+// 진행 중인 per-host stop 추적 — DOM 의 button 은 매 tick replaceChildren 으로
+// 교체돼 click 과 두번째 click 사이에 사라질 수 있다. host name 키 Set 이
+// DOM lifecycle 와 무관하게 in-flight 가드로 안정적.
+const mtInFlightStops = new Set();
 // network error 또는 HTTP error 시 null 로 구분 (빈 hosts {} 와 다름) — caller 가
 // UI 를 깜빡이지 않게 이전 상태 유지. r.ok 검사로 5xx HTML 페이지가 r.json() 에서
 // SyntaxError 던지는 것도 막는다.
@@ -1008,18 +1012,25 @@ async function mtPostJSON(url, payload){
   } catch(e){ return {ok: false, body: {error: String(e)}, status: 0}; }
 }
 async function stopHost(host){
-  // per-host Stop 버튼 (각 컬럼별로 새 element 라 element-scoped 참조).
-  // ev 가 없는 경로(예: 코드에서 직접 호출) 대비 host 별 button query 로 통일.
+  // Set 기반 in-flight 추적 — DOM 버튼은 매 tick replaceChildren 으로 교체돼
+  // 두 번째 클릭 시점에 querySelector(null) 로 guard 가 silent 우회되는 race
+  // 가 있었다. host name 키는 DOM lifecycle 무관.
+  if(mtInFlightStops.has(host)) return;
+  mtInFlightStops.add(host);
+  // 버튼 시각 비활성화도 함께 (사용자 피드백) — 다음 tick 까지만 효과지만
+  // 그 사이 두 번째 클릭 동기 guard 로 mtInFlightStops 가 빠르게 거른다.
   const btn = document.querySelector('.mt-col .stop[data-host="'+CSS.escape(host)+'"]');
-  // disabled 는 *모든 await 이전에* 동기적으로 설정 — 그렇지 않으면 두 연속
-  // 클릭이 모두 비동기 guard 를 통과해 confirm dialog 가 두 번 뜬다.
-  if(btn) { if(btn.disabled) return; btn.disabled = true; }
+  if(btn) btn.disabled = true;
   try {
     if(!confirm('Stop host '+host+'?')) return;
     const res = await mtPostJSON('/stop', {host: host});
     if(!res.ok) alert('Stop 실패: '+(res.body.error || ('HTTP '+res.status)));
     // 다음 tick 이 곧 fire 되므로 명시 호출 불필요.
-  } finally { if(btn) btn.disabled = false; }
+  } finally {
+    mtInFlightStops.delete(host);
+    // btn 은 이미 replaceChildren 으로 사라졌을 수 있어 null check 후 re-enable.
+    if(btn && btn.isConnected) btn.disabled = false;
+  }
 }
 async function stopAll(){
   const btn = document.getElementById('mt_stop_all');
