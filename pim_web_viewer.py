@@ -1071,7 +1071,10 @@ async function stopAll(){
 async function startMulti(){
   const btn = document.getElementById('mt_start');
   if(btn.disabled) return;  // double-submit 가드 — 빠른 연속 클릭으로 spawn 중복 방지.
-  const hosts = document.getElementById('mt_hosts').value.split('\n')
+  // 주의: backslash-n 을 JS 문자열로 쓰려면 Python 삼중따옴표 안에서 backslash 를
+  // 두 번 써야 한다 (한 번이면 Python 이 newline 으로 치환해 JS unterminated string
+  // literal 이 되어 전체 script parse 실패).
+  const hosts = document.getElementById('mt_hosts').value.split('\\n')
     .map(s => s.trim()).filter(Boolean);
   const plan = document.getElementById('c_plan').value;
   const user = document.getElementById('c_user').value.trim();
