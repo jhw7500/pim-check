@@ -868,7 +868,9 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // 를 병렬 폴링해 컬럼 그리드를 그린다. hosts.length === 0 이면 기존
 // 단일-host 뷰가 그대로 보이고 (backward compat), 1개 이상이면 multi-grid 활성.
 // 서버 MAX_CONCURRENT_TARGETS 와 매칭 — UI 에서도 즉시 차단.
-const MT_MAX = 4;
+// 초기 fallback — /api/active 응답의 max_concurrent 로 매 tick 마다 업데이트되므로
+// 서버 MAX_CONCURRENT_TARGETS 가 바뀌어도 UI 가 silently diverge 하지 않는다.
+let MT_MAX = 4;
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
@@ -906,6 +908,9 @@ function mtCol(host, plan, st){
   const [bcls, btxt] = mtBadge(st);
   const b = document.createElement('span'); b.className='badge '+bcls; b.style.fontSize='10px'; b.style.padding='2px 8px'; b.textContent=btxt; hd.appendChild(b);
   const stop = document.createElement('button'); stop.className='stop'; stop.textContent='■ Stop';
+  // type="button" 명시 — 기본 type="submit" 인데 향후 columns 가 form 안으로 들어가도
+  // 의도치 않은 폼 제출이 발생하지 않도록 방어.
+  stop.type = 'button';
   stop.onclick = (ev) => { ev.stopPropagation(); stopHost(host); };
   hd.appendChild(stop);
   col.appendChild(hd);
@@ -948,10 +953,18 @@ function mtRunningHosts(hosts, states){
 }
 async function tickMulti(){
   if(mtTicking) return;  // 직전 tick in-flight → 중복 실행 방지 (race window 차단)
+  // 백그라운드 탭에서는 사용자가 보지 않는데 5 fetches/1.5s 로 무의미한 트래픽 누적.
+  // 5초 간격으로 늦춰 reload 시 즉시 fresh 상태로 회복은 유지.
+  if(document.hidden){ setTimeout(tickMulti, 5000); return; }
   mtTicking = true;
   try {
     const data = await fetchActive();
     if(data === null) return;  // network error → 이전 UI 유지, 다음 tick 재시도
+    // server cap 을 매 tick 마다 동기화 — MAX_CONCURRENT_TARGETS 가 서버에서 바뀌면
+    // 다음 tick 부터 UI 도 새 한도로 검증.
+    if(typeof data.max_concurrent === 'number' && data.max_concurrent > 0){
+      MT_MAX = data.max_concurrent;
+    }
     const hosts = data.hosts || [];
     const bar = document.getElementById('mtBar');
     const grid = document.getElementById('mtGrid');
@@ -1001,9 +1014,15 @@ async function stopAll(){
   if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
   const hosts = (data.hosts||[]).map(h => h.host);
   if(hosts.length === 0) return;
-  // 활성 host 만 필터 + MT_MAX cap — stale active.json 항목으로 인한 400 회피.
+  // 활성 host 만 필터 — server 가 spawn 시점에 MAX_CONCURRENT_TARGETS 를 강제하므로
+  // running.length 가 MT_MAX 를 넘는 일은 정상 흐름에 없음. 만약 초과한다면 server
+  // cap 변경 / stale active.json edge case 신호 — 잘라내 묵음 처리하기보다 console
+  // 경고로 노출 (silently skip 했다가 사용자가 "왜 일부만 멈춰?" 가 더 혼란스럽다).
   const states = await Promise.all(hosts.map(h => fetchHostState(h)));
-  const running = mtRunningHosts(hosts, states).slice(0, MT_MAX);
+  const running = mtRunningHosts(hosts, states);
+  if(running.length > MT_MAX){
+    console.warn('mt: running.length('+running.length+') > MT_MAX('+MT_MAX+') — server limit drift 의심');
+  }
   if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
   if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
   btn.disabled = true;
@@ -1091,8 +1110,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, control_status())
         elif self.path.startswith("/api/active"):
             # multi-target viewer 의 host enumerate 용 — 별도 라우트로 두어 기존
-            # /state (단일 stream) 와 명확히 분리한다.
-            self._send_json(200, active_hosts())
+            # /state (단일 stream) 와 명확히 분리한다. max_concurrent 도 함께 노출해
+            # 클라이언트가 JS 상수와 server cap 의 single source of truth 를 유지.
+            body = active_hosts()
+            body["max_concurrent"] = MAX_CONCURRENT_TARGETS
+            self._send_json(200, body)
         elif self.path.startswith("/api/events"):
             # per-host state — viewer 가 host 별 컬럼마다 폴링한다. 다른 JSON
             # endpoint 들과 일관성 있게 _send_json 사용 (Content-Type / Cache-Control

@@ -86,4 +86,6 @@ def test_api_active_route_returns_json(tmp_path, monkeypatch):
     h.path = "/api/active"
     h.do_GET()
     assert captured["code"] == 200
-    assert captured["body"] == {"hosts": [{"host": "h", "slug": "h"}]}
+    # hosts 는 그대로 + max_concurrent 가 server 의 cap 을 노출 (UI 가 동기화).
+    assert captured["body"]["hosts"] == [{"host": "h", "slug": "h"}]
+    assert captured["body"]["max_concurrent"] == v.MAX_CONCURRENT_TARGETS
