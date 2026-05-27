@@ -15,13 +15,15 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 
 import pytest
 
 # playwright 가 설치 안 됐으면 전체 모듈 skip — 다른 환경에서 dev 흐름 막지 않음.
-playwright = pytest.importorskip("playwright.sync_api")
+# 반환값 사용 안 함 — 단순 import 가능 여부만 확인하고 sync_playwright 는 아래에서 import.
+pytest.importorskip("playwright.sync_api")
 
 
 def _free_port() -> int:
@@ -41,11 +43,14 @@ def _viewer(port: int):
 
     실패 시 stderr 를 PIPE 로 캡처해 RuntimeError 에 포함 — CI 환경에서
     "viewer failed to start" 만 보고 디버깅 못 하는 silent fail 방지.
+
+    stdout=DEVNULL 로 둠 (PIPE 였다면 happy path 에서 drain 안 해 64KB pipe
+    buffer 채워지면 자식 write block + proc.wait deadlock). stderr 만 capture.
     """
     proc = subprocess.Popen(
         [sys.executable, "pim_web_viewer.py",
          "--host", "127.0.0.1", "--port", str(port)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
     try:
         # HTTP ready 까지 대기 (최대 5초). connect 가능해지면 즉시 진행.
@@ -54,9 +59,14 @@ def _viewer(port: int):
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{port}/control", timeout=0.5)
                 break
+            except urllib.error.HTTPError:
+                # 서버가 응답했다는 것 자체가 ready 신호 — 4xx/5xx 라도 break.
+                # HTTPError 는 OSError subclass 라 광범 catch 가 retry 로 가두는
+                # 함정을 피해야 한다 (/control 404 같은 응답도 ready 로 인정).
+                break
             except OSError:
                 # urllib.error.URLError / ConnectionRefusedError / 기타 network
-                # 일시 오류 모두 OSError 의 자손. 광범 catch 로 단일화.
+                # 일시 오류 (서버 not yet listening). retry.
                 time.sleep(0.1)
         else:
             # 기동 실패 — 자식 stderr 를 모아 디버깅 정보로 포함.

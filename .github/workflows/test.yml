@@ -67,6 +67,9 @@ jobs:
     # 브라우저에서 parse + 실행되는지 검증 (SyntaxError / ReferenceError 같은
     # silent JS regression 가드). pytest 단위 테스트 + ruff 가 못 잡는 영역.
     runs-on: ubuntu-latest
+    # 무한 hang 방지 — chromium download cold cache + playwright hang + viewer
+    # hang 등 누적해도 15분이면 충분. 정상 case 는 약 1~2분.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
