@@ -530,7 +530,8 @@ INDEX_HTML = """<!doctype html>
   .mt-bar .stopall { background:#7c1d1d; color:#fde68a; }
   .mt-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
              gap:12px; margin-bottom:14px; }
-  .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px; }
+  .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px;
+             cursor:pointer; /* 컬럼 자체가 click 으로 host 선택 — 시각 affordance */ }
   .mt-col.cur { border-color:#3b82f6; box-shadow:0 0 0 1px #3b82f6 inset; }
   .mt-col .hd { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .mt-col .hd .host { font-weight:700; color:#cdd6f4; font-size:13px; }
@@ -782,14 +783,62 @@ function renderDetail(d){
   });
 }
 
+// tick() 자체 in-flight 가드 — explicit tick() 호출이 3 곳(onclick + 2 auto-
+// deselect)으로 늘어 stale response overwriting 가능성 증가. tickInFlight +
+// pending flag 패턴: 이미 fetch 중이면 pending=true 만 set 하고 return, 직전
+// fetch 끝나면 do-while 로 coalesce 재실행해서 가장 최근 selection 으로 한 번 더
+// 폴링. (단순 return 만 하면 클릭 → silently drop → 1초까지 stale UI 가 됨)
+let tickInFlight = false;
+let tickPending = false;
+// MT_SELECTED_HOST 도 여기에 미리 선언 — tickOnce() 가 첫 statement 에서 sync 로
+// 읽기 때문에, 아래 단일-view setup 의 tick() 초기 호출 시점에 TDZ (let 은 hoist
+// 안 됨) 에 있으면 ReferenceError 가 try/catch 에 swallow 되어 첫 폴링이 silent
+// fail. tickInFlight/tickPending 과 한 곳에 같이 두어 결합 관계도 명확히.
+let MT_SELECTED_HOST = null;
 async function tick(){
+  if(tickInFlight){ tickPending = true; return; }
+  // tickInFlight = true 를 do-while 밖에서 동기적으로 set — 가드 check 와 같은
+  // sync block 안에 두어 미래 refactor 가 do-while 직전 await 를 끼워 넣어도
+  // race 가 발생하지 않도록 명료한 invariant 유지. try/finally 로 unexpected
+  // exception 발생해도 reset 보장 (안 그러면 tick 영구 dead).
+  tickInFlight = true;
+  try {
+    do {
+      tickPending = false;
+      await tickOnce();
+      // pending 이 set 됐다는 건 우리 fetch 도중 selection 이 바뀌었다는 신호 —
+      // 한 번 더 돌아 새 selection 으로 fresh fetch.
+    } while(tickPending);
+  } finally { tickInFlight = false; }
+}
+async function tickOnce(){
   try{
-    const r = await fetch('/state?_='+Date.now(), {cache:'no-store'});
+    // MT_SELECTED_HOST 가 set 이면 그 host 의 per-target state, 아니면 legacy
+    // /state (events/current.jsonl). 두 endpoint 모두 build_state 결과 형식
+    // 동일이라 아래 렌더링 코드는 한 path 만 유지.
+    // *반드시* tick() 진입 시점에 한 번 snapshot — await 도중 사용자가 다른 컬럼
+    // 클릭하거나 tickMulti 가 자동 해제하면 fetch 결과 (d) 와 host indicator 가
+    // 어긋난 데이터를 표시한다.
+    const selectedHost = MT_SELECTED_HOST;
+    const url = selectedHost
+      ? '/api/events?host='+encodeURIComponent(selectedHost)+'&_='+Date.now()
+      : '/state?_='+Date.now();
+    const r = await fetch(url, {cache:'no-store'});
+    // HTTP error (예: /api/events 의 400 invalid host) 가 와도 r.json() 은 valid
+    // body 를 받지만 d.exists 가 undefined 라 "스트림 없음" 으로 잘못 표시되어
+    // 사용자가 진짜 stream 없음과 request 실패를 구분 못 한다 — throw 해서 outer
+    // catch 가 foot 에 "연결 오류: ..." 로 명시.
+    if(!r.ok){ throw new Error('HTTP '+r.status); }
     const d = await r.json();
+    // fetch 도중 user 가 다른 컬럼 클릭 / auto-deselect 발생 시 selection 이 변경됨.
+    // stale 데이터로 detail 을 잠깐 그려 깜빡임을 만들지 않도록 즉시 bail —
+    // tick() 의 do-while 가 tickPending 을 통해 새 selection 으로 곧 재폴링한다.
+    if(selectedHost !== MT_SELECTED_HOST){ tickPending = true; return; }
     LAST = d;
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
-    document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?');
+    const hostTag = selectedHost ? '  [◉ '+selectedHost+']' : '';
+    document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?')+hostTag;
     // 런 경계 감지: run_id 가 바뀌면 새 런의 elapsed_s 로 baseline 을 리셋한다.
     // (안 그러면 아래 max 클램프가 이전 런의 높은 elapsed 를 그대로 끌고 와 새 런 시계가 오염됨)
     const runChanged = (d.run_id != null && d.run_id !== LAST_RUN);
@@ -815,6 +864,7 @@ async function tick(){
     renderDetail(d);
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
+  // tickInFlight / tickPending 은 caller(tick) 가 try/finally + do-while 로 관리.
 }
 // --- 제어판(plan 선택 → 시작/중지) ---------------------------------------
 let PLANS_KEY="";
@@ -877,6 +927,8 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // 초기 fallback — /api/active 응답의 max_concurrent 로 매 tick 마다 업데이트되므로
 // 서버 MAX_CONCURRENT_TARGETS 가 바뀌어도 UI 가 silently diverge 하지 않는다.
 let MT_MAX = 4;
+// MT_SELECTED_HOST 는 tick() 가 첫 호출에서 sync 로 읽기 때문에 위쪽 tick 정의
+// 직전으로 hoist 됐다. 여기서 다시 선언하면 SyntaxError (Identifier already declared).
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
@@ -911,7 +963,23 @@ function mtBadge(st){
 }
 function mtCol(host, plan, st){
   const col = document.createElement('div');
-  col.className = 'mt-col';
+  col.className = 'mt-col' + (host === MT_SELECTED_HOST ? ' cur' : '');
+  // data-host 로 즉시 lookup 가능 — text 비교보다 robust (markup 변경에 강건).
+  col.dataset.host = host;
+  // 컬럼 클릭 → legacy single-view 가 이 host 로 전환. 같은 컬럼 다시 클릭하면 해제
+  // (null = events/current.jsonl, last-started host).
+  col.onclick = () => {
+    MT_SELECTED_HOST = (MT_SELECTED_HOST === host) ? null : host;
+    // 즉시 tick 호출 — 1초 폴링 다음 cycle 까지 기다리지 않고 전환 즉시 반영.
+    // SEL / OPEN 도 초기화 — 이전 host 의 드릴다운 상태가 새 host case 이름과
+    // 다를 수 있으므로 깨끗한 상태로 시작.
+    SEL = null; OPEN.clear();
+    tick();
+    // 컬럼들 시각 갱신 — data-host 비교 (host 변경 / markup refactor 에 robust).
+    document.querySelectorAll('.mt-col').forEach(c => {
+      c.classList.toggle('cur', c.dataset.host === MT_SELECTED_HOST);
+    });
+  };
   const hd = document.createElement('div'); hd.className='hd';
   const h = document.createElement('span'); h.className='host'; h.textContent=host; hd.appendChild(h);
   const p = document.createElement('span'); p.className='plan'; p.textContent='plan='+(plan||'?'); hd.appendChild(p);
@@ -987,7 +1055,20 @@ async function tickMulti(){
     const wrap = document.getElementById('wrap');
     if(hosts.length === 0){
       bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
+      // 활성 host 모두 사라지면 selection 도 자동 해제. 이전에 selection 이
+      // 있었다면 즉시 tick() 호출 — 1초 폴링 cycle 까지 stale detail 이 남는 lag
+      // 회피 (Gemini/Claude 공통 권고).
+      if(MT_SELECTED_HOST !== null){
+        MT_SELECTED_HOST = null;
+        tick();
+      }
       return;
+    }
+    // 선택된 host 가 active.json 에서 사라졌으면 자동 해제 (run 종료/stop 후).
+    // 즉시 tick() 으로 legacy /state 갱신 — 1초 lag 회피.
+    if(MT_SELECTED_HOST && !hosts.some(h => h.host === MT_SELECTED_HOST)){
+      MT_SELECTED_HOST = null;
+      tick();
     }
     // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
     wrap.classList.add('mt');
