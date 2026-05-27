@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -309,11 +310,22 @@ def stop_run(params: dict | None = None) -> tuple[int, dict]:
         for h in hosts:
             if not run_control.is_valid_host(h):
                 return 400, {"ok": False, "error": f"invalid host: {h!r}"}
-        results = []
-        for h in hosts:
-            per_dir = run_stream.target_events_dir(base, h)
-            r = _stop_in_events_dir(per_dir)
-            results.append({"host": h, **r})
+        # 병렬 stop — 순차 실행 시 host 마다 3s 까지 SIGTERM 대기가 누적돼 4 host
+        # 비응답 시 응답이 최대 12s 까지 지연된다 (Gemini/claude 리뷰 공통 권고).
+        # 각 stop 은 독립이라 thread pool 로 안전하게 병렬화. max 응답 시간 ≈ 3s.
+        results: list[dict] = []
+        if hosts:
+            with ThreadPoolExecutor(max_workers=len(hosts)) as ex:
+                stop_futures = {
+                    ex.submit(_stop_in_events_dir,
+                              run_stream.target_events_dir(base, h)): h
+                    for h in hosts
+                }
+                # 결과는 입력 host 순서를 보존해 caller 가 매핑하기 쉽게.
+                future_by_host = {h: fut for fut, h in stop_futures.items()}
+                for h in hosts:
+                    r = future_by_host[h].result()
+                    results.append({"host": h, **r})
         return 200, {"ok": True, "stopped": results}
 
     # (2) per-host stop
@@ -818,9 +830,11 @@ class _Handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlsplit(self.path).query)
             hosts = qs.get("host") or []
             if not hosts:
+                # 다른 early-exit 분기와 동일하게 명시적 return — 향후 분기 추가 시
+                # 실수로 두 번 응답하는 것 방지 (defensive control flow).
                 self._send_json(400, {"ok": False, "error": "host query 가 필요합니다"})
-            else:
-                self._send_json(200, host_events_state(hosts[0]))
+                return
+            self._send_json(200, host_events_state(hosts[0]))
         elif self.path.startswith("/plans"):
             self._send_json(200, _list_plans())
         elif self.path == "/" or self.path.startswith("/?"):
@@ -833,15 +847,22 @@ class _Handler(BaseHTTPRequestHandler):
         route = self.path.rstrip("/")
         if route == "/start":
             params = self._read_json()
-            if params is None:
-                self._send_json(400, {"ok": False, "error": "잘못된 요청 본문"})
+            if params is None or not isinstance(params, dict):
+                self._send_json(400, {"ok": False, "error": "잘못된 요청 본문 (dict 필요)"})
                 return
             code, body = start_run(params)
             self._send_json(code, body)
         elif route == "/stop":
             # body 가 있으면 multi-target stop (host=... 또는 targets=[...]).
-            # 빈 body 면 legacy 단일 런 종료 (호환 유지).
+            # body 없거나 빈 dict 면 legacy 단일 런 종료 (호환 유지).
+            # /start 와 일관성 — list/원시값 등 dict 가 아닌 body 는 400.
             params = self._read_json()
+            if params is None:
+                self._send_json(400, {"ok": False, "error": "잘못된 요청 본문"})
+                return
+            if params and not isinstance(params, dict):
+                self._send_json(400, {"ok": False, "error": "요청 본문은 dict 여야 합니다"})
+                return
             code, body = stop_run(params if params else None)
             self._send_json(code, body)
         else:

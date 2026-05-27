@@ -271,6 +271,55 @@ def test_stop_run_legacy_no_args_works(tmp_path, monkeypatch):
     assert code == 200 and body["ok"] and body["stopped"] is False
 
 
+def test_stop_run_rejects_non_dict_body_at_http_layer(tmp_path, monkeypatch):
+    """/stop POST 가 dict 가 아닌 JSON body (list, 원시값) 를 400 으로 거부 (claude r2 bug).
+
+    HTTP layer 검증 — do_POST 가 stop_run 으로 전달하기 전에 type guard.
+    """
+    _patch(monkeypatch, tmp_path)
+    captured = {}
+
+    class _FakeHandler(v._Handler):
+        def __init__(self_inner):
+            pass
+
+        def _send_json(self_inner, code, body):
+            captured["code"] = code
+            captured["body"] = body
+
+        def _read_json(self_inner):
+            return [1, 2, 3]  # dict 가 아닌 valid JSON
+
+    h = _FakeHandler()
+    h.path = "/stop"
+    h.do_POST()
+    assert captured["code"] == 400 and not captured["body"]["ok"]
+
+
+def test_stop_run_bulk_runs_in_parallel(tmp_path, monkeypatch):
+    """bulk stop 이 host 별로 순차가 아닌 병렬 실행되는지 — Gemini/claude r2 권고.
+
+    각 host stop 이 0.5s 씩 걸리도록 mock 하고, 4 host bulk stop 의 전체 시간이
+    sequential 시 ~2s 가 아니라 병렬이면 ~0.5s 이내에 끝나야 한다.
+    """
+    _patch(monkeypatch, tmp_path)
+    import time as _t
+
+    def slow_stop(events_dir):
+        _t.sleep(0.5)
+        return {"stopped": True, "pid": 1}
+
+    monkeypatch.setattr(v, "_stop_in_events_dir", slow_stop)
+    start = _t.monotonic()
+    code, body = v.stop_run({"targets": ["host-a", "host-b", "host-c", "host-d"]})
+    elapsed = _t.monotonic() - start
+    assert code == 200 and body["ok"]
+    # 순차면 ~2s, 병렬이면 ~0.5s. 마진 두고 1.0s 미만 요구.
+    assert elapsed < 1.0, f"bulk stop took {elapsed:.2f}s (sequential 의심)"
+    # 결과는 입력 순서 보존.
+    assert [r["host"] for r in body["stopped"]] == ["host-a", "host-b", "host-c", "host-d"]
+
+
 def test_legacy_single_host_path_unchanged(tmp_path, monkeypatch):
     # backward compat — targets 없으면 기존 single-host 동작 그대로.
     _patch(monkeypatch, tmp_path)

@@ -1,7 +1,7 @@
 """tests/test_web_events_per_host.py — pim_web_viewer.host_events_state 검증.
 
-multi-target viewer 가 /api/events?host=&lt;host&gt; 를 폴링해 host 별 state 를
-받아간다. events/by-target/&lt;slug&gt;/current.jsonl 경로로 해석해 기존
+multi-target viewer 가 /api/events?host=<host> 를 폴링해 host 별 state 를
+받아간다. events/by-target/<slug>/current.jsonl 경로로 해석해 기존
 build_state 를 재사용한다.
 """
 from __future__ import annotations
