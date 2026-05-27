@@ -19,6 +19,7 @@ import re
 _HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,253}$")
 # 유저: 일반 유닉스 계정 문자.
 _USER_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
+_CONTROL_FILE = ".control.json"
 
 
 def is_valid_host(host) -> bool:
@@ -29,7 +30,6 @@ def is_valid_host(host) -> bool:
     안전 경계를 갖는다. directory traversal 등 path 주입을 1차 차단한다.
     """
     return isinstance(host, str) and bool(_HOST_RE.match(host))
-_CONTROL_FILE = ".control.json"
 
 
 def validate_start_request(params: dict, available_plans: list[str]) -> tuple[bool, str | None, dict]:

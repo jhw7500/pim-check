@@ -120,31 +120,18 @@ def start_run(params: dict) -> tuple[int, dict]:
         if not ok:
             return 400, {"ok": False, "error": err}
         try:
-            os.makedirs(events_dir, exist_ok=True)
-            # 비밀번호는 env(PIM_PASSWORD)로만 전달 — argv 에 두면 ps/proc 에 노출된다.
-            # with 블록: Popen 이 생성자에서 fd 를 자식으로 dup 하므로 spawn 직후 부모
-            # 핸들을 닫아도 자식은 계속 기록한다(반복 /start 시 부모 FD 누수 방지).
-            child_env = {**os.environ, "PIM_PASSWORD": clean["password"]}
-            with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
-                argv = [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
-                        "--plan", clean["plan"], "--host", clean["host"],
-                        "--user", clean["user"],
-                        "--json", "--html", "--log"]
-                if params.get("until_pass"):
-                    argv.append("--until-pass")
-                proc = subprocess.Popen(
-                    argv,
-                    cwd=REPO_DIR, env=child_env, stdout=logf,
-                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
+            # spawn 자체는 single source of truth (_spawn_one_target) 에 위임.
+            # 비밀번호 env / argv 조립 / start_new_session 처리가 single·multi 양쪽
+            # 동일하게 유지된다 — 이후 인자 추가 시 한 곳만 수정하면 된다
+            # (claude[bot] 리뷰: 두 경로 분기로 가지치기 회귀 방지).
+            pid = _spawn_one_target(events_dir, clean, bool(params.get("until_pass")))
         except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
             return 500, {"ok": False, "error": f"spawn 실패: {e}"}
         run_control.write_control(events_dir, {
-            "pid": proc.pid, "plan": clean["plan"], "host": clean["host"],
+            "pid": pid, "plan": clean["plan"], "host": clean["host"],
             "started_at": time.time(),
         })
-    return 200, {"ok": True, "pid": proc.pid, "plan": clean["plan"], "host": clean["host"]}
+    return 200, {"ok": True, "pid": pid, "plan": clean["plan"], "host": clean["host"]}
 
 
 def _spawn_one_target(events_dir: str, clean: dict, until_pass: bool) -> int:
@@ -196,27 +183,40 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
     for i, t in enumerate(targets):
         if not isinstance(t, dict):
             return 400, {"ok": False, "error": f"target[{i}] 형식 오류"}
+        # `.get(k) or ""` 패턴 — JSON `{"host": null}` 같은 명시 null 도 빈 문자열로
+        # 정규화. `t.get("host", "")` 만 쓰면 null 이 그대로 통과해 ``str(None)='None'``
+        # 이 호스트 정규식을 통과하는 잘못된 검증을 유발한다 (Gemini 리뷰 M1).
         req = {
             "plan": plan_name,
-            "host": t.get("host", ""),
-            "user": t.get("user", "root"),
-            "password": t.get("password", ""),
+            "host": t.get("host") or "",
+            "user": t.get("user") or "root",
+            "password": t.get("password") or "",
         }
         ok, err, clean = run_control.validate_start_request(req, plans)
         if not ok:
             return 400, {"ok": False, "error": f"target[{i}] {t.get('host','?')}: {err}"}
         cleaned.append(clean)
 
-    # 같은 요청 안에서 host 중복은 명백한 오류 (같은 host 에 두 번 spawn).
-    seen_hosts = [c["host"] for c in cleaned]
-    if len(set(seen_hosts)) != len(seen_hosts):
-        return 400, {"ok": False, "error": f"targets 중복 host: {seen_hosts}"}
+    # 같은 요청 안에서 host 중복은 명백한 오류 — slug 기준으로 비교한다.
+    # 이유: per-target 디렉터리는 host_slug(host) 로 만들어지므로, raw 호스트가
+    # 달라도 같은 slug 로 collapse 되면 (예: "a.b" 와 "a-b", "Host-A" 와 "host-a")
+    # 같은 events/by-target/<slug>/ 를 두 자식이 동시에 쓰게 된다 — control 파일과
+    # current.jsonl 경합. Codex/Gemini 리뷰 합동 권고.
+    seen_slugs = [run_stream.host_slug(c["host"]) for c in cleaned]
+    if len(set(seen_slugs)) != len(seen_slugs):
+        raw = [c["host"] for c in cleaned]
+        return 400, {
+            "ok": False,
+            "error": f"targets 의 host slug 충돌 (대소문자/'.'-'-' 정규화 결과 동일): {raw}",
+        }
 
     # 2단계: 락 안에서 per-host conflict 점검 → 모두 통과해야 spawn (all-or-nothing).
     with _START_LOCK:
+        # active_pid 는 read 만 — makedirs 는 spawn 시점(_spawn_one_target)이 책임진다.
+        # 여기서 미리 만들어도 무해하지만, conflict 점검 path 에는 sentinel control
+        # 파일도 없으므로 굳이 만들 필요 없음(빈 디렉터리만 생긴다).
         for clean in cleaned:
             per_dir = run_stream.target_events_dir(base_events_dir, clean["host"])
-            os.makedirs(per_dir, exist_ok=True)
             if run_control.active_pid(per_dir) is not None:
                 return 409, {
                     "ok": False,
@@ -230,17 +230,32 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
             for clean in cleaned:
                 per_dir = run_stream.target_events_dir(base_events_dir, clean["host"])
                 pid = _spawn_one_target(per_dir, clean, until_pass)
+                # *반드시* write_control 보다 먼저 started 에 추가한다.
+                # write_control 이 디스크 풀/권한 등으로 raise 하면 그 사이 자식은
+                # 살아있는데 started 에 없어 cleanup 이 종료시키지 못한다 — 추적 안
+                # 되는 좀비 producer 가 된다 (Gemini 리뷰 HIGH).
+                started.append({
+                    "host": clean["host"], "plan": clean["plan"], "pid": pid,
+                })
                 run_control.write_control(per_dir, {
                     "pid": pid, "plan": clean["plan"], "host": clean["host"],
                     "started_at": time.time(),
                 })
-                started.append({
-                    "host": clean["host"], "plan": clean["plan"], "pid": pid,
-                })
         except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
-            # 이미 spawn 한 자식 정리는 best-effort (signal SIGTERM, control 파일 삭제).
+            # 이미 spawn 한 자식 정리: stop_run 과 동일한 SIGTERM → 짧은 대기 →
+            # SIGKILL fallback 패턴. SIGTERM 만 보내고 끝나면 stuck 한 자식이
+            # 'control 파일은 사라졌지만 살아있는 좀비' 가 될 수 있어 위험하다.
+            # waitpid 는 쓰지 않는다 — 우리는 요청 핸들러 스레드 안이라 blocking
+            # wait 는 서버 응답을 지연시킨다. 대신 pid_alive 폴링(최대 3초).
             for s in started:
                 _signal_pid(s["pid"], signal.SIGTERM)
+            for _ in range(30):
+                if not any(run_control.pid_alive(s["pid"]) for s in started):
+                    break
+                time.sleep(0.1)
+            for s in started:
+                if run_control.pid_alive(s["pid"]):
+                    _signal_pid(s["pid"], signal.SIGKILL)
                 per_dir = run_stream.target_events_dir(base_events_dir, s["host"])
                 run_control.clear_control(per_dir)
             return 500, {"ok": False, "error": f"spawn 실패: {e}",
@@ -249,14 +264,18 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
     return 200, {"ok": True, "started": started}
 
 
-def stop_run() -> tuple[int, dict]:
-    """관리 중인 런 종료(SIGTERM→SIGKILL). (http_status, body) 반환."""
-    events_dir = _producer_events_dir()
+def _stop_in_events_dir(events_dir: str) -> dict:
+    """주어진 events_dir scope 의 관리 런을 SIGTERM→3s→SIGKILL 패턴으로 종료.
+
+    반환: ``{"stopped": bool, "pid": int|None, "note": str|None}``. legacy 단일
+    런(events_dir=root)과 per-host 런(events_dir=by-target/<slug>/) 양쪽이 같은
+    종료 로직을 공유 — control 파일 위치만 다르고 흐름은 동일하므로 한 helper.
+    """
     info = run_control.read_control(events_dir)
     pid = info.get("pid") if info else None
     if not isinstance(pid, int) or not run_control.pid_alive(pid):
         run_control.clear_control(events_dir)
-        return 200, {"ok": True, "stopped": False, "note": "관리 중인 런 없음"}
+        return {"stopped": False, "pid": None, "note": "관리 중인 런 없음"}
     _signal_pid(pid, signal.SIGTERM)
     for _ in range(30):
         if not run_control.pid_alive(pid):
@@ -265,7 +284,50 @@ def stop_run() -> tuple[int, dict]:
     if run_control.pid_alive(pid):
         _signal_pid(pid, signal.SIGKILL)
     run_control.clear_control(events_dir)
-    return 200, {"ok": True, "stopped": True, "pid": pid}
+    return {"stopped": True, "pid": pid}
+
+
+def stop_run(params: dict | None = None) -> tuple[int, dict]:
+    """관리 중인 런 종료. (http_status, body) 반환.
+
+    body 형태 세 가지를 받는다 (multi-target 지원, Codex P2):
+      1) **body 없음 / 빈 dict**: legacy 단일 런 (events/ 직속 control). 기존 동작.
+      2) **{host: "..."}**: 해당 host 의 per-target control 만 종료.
+         host 가 유효하지 않으면 400.
+      3) **{targets: ["...", "..."]}**: 다수 host 일괄 종료. 각 host 별로 시도하고
+         host 별 결과를 stopped 배열에 모아 반환 (한 host 가 없어도 다른 host 는 진행).
+    """
+    p = params or {}
+    base = _producer_events_dir()
+
+    # (3) 다수 host bulk stop
+    if isinstance(p.get("targets"), list):
+        hosts = p["targets"]
+        if len(hosts) > MAX_CONCURRENT_TARGETS:
+            return 400, {"ok": False,
+                          "error": f"한 번에 종료 가능한 host 수 상한 초과 ({len(hosts)} > {MAX_CONCURRENT_TARGETS})"}
+        for h in hosts:
+            if not run_control.is_valid_host(h):
+                return 400, {"ok": False, "error": f"invalid host: {h!r}"}
+        results = []
+        for h in hosts:
+            per_dir = run_stream.target_events_dir(base, h)
+            r = _stop_in_events_dir(per_dir)
+            results.append({"host": h, **r})
+        return 200, {"ok": True, "stopped": results}
+
+    # (2) per-host stop
+    if p.get("host") is not None:
+        host = p["host"]
+        if not run_control.is_valid_host(host):
+            return 400, {"ok": False, "error": "invalid host"}
+        per_dir = run_stream.target_events_dir(base, host)
+        r = _stop_in_events_dir(per_dir)
+        return 200, {"ok": True, **r, "host": host}
+
+    # (1) legacy 단일 런
+    r = _stop_in_events_dir(base)
+    return 200, {"ok": True, **r}
 
 
 def _signal_pid(pid: int, sig: int) -> None:
@@ -750,16 +812,15 @@ class _Handler(BaseHTTPRequestHandler):
             # /state (단일 stream) 와 명확히 분리한다.
             self._send_json(200, active_hosts())
         elif self.path.startswith("/api/events"):
-            # per-host state — viewer 가 host 별 컬럼마다 폴링한다.
+            # per-host state — viewer 가 host 별 컬럼마다 폴링한다. 다른 JSON
+            # endpoint 들과 일관성 있게 _send_json 사용 (Content-Type / Cache-Control
+            # / Content-Length 처리를 단일 헬퍼에 위임).
             qs = parse_qs(urlsplit(self.path).query)
             hosts = qs.get("host") or []
             if not hosts:
                 self._send_json(400, {"ok": False, "error": "host query 가 필요합니다"})
             else:
-                self._send(
-                    json.dumps(host_events_state(hosts[0])).encode("utf-8"),
-                    "application/json; charset=utf-8",
-                )
+                self._send_json(200, host_events_state(hosts[0]))
         elif self.path.startswith("/plans"):
             self._send_json(200, _list_plans())
         elif self.path == "/" or self.path.startswith("/?"):
@@ -778,7 +839,10 @@ class _Handler(BaseHTTPRequestHandler):
             code, body = start_run(params)
             self._send_json(code, body)
         elif route == "/stop":
-            code, body = stop_run()
+            # body 가 있으면 multi-target stop (host=... 또는 targets=[...]).
+            # 빈 body 면 legacy 단일 런 종료 (호환 유지).
+            params = self._read_json()
+            code, body = stop_run(params if params else None)
             self._send_json(code, body)
         else:
             self.send_response(404)
