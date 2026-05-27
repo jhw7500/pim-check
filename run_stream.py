@@ -158,7 +158,13 @@ def register_active_host(
             if lock_f is not None:
                 _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
             data = read_active_hosts(events_dir)
-            hosts = [h for h in data.get("hosts", []) if h.get("host") != host]
+            # malformed active.json (e.g. manually edited 후 non-dict 가 섞임) 에서도
+            # AttributeError 로 죽지 않도록 dict 만 필터. 비정상 항목은 폐기 — register
+            # 가 viewer 인프라를 멈추게 둘 가치가 없다.
+            hosts = [
+                h for h in data.get("hosts", [])
+                if isinstance(h, dict) and h.get("host") != host
+            ]
             hosts.append(entry)
             _atomic_write_json(
                 os.path.join(events_dir, ACTIVE_HOSTS_NAME), {"hosts": hosts},

@@ -171,6 +171,36 @@ class TestStartRunFileWithHost(unittest.TestCase):
         self.assertIn("hosts", data)
 
 
+@unittest.skipUnless(hasattr(os, "symlink"), "symlinks unsupported on this platform")
+class TestActiveHostsMalformedSchema(unittest.TestCase):
+    """active.json 가 손상/오염된 상태에서도 register 가 죽지 않아야 한다.
+
+    PR #38 봇 리뷰(Gemini 3차) 지적: hosts 리스트에 non-dict 항목(예: 수동 편집,
+    이전 버전 fragment, partial write 등)이 섞이면 ``h.get("host")`` 에서
+    AttributeError 발생. viewer 인프라 전체가 멈출 리스크라 방어 코드 추가.
+    """
+
+    def test_register_skips_non_dict_entries(self):
+        base = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+        # 비정상: 문자열이 hosts 에 끼어 있음.
+        with open(os.path.join(events_dir, ACTIVE_HOSTS_NAME), "w") as f:
+            json.dump(
+                {"hosts": ["legacy-string-entry", {"host": "valid-h", "slug": "valid-h"}]},
+                f,
+            )
+        # AttributeError 없이 새 host 가 정상 등록되고, 비정상 항목은 사라져야 한다.
+        from run_stream import register_active_host
+        register_active_host(events_dir, "new-h", "smoke", "new-h", "run.jsonl")
+        active = read_active_hosts(events_dir)
+        hosts = {h["host"] for h in active["hosts"]}
+        self.assertIn("new-h", hosts)
+        self.assertIn("valid-h", hosts)
+        self.assertNotIn("legacy-string-entry", hosts)
+
+
 @unittest.skipUnless(hasattr(os, "fork"), "fork unsupported on this platform")
 class TestActiveHostsCrossProcessRace(unittest.TestCase):
     """active.json 갱신이 cross-process 동시 호출에서도 lost-update 가 없어야 한다.
