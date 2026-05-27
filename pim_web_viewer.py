@@ -530,7 +530,8 @@ INDEX_HTML = """<!doctype html>
   .mt-bar .stopall { background:#7c1d1d; color:#fde68a; }
   .mt-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
              gap:12px; margin-bottom:14px; }
-  .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px; }
+  .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px;
+             cursor:pointer; /* 컬럼 자체가 click 으로 host 선택 — 시각 affordance */ }
   .mt-col.cur { border-color:#3b82f6; box-shadow:0 0 0 1px #3b82f6 inset; }
   .mt-col .hd { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .mt-col .hd .host { font-weight:700; color:#cdd6f4; font-size:13px; }
@@ -782,20 +783,29 @@ function renderDetail(d){
   });
 }
 
+let mtTicking2 = false;  // tick() 자체 in-flight 가드 — explicit tick() 호출이
+                          // 3 곳(onclick + 2 auto-deselect)으로 늘어 stale response
+                          // overwriting 가능성 증가. tickMulti.mtTicking 와 동일 패턴.
 async function tick(){
+  if(mtTicking2) return;
+  mtTicking2 = true;
   try{
     // MT_SELECTED_HOST 가 set 이면 그 host 의 per-target state, 아니면 legacy
     // /state (events/current.jsonl). 두 endpoint 모두 build_state 결과 형식
     // 동일이라 아래 렌더링 코드는 한 path 만 유지.
-    const url = MT_SELECTED_HOST
-      ? '/api/events?host='+encodeURIComponent(MT_SELECTED_HOST)+'&_='+Date.now()
+    // *반드시* tick() 진입 시점에 한 번 snapshot — await 도중 사용자가 다른 컬럼
+    // 클릭하거나 tickMulti 가 자동 해제하면 fetch 결과 (d) 와 host indicator 가
+    // 어긋난 데이터를 표시한다.
+    const selectedHost = MT_SELECTED_HOST;
+    const url = selectedHost
+      ? '/api/events?host='+encodeURIComponent(selectedHost)+'&_='+Date.now()
       : '/state?_='+Date.now();
     const r = await fetch(url, {cache:'no-store'});
     const d = await r.json();
     LAST = d;
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
-    const hostTag = MT_SELECTED_HOST ? '  [◉ '+MT_SELECTED_HOST+']' : '';
+    const hostTag = selectedHost ? '  [◉ '+selectedHost+']' : '';
     document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?')+hostTag;
     // 런 경계 감지: run_id 가 바뀌면 새 런의 elapsed_s 로 baseline 을 리셋한다.
     // (안 그러면 아래 max 클램프가 이전 런의 높은 elapsed 를 그대로 끌고 와 새 런 시계가 오염됨)
@@ -822,6 +832,7 @@ async function tick(){
     renderDetail(d);
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
+  finally { mtTicking2 = false; }
 }
 // --- 제어판(plan 선택 → 시작/중지) ---------------------------------------
 let PLANS_KEY="";
@@ -922,6 +933,8 @@ function mtBadge(st){
 function mtCol(host, plan, st){
   const col = document.createElement('div');
   col.className = 'mt-col' + (host === MT_SELECTED_HOST ? ' cur' : '');
+  // data-host 로 즉시 lookup 가능 — text 비교보다 robust (markup 변경에 강건).
+  col.dataset.host = host;
   // 컬럼 클릭 → legacy single-view 가 이 host 로 전환. 같은 컬럼 다시 클릭하면 해제
   // (null = events/current.jsonl, last-started host).
   col.onclick = () => {
@@ -931,9 +944,9 @@ function mtCol(host, plan, st){
     // 다를 수 있으므로 깨끗한 상태로 시작.
     SEL = null; OPEN.clear();
     tick();
-    // 컬럼들 시각 갱신 — selected/unselected border 다음 tickMulti 까지 기다리지 않음.
+    // 컬럼들 시각 갱신 — data-host 비교 (host 변경 / markup refactor 에 robust).
     document.querySelectorAll('.mt-col').forEach(c => {
-      c.classList.toggle('cur', c.querySelector('.host') && c.querySelector('.host').textContent === MT_SELECTED_HOST);
+      c.classList.toggle('cur', c.dataset.host === MT_SELECTED_HOST);
     });
   };
   const hd = document.createElement('div'); hd.className='hd';
