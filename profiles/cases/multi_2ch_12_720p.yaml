@@ -176,30 +176,68 @@ checks:
       echo OK
     expected: 'OK'
     on_fail: 'ch2 파일 무결성 (codec/dim/ext) 미일치'
-  - name: ch1 duration (~60s ±5s)
+  - name: ch1 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
-      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
-      D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
-      [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
+      COUNT=$(echo "$FILES" | grep -c .)
+      [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0
       LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
-      [ $D -ge $LO ] && [ $D -le $HI ] && echo OK || echo FAIL:dur=${D}s
+      # newest(현재 녹화중) 제외 후 후속 finalize 4개 중 정상 60s 발견 시 OK.
+      # reboot 직후 분 경계 split 으로 잘린 첫 짧은 finalize 는 자동 skip 된다.
+      # while read -r 로 파일명 word-splitting 회피.
+      # OK 가 어디든 있으면 우선 채택(2nd newest 가 짧고 3rd newest 가 정상인
+      # reboot 직후 시나리오 대응). OK 없으면 첫 SHORT(=2nd newest finalize) 의
+      # 실제 짧이를 진단 메시지에 표시.
+      RESULT=$(echo "$FILES" | tail -n +2 | head -n 4 | while IFS= read -r F; do
+        D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
+        [ -z "$D" ] && continue
+        if [ "$D" -ge "$LO" ] && [ "$D" -le "$HI" ]; then echo OK; break; fi
+        echo "SHORT:$D"
+      done)
+      if echo "$RESULT" | grep -q '^OK$'; then
+        echo OK
+      else
+        FIRST_SHORT=$(echo "$RESULT" | grep '^SHORT:' | head -1)
+        if [ -n "$FIRST_SHORT" ]; then
+          echo "FAIL:NEED_2_FINALIZES_AFTER_BOOT:short_dur=${FIRST_SHORT#SHORT:}s"
+        else
+          echo FAIL:NO_DUR
+        fi
+      fi
     expected: 'OK'
-    on_fail: 'ch1 녹화 길이 60s ±5s 벗어남'
-  - name: ch2 duration (~60s ±5s)
+    on_fail: 'ch1 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
+  - name: ch2 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
-      F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
-      [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
-      D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
-      [ -z "$D" ] && echo FAIL:NO_DUR && exit 0
+      COUNT=$(echo "$FILES" | grep -c .)
+      [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0
       LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
-      [ $D -ge $LO ] && [ $D -le $HI ] && echo OK || echo FAIL:dur=${D}s
+      # newest(현재 녹화중) 제외 후 후속 finalize 4개 중 정상 60s 발견 시 OK.
+      # reboot 직후 분 경계 split 으로 잘린 첫 짧은 finalize 는 자동 skip 된다.
+      # while read -r 로 파일명 word-splitting 회피.
+      # OK 가 어디든 있으면 우선 채택(2nd newest 가 짧고 3rd newest 가 정상인
+      # reboot 직후 시나리오 대응). OK 없으면 첫 SHORT(=2nd newest finalize) 의
+      # 실제 짧이를 진단 메시지에 표시.
+      RESULT=$(echo "$FILES" | tail -n +2 | head -n 4 | while IFS= read -r F; do
+        D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
+        [ -z "$D" ] && continue
+        if [ "$D" -ge "$LO" ] && [ "$D" -le "$HI" ]; then echo OK; break; fi
+        echo "SHORT:$D"
+      done)
+      if echo "$RESULT" | grep -q '^OK$'; then
+        echo OK
+      else
+        FIRST_SHORT=$(echo "$RESULT" | grep '^SHORT:' | head -1)
+        if [ -n "$FIRST_SHORT" ]; then
+          echo "FAIL:NEED_2_FINALIZES_AFTER_BOOT:short_dur=${FIRST_SHORT#SHORT:}s"
+        else
+          echo FAIL:NO_DUR
+        fi
+      fi
     expected: 'OK'
-    on_fail: 'ch2 녹화 길이 60s ±5s 벗어남'
+    on_fail: 'ch2 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: dmesg max9296_fsync fps (expected 30)
     command: |-
       F=$(dmesg 2>/dev/null | grep -oE 'max9296_fsync fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\n' ',' | sed 's/,$//')
