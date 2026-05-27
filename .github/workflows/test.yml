@@ -61,3 +61,32 @@ jobs:
 
       - name: List generated cases
         run: python pim_check.py --list --include-generated
+
+  js-smoke:
+    # tests/test_viewer_js_smoke.py — pim_web_viewer 의 임베디드 JS 가 실제
+    # 브라우저에서 parse + 실행되는지 검증 (SyntaxError / ReferenceError 같은
+    # silent JS regression 가드). pytest 단위 테스트 + ruff 가 못 잡는 영역.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          pip install pyyaml pytest playwright
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}
+
+      - name: Install chromium
+        run: playwright install --with-deps chromium
+
+      - name: Run JS smoke test
+        run: python -m pytest tests/test_viewer_js_smoke.py -v
