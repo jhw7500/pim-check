@@ -862,28 +862,35 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // /api/active 로 host 목록을 가져온 뒤 각 host 의 /api/events?host=<>
 // 를 병렬 폴링해 컬럼 그리드를 그린다. hosts.length === 0 이면 기존
 // 단일-host 뷰가 그대로 보이고 (backward compat), 1개 이상이면 multi-grid 활성.
-let MT_SEL = null;  // 선택된 host (드릴다운; 향후 확장)
+// 서버 MAX_CONCURRENT_TARGETS 와 매칭 — UI 에서도 즉시 차단.
+const MT_MAX = 4;
 let MT_HOSTS_KEY = '';
+// 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
+// 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
+let mtTicking = false;
+// network error 시 null 로 구분 (빈 hosts {} 와 다름) — caller 가 UI 를 깜빡이지
+// 않게 이전 상태 유지.
 async function fetchActive(){
   try { const r = await fetch('/api/active?_='+Date.now(), {cache:'no-store'}); return await r.json(); }
-  catch(e){ return {hosts: []}; }
+  catch(e){ return null; }
 }
 async function fetchHostState(host){
   try {
     const r = await fetch('/api/events?host='+encodeURIComponent(host)+'&_='+Date.now(), {cache:'no-store'});
     return await r.json();
-  } catch(e){ return {exists: false}; }
+  } catch(e){ return null; }
 }
 function mtFmtClock(s){ s=Math.max(0,Math.floor(s||0)); const m=Math.floor(s/60); return m?(m+"m "+(s%60)+"s"):(s+"s"); }
 function mtBadge(st){
-  if(!st.exists) return ['b-lost','대기'];
+  // st 가 null (network error) 이거나 stream 없으면 대기 표시 — guard 로 TypeError 방지.
+  if(!st || !st.exists) return ['b-lost','대기'];
   if(st.producer_lost) return ['b-lost','Producer lost'];
   if(st.run_ended) return ['b-done','DONE'];
   return ['b-run','RUNNING'];
 }
-function mtCol(host, slug, plan, st){
+function mtCol(host, plan, st){
   const col = document.createElement('div');
-  col.className = 'mt-col' + (host===MT_SEL?' cur':'');
+  col.className = 'mt-col';
   const hd = document.createElement('div'); hd.className='hd';
   const h = document.createElement('span'); h.className='host'; h.textContent=host; hd.appendChild(h);
   const p = document.createElement('span'); p.className='plan'; p.textContent='plan='+(plan||'?'); hd.appendChild(p);
@@ -893,7 +900,7 @@ function mtCol(host, slug, plan, st){
   stop.onclick = (ev) => { ev.stopPropagation(); stopHost(host); };
   hd.appendChild(stop);
   col.appendChild(hd);
-  if(!st.exists){
+  if(!st || !st.exists){
     const e = document.createElement('div'); e.className='mt-empty'; e.textContent='이벤트 스트림 없음 (시작 대기)'; col.appendChild(e);
     return col;
   }
@@ -906,9 +913,14 @@ function mtCol(host, slug, plan, st){
   const sub = document.createElement('div'); sub.className='mt-meta';
   sub.textContent = st.completed+' / '+st.total+' ('+pct+'%)';
   col.appendChild(sub);
+  // PASS/FAIL: createElement 만 사용 (innerHTML 회피 — 파일 전체 정책 일관성).
   const stats = document.createElement('div'); stats.className='mt-stats';
-  const sp = document.createElement('span'); sp.innerHTML = 'PASS <b style="color:#4ade80">'+st['pass']+'</b>';
-  const sf = document.createElement('span'); sf.innerHTML = 'FAIL <b style="color:#f87171">'+st.fail+'</b>';
+  const sp = document.createElement('span'); sp.appendChild(document.createTextNode('PASS '));
+  const spb = document.createElement('b'); spb.style.color='#4ade80'; spb.textContent=String(st['pass']);
+  sp.appendChild(spb);
+  const sf = document.createElement('span'); sf.appendChild(document.createTextNode('FAIL '));
+  const sfb = document.createElement('b'); sfb.style.color='#f87171'; sfb.textContent=String(st.fail);
+  sf.appendChild(sfb);
   stats.appendChild(sp); stats.appendChild(sf); col.appendChild(stats);
   if(st.current){
     const cur = document.createElement('div'); cur.className='mt-cur'; cur.textContent='▶ '+st.current+(st.pending?' (⏳ 준비 중)':'');
@@ -919,27 +931,44 @@ function mtCol(host, slug, plan, st){
   }
   return col;
 }
+// 활성 호스트만 추려 stop 대상으로 사용 — active.json 에 누적된 stale 항목까지
+// 보내면 MT_MAX 초과로 stop 자체가 400 에 막힌다.
+function mtRunningHosts(hosts, states){
+  return hosts.filter((h, i) => states[i] && states[i].exists
+                       && !states[i].run_ended && !states[i].producer_lost);
+}
 async function tickMulti(){
-  const data = await fetchActive();
-  const hosts = data.hosts || [];
-  const bar = document.getElementById('mtBar');
-  const grid = document.getElementById('mtGrid');
-  const wrap = document.getElementById('wrap');
-  if(hosts.length === 0){
-    bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
-    return;
+  if(mtTicking) return;  // 직전 tick in-flight → 중복 실행 방지 (race window 차단)
+  mtTicking = true;
+  try {
+    const data = await fetchActive();
+    if(data === null) return;  // network error → 이전 UI 유지, 다음 tick 재시도
+    const hosts = data.hosts || [];
+    const bar = document.getElementById('mtBar');
+    const grid = document.getElementById('mtGrid');
+    const wrap = document.getElementById('wrap');
+    if(hosts.length === 0){
+      bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
+      MT_HOSTS_KEY = '';
+      return;
+    }
+    // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
+    wrap.classList.add('mt');
+    bar.style.display='flex'; grid.style.display='grid';
+    document.getElementById('mtCount').textContent = hosts.length+' host'+(hosts.length>1?'s':'');
+    // 모든 host 의 state 를 병렬 fetch (실패한 host 는 null → mtCol 이 대기 표시).
+    const states = await Promise.all(hosts.map(h => fetchHostState(h.host)));
+    // 호스트 순서가 바뀌었을 때만 키 갱신 (캐시 무효화 표시).
+    const key = hosts.map(h => h.host).join('|');
+    MT_HOSTS_KEY = key;
+    // 새 컬럼으로 교체 — 4개 이하라 성능 영향 미미.
+    grid.replaceChildren(...hosts.map((h, i) => mtCol(h.host, h.plan, states[i])));
+  } finally {
+    mtTicking = false;
+    // setInterval 대신 setTimeout 재예약 — async 가 1.5s 안에 끝나지 못해도 중복 fire
+    // 안 되고, 다음 tick 은 항상 완료 후 1.5s 시작 (실제 폴링 간격이 일정해진다).
+    setTimeout(tickMulti, 1500);
   }
-  // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
-  wrap.classList.add('mt');
-  bar.style.display='flex'; grid.style.display='grid';
-  document.getElementById('mtCount').textContent = hosts.length+' host'+(hosts.length>1?'s':'');
-  // 모든 host 의 state 를 병렬 fetch.
-  const states = await Promise.all(hosts.map(h => fetchHostState(h.host)));
-  // 호스트 순서가 바뀌었을 때만 DOM 재생성을 최소화 — 키 비교.
-  const key = hosts.map(h => h.host).join('|');
-  if(key !== MT_HOSTS_KEY){ grid.replaceChildren(); MT_HOSTS_KEY = key; }
-  // 항상 새 컬럼으로 교체 (단순화) — 4개 이하라 성능 영향 미미.
-  grid.replaceChildren(...hosts.map((h, i) => mtCol(h.host, h.slug, h.plan, states[i])));
 }
 async function stopHost(host){
   if(!confirm('Stop host '+host+'?')) return;
@@ -949,20 +978,24 @@ async function stopHost(host){
     const d = await r.json();
     if(!d.ok) alert('Stop 실패: '+(d.error||r.status));
   } catch(e){ alert('Stop 오류: '+e); }
-  await tickMulti();
+  // 다음 tick 이 곧 fire 되므로 명시 호출 불필요. mtTicking flag 와 충돌 회피.
 }
 async function stopAll(){
   const data = await fetchActive();
+  if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
   const hosts = (data.hosts||[]).map(h => h.host);
   if(hosts.length === 0) return;
-  if(!confirm('Stop all '+hosts.length+' hosts?')) return;
+  // 활성 host 만 필터 + MT_MAX cap — stale active.json 항목으로 인한 400 회피.
+  const states = await Promise.all(hosts.map(h => fetchHostState(h)));
+  const running = mtRunningHosts(hosts, states).slice(0, MT_MAX);
+  if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
+  if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
   try {
     const r = await fetch('/stop', {method:'POST', headers:{'Content-Type':'application/json'},
-                                    body: JSON.stringify({targets: hosts})});
+                                    body: JSON.stringify({targets: running})});
     const d = await r.json();
     if(!d.ok) alert('Stop All 실패: '+(d.error||r.status));
   } catch(e){ alert('Stop All 오류: '+e); }
-  await tickMulti();
 }
 async function startMulti(){
   const hosts = document.getElementById('mt_hosts').value.split('\n')
@@ -973,6 +1006,9 @@ async function startMulti(){
   const msg = document.getElementById('mt_msg');
   if(!plan){ msg.textContent='plan 을 선택하세요'; msg.className='cmsg err'; return; }
   if(hosts.length === 0){ msg.textContent='host 를 한 줄 이상 입력하세요'; msg.className='cmsg err'; return; }
+  if(hosts.length > MT_MAX){
+    msg.textContent='최대 '+MT_MAX+'개까지 가능 ('+hosts.length+'개 입력됨)'; msg.className='cmsg err'; return;
+  }
   const targets = hosts.map(h => ({host: h, user: user, password: password}));
   msg.textContent='시작 중…'; msg.className='cmsg';
   try {
@@ -983,7 +1019,6 @@ async function startMulti(){
       msg.textContent = '시작됨 — '+(d.started||[]).length+' host';
       msg.className='cmsg ok';
       document.getElementById('mtform').classList.remove('open');
-      await tickMulti();
     } else {
       msg.textContent = '실패: '+(d.error||r.status);
       msg.className='cmsg err';
@@ -995,7 +1030,8 @@ document.getElementById('mt_start').onclick = startMulti;
 document.getElementById('c_mt_toggle').onclick = () => {
   document.getElementById('mtform').classList.toggle('open');
 };
-tickMulti(); setInterval(tickMulti, 1500);
+// 최초 1회 fire — 이후는 tickMulti 자체가 setTimeout 으로 재예약 (setInterval 회피).
+tickMulti();
 </script>
 </body></html>"""
 
