@@ -178,8 +178,14 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
         }
 
     # 1단계: 모든 target 을 validate (one shared plan + per-target host/user/password).
-    cleaned: list[dict] = []
     plans = _list_plans()
+    # plan 은 batch 전체 공유 — 한 번만 검증해 plan 오류가 target[0] 의 host 오류로
+    # 보이는 잘못된 attribution 을 막는다.
+    if not plan_name:
+        return 400, {"ok": False, "error": "plan 이 비어있습니다"}
+    if plan_name not in plans:
+        return 400, {"ok": False, "error": f"unknown plan: {plan_name}"}
+    cleaned: list[dict] = []
     for i, t in enumerate(targets):
         if not isinstance(t, dict):
             return 400, {"ok": False, "error": f"target[{i}] 형식 오류"}
@@ -226,6 +232,7 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
         # 3단계: 모두 spawn — 실패 시 이미 spawn 한 자식은 stop 으로 정리해야 하므로
         # try 안에서 누적 추적한다. spawn 실패 자체는 매우 드물지만 안전하게.
         started: list[dict] = []
+        spawn_failure: Exception | None = None
         try:
             for clean in cleaned:
                 per_dir = run_stream.target_events_dir(base_events_dir, clean["host"])
@@ -242,22 +249,25 @@ def _start_multi_target(params: dict) -> tuple[int, dict]:
                     "started_at": time.time(),
                 })
         except Exception as e:  # noqa: BLE001 — spawn 실패는 클라이언트에 그대로 보고
-            # 이미 spawn 한 자식 정리: 각 자식별로 SIGTERM → 3s 대기 → SIGKILL
-            # 패턴을 *병렬* 실행. 합쳐서 폴링하면 한 느린 자식이 빠른 자식까지
-            # 함께 기다리게 만들어 응답이 max(3s) 가 아니라 단순히 3s 가 된다.
-            # 병렬화하면 전체 latency = max(개별) ≈ 3s — 동일하지만 SIGKILL 이
-            # 라거드(laggard)에게만 즉시 적용된다.
-            # waitpid 는 쓰지 않는다 — 요청 핸들러 스레드라 blocking wait 가
-            # 서버 응답을 지연시킨다. 대신 pid_alive 폴링.
-            if started:
-                with ThreadPoolExecutor(max_workers=len(started)) as cleanup_ex:
-                    list(cleanup_ex.map(_terminate_pid, [s["pid"] for s in started]))
-            for s in started:
-                per_dir = run_stream.target_events_dir(base_events_dir, s["host"])
-                run_control.clear_control(per_dir)
-            return 500, {"ok": False, "error": f"spawn 실패: {e}",
-                          "partial_started": started,
-                          "cleanup_attempted": True}
+            spawn_failure = e
+        # 의도적으로 with 블록 종료 — cleanup 의 SIGTERM 대기(최대 3s)를 락 밖에서
+        # 진행해 다른 /start 요청이 우리 cleanup 동안 막히지 않도록 한다.
+        # cleanup 대상 host 들의 control 파일은 곧 삭제되므로, 그 사이 같은 host
+        # 가 다시 /start 되면 active_pid 가 살아있는 동안만 409 → 정리 후 정상화.
+
+    # 에러 cleanup 은 lock 밖에서 병렬 실행 — 라거드 자식 1개가 다른 자식의
+    # 종료를 막지 않고, lock 도 점유하지 않는다. waitpid 는 쓰지 않는다 — 요청
+    # 핸들러 스레드의 blocking wait 가 서버 응답을 지연시킨다. pid_alive 폴링으로.
+    if spawn_failure is not None:
+        if started:
+            with ThreadPoolExecutor(max_workers=len(started)) as cleanup_ex:
+                list(cleanup_ex.map(_terminate_pid, [s["pid"] for s in started]))
+        for s in started:
+            per_dir = run_stream.target_events_dir(base_events_dir, s["host"])
+            run_control.clear_control(per_dir)
+        return 500, {"ok": False, "error": f"spawn 실패: {spawn_failure}",
+                      "partial_started": started,
+                      "cleanup_attempted": True}
 
     return 200, {"ok": True, "started": started}
 
@@ -282,9 +292,13 @@ def _terminate_pid(pid: int) -> None:
 def _stop_in_events_dir(events_dir: str) -> dict:
     """주어진 events_dir scope 의 관리 런을 SIGTERM→3s→SIGKILL 패턴으로 종료.
 
-    반환: ``{"stopped": bool, "pid": int|None, "note": str|None}``. legacy 단일
-    런(events_dir=root)과 per-host 런(events_dir=by-target/<slug>/) 양쪽이 같은
-    종료 로직을 공유 — control 파일 위치만 다르고 흐름은 동일하므로 한 helper.
+    반환:
+      - 종료 성공: ``{"stopped": True, "pid": <int>}``
+      - 관리 런 없음 / 이미 죽음: ``{"stopped": False, "pid": None, "note": "..."}``
+
+    legacy 단일 런(events_dir=root)과 per-host 런(events_dir=by-target/<slug>/)
+    양쪽이 같은 종료 로직을 공유 — control 파일 위치만 다르고 흐름은 동일하므로
+    한 helper. ``note`` 는 실패 케이스에서만 포함된다.
     """
     info = run_control.read_control(events_dir)
     pid = info.get("pid") if info else None

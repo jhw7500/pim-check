@@ -52,6 +52,13 @@ class TestHostSlug(unittest.TestCase):
         self.assertTrue(host_slug(""))
         self.assertTrue(host_slug(None))  # type: ignore[arg-type]
 
+    def test_host_slug_is_case_insensitive(self):
+        # macOS/Windows 의 case-insensitive FS 에서 같은 호스트가 다른 슬러그를
+        # 만들면 두 자식이 같은 디렉터리를 경합한다. lower-case 정규화로 차단.
+        self.assertEqual(host_slug("Host-A"), host_slug("host-a"))
+        self.assertEqual(host_slug("HOST-A"), "host-a")
+        self.assertEqual(host_slug("imx8mp-DEV.LAN"), "imx8mp-dev-lan")
+
 
 @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unsupported on this platform")
 class TestTargetEventsDir(unittest.TestCase):

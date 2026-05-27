@@ -300,25 +300,27 @@ def test_stop_run_rejects_non_dict_body_at_http_layer(tmp_path, monkeypatch):
 def test_stop_run_bulk_runs_in_parallel(tmp_path, monkeypatch):
     """bulk stop 이 host 별로 순차가 아닌 병렬 실행되는지 확인.
 
-    각 host stop 이 0.5s 씩 걸리도록 mock 하고, 4 host bulk stop 의 전체 시간이
-    sequential 시 ~2s 가 아니라 병렬이면 ~0.5s 이내에 끝나야 한다.
+    shared threading.Barrier 로 4 worker 가 *동시에* 진입해야만 release 되는
+    조건을 둔다 — 순차 실행이라면 첫 worker 가 barrier 에서 영원히 대기
+    (다른 worker 가 아직 시작하지 않음) → 테스트 타임아웃으로 명확히 실패.
+    이 패턴은 sleep-기반 임계값 (CI 느려서 false fail) 보다 안정적이다.
     """
-    _patch(monkeypatch, tmp_path)
-    import time as _t
+    import threading as _th
 
-    def slow_stop(events_dir):
-        _t.sleep(0.5)
+    _patch(monkeypatch, tmp_path)
+    n = 4
+    barrier = _th.Barrier(n, timeout=2.0)
+
+    def parallel_only_stop(events_dir):
+        # n 개 worker 가 모두 barrier 에 도달해야 통과 — 순차면 영원히 대기.
+        barrier.wait()
         return {"stopped": True, "pid": 1}
 
-    monkeypatch.setattr(v, "_stop_in_events_dir", slow_stop)
-    start = _t.monotonic()
-    code, body = v.stop_run({"targets": ["host-a", "host-b", "host-c", "host-d"]})
-    elapsed = _t.monotonic() - start
+    monkeypatch.setattr(v, "_stop_in_events_dir", parallel_only_stop)
+    code, body = v.stop_run({"targets": [f"host-{c}" for c in "abcd"]})
     assert code == 200 and body["ok"]
-    # 순차면 ~2s, 병렬이면 ~0.5s. 마진 두고 1.0s 미만 요구.
-    assert elapsed < 1.0, f"bulk stop took {elapsed:.2f}s (sequential 의심)"
     # 결과는 입력 순서 보존.
-    assert [r["host"] for r in body["stopped"]] == ["host-a", "host-b", "host-c", "host-d"]
+    assert [r["host"] for r in body["stopped"]] == [f"host-{c}" for c in "abcd"]
 
 
 def test_legacy_single_host_path_unchanged(tmp_path, monkeypatch):

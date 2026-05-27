@@ -49,15 +49,21 @@ def default_events_dir() -> str:
 
 
 def host_slug(host: str | None) -> str:
-    """Make a host string safe for path use.
+    """Make a host string safe for path use, normalized to lowercase.
 
     IP/hostname 의 ``.`` 와 path/공백 등 모호한 문자는 ``-``/``_`` 로 치환해
     디렉터리 이름으로 안전한 식별자를 만든다. 빈 값/None 은 안정 fallback.
+
+    case-insensitive 정규화: macOS/Windows 의 기본 파일시스템(HFS+/APFS/NTFS)은
+    대소문자 보존하지만 비교는 무시한다. ``Host-A`` 와 ``host-a`` 가 서로 다른
+    슬러그를 만들면 by-target/ 안에서 두 자식이 같은 디렉터리를 두고 경합해
+    control / current.jsonl 이 깨질 수 있다. ``.lower()`` 로 항상 같은 슬러그를
+    돌려준다.
     """
     if not host:
         return "_unknown"
     out = []
-    for c in str(host):
+    for c in str(host).lower():
         if c.isalnum() or c == "-":
             out.append(c)
         elif c in (".",):
