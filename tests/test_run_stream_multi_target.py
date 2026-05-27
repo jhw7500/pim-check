@@ -180,6 +180,24 @@ class TestActiveHostsMalformedSchema(unittest.TestCase):
     AttributeError 발생. viewer 인프라 전체가 멈출 리스크라 방어 코드 추가.
     """
 
+    def test_read_active_hosts_handles_non_dict_root(self):
+        # JSON 자체는 valid 지만 root 가 dict 가 아닌 경우 (e.g. 누군가 list 로 덮어씀).
+        # read_active_hosts 는 빈 인덱스로 graceful fallback 해야 한다.
+        base = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+        with open(os.path.join(events_dir, ACTIVE_HOSTS_NAME), "w") as f:
+            json.dump(["not", "a", "dict"], f)
+        # AttributeError/KeyError 없이 비어있는 hosts 로 fallback.
+        data = read_active_hosts(events_dir)
+        self.assertEqual(data, {"hosts": []})
+        # 후속 register 도 정상 작동.
+        from run_stream import register_active_host
+        register_active_host(events_dir, "new-h", "smoke", "new-h", "r.jsonl")
+        data2 = read_active_hosts(events_dir)
+        self.assertEqual({h["host"] for h in data2["hosts"]}, {"new-h"})
+
     def test_register_skips_non_dict_entries(self):
         base = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, base, ignore_errors=True)
