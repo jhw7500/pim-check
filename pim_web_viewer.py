@@ -512,8 +512,47 @@ INDEX_HTML = """<!doctype html>
   .ctrl button:disabled { opacity:.4; cursor:not-allowed; }
   .ctrl .cmsg { font-size:11px; margin-top:6px; min-height:14px; color:#9ca3af; }
   .ctrl .cmsg.err { color:#fca5a5; } .ctrl .cmsg.ok { color:#86efac; }
+  /* multi-target view: 페이지 자체 너비 확장 + grid 컬럼 */
+  .wrap.mt { max-width: 1600px; }
+  .mt-bar { display:flex; align-items:center; gap:10px; margin:8px 0 12px;
+            padding:8px 12px; background:#0f1722; border:1px solid #1f2a3a; border-radius:8px; }
+  .mt-bar .title { color:#9ad; font-size:13px; font-weight:700; }
+  .mt-bar .count { color:#7a8; font-size:11px; }
+  .mt-bar button { margin-left:auto; border:none; border-radius:6px; padding:5px 10px;
+                   font-size:12px; cursor:pointer; }
+  .mt-bar .stopall { background:#7c1d1d; color:#fde68a; }
+  .mt-bar .add { background:#1e40af; color:#dbeafe; margin-left:8px; }
+  .mt-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+             gap:12px; margin-bottom:14px; }
+  .mt-col { background:#11151d; border:1px solid #283246; border-radius:8px; padding:10px 12px; }
+  .mt-col.cur { border-color:#3b82f6; box-shadow:0 0 0 1px #3b82f6 inset; }
+  .mt-col .hd { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .mt-col .hd .host { font-weight:700; color:#cdd6f4; font-size:13px; }
+  .mt-col .hd .plan { color:#9ad; font-size:11px; }
+  .mt-col .hd .stop { margin-left:auto; border:none; border-radius:5px; padding:2px 8px;
+                       background:#52111a; color:#fca5a5; font-size:11px; cursor:pointer; }
+  .mt-col .hd .stop:hover { background:#7c1d1d; }
+  .mt-col .mt-meta { color:#7a8; font-size:11px; margin-bottom:4px; }
+  .mt-col .mt-bar2 { height:8px; background:#1b1f2a; border-radius:4px; overflow:hidden; margin:4px 0; }
+  .mt-col .mt-bar2 > i { display:block; height:100%; background:linear-gradient(90deg,#3b82f6,#22d3ee); width:0; transition:width .4s; }
+  .mt-col .mt-stats { display:flex; gap:14px; font-size:11px; margin-top:4px; }
+  .mt-col .mt-stats span b { font-size:14px; font-variant-numeric:tabular-nums; }
+  .mt-col .mt-cur { color:#fbbf24; font-size:12px; font-weight:600; margin-top:4px;
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mt-col .mt-empty { color:#5b647a; font-size:12px; padding:6px 0; }
+  /* multi-target start form (확장 패널) */
+  .mtform { background:#0f1722; border:1px solid #1f2a3a; border-radius:8px;
+            padding:10px 12px; margin:8px 0; display:none; }
+  .mtform.open { display:block; }
+  .mtform textarea { width:100%; min-height:60px; background:#0b1220; color:#e5e7eb;
+                     border:1px solid #334155; border-radius:6px; padding:6px 8px;
+                     font-family:inherit; font-size:12px; box-sizing:border-box; }
+  .mtform .hint { color:#7a8; font-size:11px; margin:4px 0 6px; }
+  .mtform .row2 { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .mtform button { border:none; border-radius:6px; padding:6px 12px; font-size:12px;
+                    cursor:pointer; background:#16a34a; color:#fff; }
 </style></head>
-<body><div class="wrap">
+<body><div class="wrap" id="wrap">
   <h1 id="title">pim_viewer (web)</h1>
   <div class="ctrl" id="ctrl">
     <div class="crow">
@@ -523,9 +562,26 @@ INDEX_HTML = """<!doctype html>
       <input class="cred" id="c_pass" type="password" value="root" title="SSH 비밀번호">
       <button class="start" id="c_start">▶ 시작</button>
       <button class="stop" id="c_stop" disabled>■ 중지</button>
+      <button class="add" id="c_mt_toggle" style="margin-left:auto; background:#1e40af; color:#dbeafe; border:none; border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer;">+ Multi-target</button>
     </div>
     <div class="cmsg" id="c_msg"></div>
+    <!-- multi-target start form (collapsible) -->
+    <div class="mtform" id="mtform">
+      <div class="hint">여러 타겟을 한 번에 시작 — 호스트를 한 줄에 하나씩 입력 (최대 4개). 위의 plan/user/password 가 모든 타겟에 공유됩니다.</div>
+      <textarea id="mt_hosts" placeholder="192.168.214.4&#10;192.168.214.5"></textarea>
+      <div class="row2" style="margin-top:6px;">
+        <button id="mt_start">▶ Start All</button>
+        <span class="cmsg" id="mt_msg"></span>
+      </div>
+    </div>
   </div>
+  <!-- multi-target dashboard: hosts.length > 0 일 때만 표시 -->
+  <div class="mt-bar" id="mtBar" style="display:none">
+    <span class="title">Multi-target 실행 중</span>
+    <span class="count" id="mtCount">0 hosts</span>
+    <button class="stopall" id="mt_stop_all">■ Stop All</button>
+  </div>
+  <div class="mt-grid" id="mtGrid" style="display:none"></div>
   <div class="sub" id="meta">waiting for event stream…</div>
   <div id="badge" class="badge b-run"><span class="dot run"></span>…</div>
   <div class="clocks">
@@ -802,6 +858,144 @@ document.getElementById('c_start').onclick=startRun;
 document.getElementById('c_stop').onclick=stopRun;
 loadControl(); setInterval(loadControl, 3000);
 tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
+// --- Multi-target view --------------------------------------------------
+// /api/active 로 host 목록을 가져온 뒤 각 host 의 /api/events?host=<>
+// 를 병렬 폴링해 컬럼 그리드를 그린다. hosts.length === 0 이면 기존
+// 단일-host 뷰가 그대로 보이고 (backward compat), 1개 이상이면 multi-grid 활성.
+let MT_SEL = null;  // 선택된 host (드릴다운; 향후 확장)
+let MT_HOSTS_KEY = '';
+async function fetchActive(){
+  try { const r = await fetch('/api/active?_='+Date.now(), {cache:'no-store'}); return await r.json(); }
+  catch(e){ return {hosts: []}; }
+}
+async function fetchHostState(host){
+  try {
+    const r = await fetch('/api/events?host='+encodeURIComponent(host)+'&_='+Date.now(), {cache:'no-store'});
+    return await r.json();
+  } catch(e){ return {exists: false}; }
+}
+function mtFmtClock(s){ s=Math.max(0,Math.floor(s||0)); const m=Math.floor(s/60); return m?(m+"m "+(s%60)+"s"):(s+"s"); }
+function mtBadge(st){
+  if(!st.exists) return ['b-lost','대기'];
+  if(st.producer_lost) return ['b-lost','Producer lost'];
+  if(st.run_ended) return ['b-done','DONE'];
+  return ['b-run','RUNNING'];
+}
+function mtCol(host, slug, plan, st){
+  const col = document.createElement('div');
+  col.className = 'mt-col' + (host===MT_SEL?' cur':'');
+  const hd = document.createElement('div'); hd.className='hd';
+  const h = document.createElement('span'); h.className='host'; h.textContent=host; hd.appendChild(h);
+  const p = document.createElement('span'); p.className='plan'; p.textContent='plan='+(plan||'?'); hd.appendChild(p);
+  const [bcls, btxt] = mtBadge(st);
+  const b = document.createElement('span'); b.className='badge '+bcls; b.style.fontSize='10px'; b.style.padding='2px 8px'; b.textContent=btxt; hd.appendChild(b);
+  const stop = document.createElement('button'); stop.className='stop'; stop.textContent='■ Stop';
+  stop.onclick = (ev) => { ev.stopPropagation(); stopHost(host); };
+  hd.appendChild(stop);
+  col.appendChild(hd);
+  if(!st.exists){
+    const e = document.createElement('div'); e.className='mt-empty'; e.textContent='이벤트 스트림 없음 (시작 대기)'; col.appendChild(e);
+    return col;
+  }
+  const meta = document.createElement('div'); meta.className='mt-meta';
+  meta.textContent = 'run='+(st.run_id||'?')+'  ·  경과 '+mtFmtClock(st.elapsed_s);
+  col.appendChild(meta);
+  const bar = document.createElement('div'); bar.className='mt-bar2';
+  const i = document.createElement('i'); const pct = st.total ? Math.round(100*st.completed/st.total) : 0;
+  i.style.width = pct+'%'; bar.appendChild(i); col.appendChild(bar);
+  const sub = document.createElement('div'); sub.className='mt-meta';
+  sub.textContent = st.completed+' / '+st.total+' ('+pct+'%)';
+  col.appendChild(sub);
+  const stats = document.createElement('div'); stats.className='mt-stats';
+  const sp = document.createElement('span'); sp.innerHTML = 'PASS <b style="color:#4ade80">'+st['pass']+'</b>';
+  const sf = document.createElement('span'); sf.innerHTML = 'FAIL <b style="color:#f87171">'+st.fail+'</b>';
+  stats.appendChild(sp); stats.appendChild(sf); col.appendChild(stats);
+  if(st.current){
+    const cur = document.createElement('div'); cur.className='mt-cur'; cur.textContent='▶ '+st.current+(st.pending?' (⏳ 준비 중)':'');
+    col.appendChild(cur);
+  } else if(st.run_ended){
+    const done = document.createElement('div'); done.className='mt-cur'; done.style.color='#7aa2f7';
+    done.textContent = '완료 — '+st['pass']+'/'+st.total+' pass'; col.appendChild(done);
+  }
+  return col;
+}
+async function tickMulti(){
+  const data = await fetchActive();
+  const hosts = data.hosts || [];
+  const bar = document.getElementById('mtBar');
+  const grid = document.getElementById('mtGrid');
+  const wrap = document.getElementById('wrap');
+  if(hosts.length === 0){
+    bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
+    return;
+  }
+  // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
+  wrap.classList.add('mt');
+  bar.style.display='flex'; grid.style.display='grid';
+  document.getElementById('mtCount').textContent = hosts.length+' host'+(hosts.length>1?'s':'');
+  // 모든 host 의 state 를 병렬 fetch.
+  const states = await Promise.all(hosts.map(h => fetchHostState(h.host)));
+  // 호스트 순서가 바뀌었을 때만 DOM 재생성을 최소화 — 키 비교.
+  const key = hosts.map(h => h.host).join('|');
+  if(key !== MT_HOSTS_KEY){ grid.replaceChildren(); MT_HOSTS_KEY = key; }
+  // 항상 새 컬럼으로 교체 (단순화) — 4개 이하라 성능 영향 미미.
+  grid.replaceChildren(...hosts.map((h, i) => mtCol(h.host, h.slug, h.plan, states[i])));
+}
+async function stopHost(host){
+  if(!confirm('Stop host '+host+'?')) return;
+  try {
+    const r = await fetch('/stop', {method:'POST', headers:{'Content-Type':'application/json'},
+                                    body: JSON.stringify({host: host})});
+    const d = await r.json();
+    if(!d.ok) alert('Stop 실패: '+(d.error||r.status));
+  } catch(e){ alert('Stop 오류: '+e); }
+  await tickMulti();
+}
+async function stopAll(){
+  const data = await fetchActive();
+  const hosts = (data.hosts||[]).map(h => h.host);
+  if(hosts.length === 0) return;
+  if(!confirm('Stop all '+hosts.length+' hosts?')) return;
+  try {
+    const r = await fetch('/stop', {method:'POST', headers:{'Content-Type':'application/json'},
+                                    body: JSON.stringify({targets: hosts})});
+    const d = await r.json();
+    if(!d.ok) alert('Stop All 실패: '+(d.error||r.status));
+  } catch(e){ alert('Stop All 오류: '+e); }
+  await tickMulti();
+}
+async function startMulti(){
+  const hosts = document.getElementById('mt_hosts').value.split('\n')
+    .map(s => s.trim()).filter(Boolean);
+  const plan = document.getElementById('c_plan').value;
+  const user = document.getElementById('c_user').value.trim();
+  const password = document.getElementById('c_pass').value;
+  const msg = document.getElementById('mt_msg');
+  if(!plan){ msg.textContent='plan 을 선택하세요'; msg.className='cmsg err'; return; }
+  if(hosts.length === 0){ msg.textContent='host 를 한 줄 이상 입력하세요'; msg.className='cmsg err'; return; }
+  const targets = hosts.map(h => ({host: h, user: user, password: password}));
+  msg.textContent='시작 중…'; msg.className='cmsg';
+  try {
+    const r = await fetch('/start', {method:'POST', headers:{'Content-Type':'application/json'},
+                                     body: JSON.stringify({plan: plan, targets: targets})});
+    const d = await r.json();
+    if(d.ok){
+      msg.textContent = '시작됨 — '+(d.started||[]).length+' host';
+      msg.className='cmsg ok';
+      document.getElementById('mtform').classList.remove('open');
+      await tickMulti();
+    } else {
+      msg.textContent = '실패: '+(d.error||r.status);
+      msg.className='cmsg err';
+    }
+  } catch(e){ msg.textContent='요청 오류: '+e; msg.className='cmsg err'; }
+}
+document.getElementById('mt_stop_all').onclick = stopAll;
+document.getElementById('mt_start').onclick = startMulti;
+document.getElementById('c_mt_toggle').onclick = () => {
+  document.getElementById('mtform').classList.toggle('open');
+};
+tickMulti(); setInterval(tickMulti, 1500);
 </script>
 </body></html>"""
 
