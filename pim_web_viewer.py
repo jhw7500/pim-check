@@ -791,17 +791,19 @@ function renderDetail(d){
 let tickInFlight = false;
 let tickPending = false;
 // MT_SELECTED_HOST 도 여기에 미리 선언 — tickOnce() 가 첫 statement 에서 sync 로
-// 읽기 때문에, 아래 line ~902 의 tick() 초기 호출 시점에 TDZ (let 은 hoist 안 됨)
-// 에 있으면 ReferenceError 가 try/catch 에 swallow 되어 첫 폴링이 silent fail.
-// 한 곳에 같이 두어 결합 관계도 명확히.
+// 읽기 때문에, 아래 단일-view setup 의 tick() 초기 호출 시점에 TDZ (let 은 hoist
+// 안 됨) 에 있으면 ReferenceError 가 try/catch 에 swallow 되어 첫 폴링이 silent
+// fail. tickInFlight/tickPending 과 한 곳에 같이 두어 결합 관계도 명확히.
 let MT_SELECTED_HOST = null;
 async function tick(){
   if(tickInFlight){ tickPending = true; return; }
-  // try/finally 로 unexpected exception 발생해도 flag reset 보장 — 안 그러면
-  // tick 이 영구 dead 상태가 된다.
+  // tickInFlight = true 를 do-while 밖에서 동기적으로 set — 가드 check 와 같은
+  // sync block 안에 두어 미래 refactor 가 do-while 직전 await 를 끼워 넣어도
+  // race 가 발생하지 않도록 명료한 invariant 유지. try/finally 로 unexpected
+  // exception 발생해도 reset 보장 (안 그러면 tick 영구 dead).
+  tickInFlight = true;
   try {
     do {
-      tickInFlight = true;
       tickPending = false;
       await tickOnce();
       // pending 이 set 됐다는 건 우리 fetch 도중 selection 이 바뀌었다는 신호 —
@@ -822,6 +824,11 @@ async function tickOnce(){
       ? '/api/events?host='+encodeURIComponent(selectedHost)+'&_='+Date.now()
       : '/state?_='+Date.now();
     const r = await fetch(url, {cache:'no-store'});
+    // HTTP error (예: /api/events 의 400 invalid host) 가 와도 r.json() 은 valid
+    // body 를 받지만 d.exists 가 undefined 라 "스트림 없음" 으로 잘못 표시되어
+    // 사용자가 진짜 stream 없음과 request 실패를 구분 못 한다 — throw 해서 outer
+    // catch 가 foot 에 "연결 오류: ..." 로 명시.
+    if(!r.ok){ throw new Error('HTTP '+r.status); }
     const d = await r.json();
     // fetch 도중 user 가 다른 컬럼 클릭 / auto-deselect 발생 시 selection 이 변경됨.
     // stale 데이터로 detail 을 잠깐 그려 깜빡임을 만들지 않도록 즉시 bail —
@@ -920,8 +927,8 @@ tick(); setInterval(tick, 1000); setInterval(renderClocks, 1000);
 // 초기 fallback — /api/active 응답의 max_concurrent 로 매 tick 마다 업데이트되므로
 // 서버 MAX_CONCURRENT_TARGETS 가 바뀌어도 UI 가 silently diverge 하지 않는다.
 let MT_MAX = 4;
-// MT_SELECTED_HOST 는 tick() 가 첫 호출에서 sync 로 읽기 때문에 line ~797 으로
-// hoist 됐다. 여기서 다시 선언하면 SyntaxError (Identifier already declared).
+// MT_SELECTED_HOST 는 tick() 가 첫 호출에서 sync 로 읽기 때문에 위쪽 tick 정의
+// 직전으로 hoist 됐다. 여기서 다시 선언하면 SyntaxError (Identifier already declared).
 // 이전 tick 이 아직 in-flight 인데 다음 setTimeout 이 fire 되면 fetch 가 중첩되고
 // 결과 순서가 뒤바뀔 수 있다 (race condition). 단순 flag 로 직렬화.
 let mtTicking = false;
