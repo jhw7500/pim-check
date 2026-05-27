@@ -120,16 +120,22 @@ checks:
       COUNT=$(echo "$FILES" | grep -c .)
       [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0
       LO=$(( 60 - 5 )); HI=$(( 60 + 5 ))
-      # newest(현재 녹화중) 제외 후 후속 finalize 들에서 정상 60s 첫 발견 시 OK.
+      # newest(현재 녹화중) 제외 후 후속 finalize 4개 중 첫 정상 60s 발견 시 OK.
       # reboot 직후 분 경계 split 으로 잘린 첫 짧은 finalize 는 자동 skip 된다.
-      LAST_D=""
-      for F in $(echo "$FILES" | tail -n +2 | head -n 4); do
+      # while read -r 로 파일명 word-splitting 회피.
+      # head -1 로 첫(=가장 최근, 2nd newest) 결과만 채택 — 진단 메시지가
+      # 가장 오래된 파일이 아닌 2nd newest finalize 의 실제 짧이를 표시.
+      RESULT=$(echo "$FILES" | tail -n +2 | head -n 4 | while IFS= read -r F; do
         D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F" 2>/dev/null | cut -d. -f1)
         [ -z "$D" ] && continue
-        LAST_D=$D
-        [ "$D" -ge "$LO" ] && [ "$D" -le "$HI" ] && { echo OK; exit 0; }
-      done
-      [ -z "$LAST_D" ] && echo FAIL:NO_DUR || echo FAIL:NEED_2_FINALIZES_AFTER_BOOT:short_dur=${LAST_D}s
+        if [ "$D" -ge "$LO" ] && [ "$D" -le "$HI" ]; then echo OK; break; fi
+        echo "SHORT:$D"
+      done | head -1)
+      case "$RESULT" in
+        OK) echo OK ;;
+        SHORT:*) echo "FAIL:NEED_2_FINALIZES_AFTER_BOOT:short_dur=${RESULT#SHORT:}s" ;;
+        *) echo FAIL:NO_DUR ;;
+      esac
     expected: 'OK'
     on_fail: 'ch3 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: dmesg max9296_fsync fps (expected 30)
