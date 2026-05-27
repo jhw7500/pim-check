@@ -286,11 +286,12 @@ def _run_plan(args) -> int:
 
     sess = None
     try:
-        # host=host_for_meta — multi-target viewer 가 events/by-target/<slug>/ 로
-        # per-target 라우팅을 받도록 한다. 단일 host 시나리오에서도 active.json
-        # 등록 + per-host symlink 가 추가될 뿐, 기존 events/current.jsonl 도
-        # 갱신되므로 TUI viewer 호환은 그대로다.
-        sess = EventSession(run_id, args.plan, board, host=host_for_meta)
+        # multi-target 라우팅은 사용자가 명시한 --host 가 있을 때만 활성화한다.
+        # args.host=None 이면 EventSession(host=None) 으로 legacy 경로 유지
+        # (events/<file>.jsonl + events/current.jsonl, by-target/active.json 없음).
+        # host_for_meta 의 fallback "192.168.0.5" 가 라우팅을 잘못 트리거해서
+        # legacy 단일-타겟 실행이 by-target/192-168-0-5/ 로 흘러가는 회귀를 방지.
+        sess = EventSession(run_id, args.plan, board, host=args.host)
         sess.__enter__()
     except Exception:
         sess = None

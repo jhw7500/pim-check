@@ -171,5 +171,53 @@ class TestStartRunFileWithHost(unittest.TestCase):
         self.assertIn("hosts", data)
 
 
+@unittest.skipUnless(hasattr(os, "fork"), "fork unsupported on this platform")
+class TestActiveHostsCrossProcessRace(unittest.TestCase):
+    """active.json 갱신이 cross-process 동시 호출에서도 lost-update 가 없어야 한다.
+
+    PR #38 bot 리뷰(Gemini code-assist) 지적: threading.Lock 만으로는 별도 프로세스
+    (예: 동시 pim_check.py 인스턴스, 또는 web.py spawn 자식)가 read-modify-write
+    중간에 끼어들면 마지막-쓰기-승자가 다른 프로세스 항목을 덮어쓴다. 회귀 가드.
+    """
+
+    def test_concurrent_subprocess_registers_dont_lose_updates(self):
+        import subprocess
+        import sys
+        import textwrap
+
+        base = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+        repo = os.path.join(os.path.dirname(__file__), "..")
+
+        # 워커 N 개를 동시 spawn — 각자 다른 host 등록.
+        n = 8
+        script = textwrap.dedent(f"""
+            import sys, os
+            sys.path.insert(0, {repo!r})
+            from run_stream import register_active_host
+            host = f"host-{{sys.argv[1]}}"
+            register_active_host({events_dir!r}, host, "smoke", host, "run.jsonl")
+        """)
+        script_path = os.path.join(base, "worker.py")
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script)
+
+        # 모두 동시에 시작해서 race 창을 최대화.
+        procs = [
+            subprocess.Popen([sys.executable, script_path, str(i)])
+            for i in range(n)
+        ]
+        for p in procs:
+            self.assertEqual(p.wait(timeout=30), 0)
+
+        data = read_active_hosts(events_dir)
+        hosts = {h["host"] for h in data.get("hosts", [])}
+        expected = {f"host-{i}" for i in range(n)}
+        # lost-update 가 발생했다면 일부 host 가 누락된다.
+        self.assertEqual(hosts, expected, f"missing={expected - hosts}, got={hosts}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,17 +23,23 @@ import threading
 import time
 from datetime import datetime
 
+try:  # POSIX 만 — Windows 는 process-local lock 으로 graceful fallback.
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover — POSIX 외 환경
+    _fcntl = None  # type: ignore[assignment]
+
 CURRENT_SYMLINK_NAME = "current.jsonl"
 # multi-target 라우팅: events/<BY_TARGET_DIR>/<host_slug>/ 아래에 per-target 런 파일.
 # 기존 단일 타겟(host=None) 코드 경로는 그대로 events/ 직속에 남는다 (backward compat).
 BY_TARGET_DIR = "by-target"
 # multi-target viewer 가 enumerate 할 활성 host 인덱스 파일.
 ACTIVE_HOSTS_NAME = "active.json"
+# active.json read-modify-write 의 cross-process 직렬화에 쓰는 파일 락. 같은 프로세스 안의
+# 스레드 race 는 _ACTIVE_LOCK 으로, 다른 프로세스(별도 pim_check 인스턴스 또는 web 의
+# spawn) race 는 이 파일에 대한 fcntl.flock(LOCK_EX) 으로 막는다.
+ACTIVE_HOSTS_LOCK_NAME = f".{ACTIVE_HOSTS_NAME}.lock"
 
-# active.json 의 read/modify/write 직렬화. ThreadPoolExecutor 로 같은 events_dir 에
-# 여러 host 가 거의 동시에 start_run_file 을 부르는 multi-target 시나리오에서 마지막-쓰기-승자
-# (race) 로 항목 누락이 발생하지 않도록 한다. lock 은 process-local 이라 멀티 프로세스
-# 시나리오(별도 pim_check 인스턴스)는 update 의 atomic rename 으로 보호한다.
+# 같은 process 안의 thread 직렬화. flock 은 thread 간에는 보호를 주지 않으므로 별도 필요.
 _ACTIVE_LOCK = threading.Lock()
 
 
@@ -122,6 +128,13 @@ def register_active_host(
     같은 host 의 재실행은 새 항목을 만들지 않고 기존 항목을 갱신한다 (slug 가
     같으므로 viewer 가 host 별 1 컬럼만 그리도록 한다). current 경로는
     ``events_dir`` 기준 상대 경로로 저장돼, 디렉터리를 옮겨도 그대로 해석된다.
+
+    동시성:
+      - **thread 간**: ``_ACTIVE_LOCK`` (process-local threading.Lock)
+      - **process 간**: ``ACTIVE_HOSTS_LOCK_NAME`` 파일에 ``fcntl.flock(LOCK_EX)``
+        — 별도 ``pim_check.py`` 인스턴스나 ``web.py`` 가 spawn 한 자식이 같은
+        ``events_dir`` 의 ``active.json`` 을 동시에 갱신해도 lost-update 가
+        발생하지 않는다. POSIX 외 환경에서는 thread lock 만 적용된다.
     """
     slug = host_slug(host)
     current_rel = os.path.join(BY_TARGET_DIR, slug, CURRENT_SYMLINK_NAME)
@@ -134,13 +147,29 @@ def register_active_host(
         "run": os.path.join(BY_TARGET_DIR, slug, run_basename),
         "started_at": time.time(),
     }
+    # events_dir 은 이미 caller (start_run_file) 가 makedirs 했지만, register 가
+    # 단독 호출돼도 안전하도록 한 번 더 보장 — lock file 도 만들 위치가 필요하다.
+    os.makedirs(events_dir, exist_ok=True)
+    lock_path = os.path.join(events_dir, ACTIVE_HOSTS_LOCK_NAME)
     with _ACTIVE_LOCK:
-        data = read_active_hosts(events_dir)
-        hosts = [h for h in data.get("hosts", []) if h.get("host") != host]
-        hosts.append(entry)
-        _atomic_write_json(
-            os.path.join(events_dir, ACTIVE_HOSTS_NAME), {"hosts": hosts},
-        )
+        # POSIX 면 cross-process flock 까지 잡고, 아니면 thread lock 만 적용.
+        lock_f = open(lock_path, "a+", encoding="utf-8") if _fcntl is not None else None
+        try:
+            if lock_f is not None:
+                _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
+            data = read_active_hosts(events_dir)
+            hosts = [h for h in data.get("hosts", []) if h.get("host") != host]
+            hosts.append(entry)
+            _atomic_write_json(
+                os.path.join(events_dir, ACTIVE_HOSTS_NAME), {"hosts": hosts},
+            )
+        finally:
+            if lock_f is not None:
+                try:
+                    _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_UN)
+                except OSError:  # pragma: no cover — lock fd 가 이미 끊겼을 때
+                    pass
+                lock_f.close()
 
 
 def _sanitize(token: str) -> str:
