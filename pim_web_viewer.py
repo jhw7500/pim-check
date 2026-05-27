@@ -783,12 +783,25 @@ function renderDetail(d){
   });
 }
 
-let mtTicking2 = false;  // tick() 자체 in-flight 가드 — explicit tick() 호출이
-                          // 3 곳(onclick + 2 auto-deselect)으로 늘어 stale response
-                          // overwriting 가능성 증가. tickMulti.mtTicking 와 동일 패턴.
+// tick() 자체 in-flight 가드 — explicit tick() 호출이 3 곳(onclick + 2 auto-
+// deselect)으로 늘어 stale response overwriting 가능성 증가. mtTicking2 + pending
+// flag 패턴: 이미 fetch 중이면 pending=true 만 set 하고 return, 직전 fetch 끝나면
+// do-while 로 coalesce 재실행해서 가장 최근 selection 으로 한 번 더 폴링.
+// (단순 return 만 하면 클릭 → silently drop → 1초까지 stale UI 가 됨; Claude r3 권고)
+let mtTicking2 = false;
+let mtTickPending = false;
 async function tick(){
-  if(mtTicking2) return;
-  mtTicking2 = true;
+  if(mtTicking2){ mtTickPending = true; return; }
+  do {
+    mtTicking2 = true;
+    mtTickPending = false;
+    await tickOnce();
+    mtTicking2 = false;
+    // pending 이 set 됐다는 건 우리 fetch 도중 selection 이 바뀌었다는 신호 —
+    // 한 번 더 돌아 새 selection 으로 fresh fetch.
+  } while(mtTickPending);
+}
+async function tickOnce(){
   try{
     // MT_SELECTED_HOST 가 set 이면 그 host 의 per-target state, 아니면 legacy
     // /state (events/current.jsonl). 두 endpoint 모두 build_state 결과 형식
@@ -832,7 +845,7 @@ async function tick(){
     renderDetail(d);
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
-  finally { mtTicking2 = false; }
+  // mtTicking2 / mtTickPending 은 caller(tick) 가 do-while 패턴으로 관리.
 }
 // --- 제어판(plan 선택 → 시작/중지) ---------------------------------------
 let PLANS_KEY="";
