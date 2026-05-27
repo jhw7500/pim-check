@@ -39,3 +39,4 @@ docs/*.xlsx
 
 # Schema backups
 profiles/schema.yaml.bak.*
+.gstack/
