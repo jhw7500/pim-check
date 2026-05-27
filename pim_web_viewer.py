@@ -1011,14 +1011,20 @@ async function tickMulti(){
     const wrap = document.getElementById('wrap');
     if(hosts.length === 0){
       bar.style.display='none'; grid.style.display='none'; wrap.classList.remove('mt');
-      // 활성 host 모두 사라지면 selection 도 자동 해제 — 다음 tick 이 legacy /state
-      // 로 자동 복귀.
-      MT_SELECTED_HOST = null;
+      // 활성 host 모두 사라지면 selection 도 자동 해제. 이전에 selection 이
+      // 있었다면 즉시 tick() 호출 — 1초 폴링 cycle 까지 stale detail 이 남는 lag
+      // 회피 (Gemini/Claude 공통 권고).
+      if(MT_SELECTED_HOST !== null){
+        MT_SELECTED_HOST = null;
+        tick();
+      }
       return;
     }
     // 선택된 host 가 active.json 에서 사라졌으면 자동 해제 (run 종료/stop 후).
+    // 즉시 tick() 으로 legacy /state 갱신 — 1초 lag 회피.
     if(MT_SELECTED_HOST && !hosts.some(h => h.host === MT_SELECTED_HOST)){
       MT_SELECTED_HOST = null;
+      tick();
     }
     // hosts 가 있으면 multi-grid 활성, 페이지 너비 확장.
     wrap.classList.add('mt');
