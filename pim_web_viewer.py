@@ -784,27 +784,30 @@ function renderDetail(d){
 }
 
 // tick() 자체 in-flight 가드 — explicit tick() 호출이 3 곳(onclick + 2 auto-
-// deselect)으로 늘어 stale response overwriting 가능성 증가. mtTicking2 + pending
-// flag 패턴: 이미 fetch 중이면 pending=true 만 set 하고 return, 직전 fetch 끝나면
-// do-while 로 coalesce 재실행해서 가장 최근 selection 으로 한 번 더 폴링.
-// (단순 return 만 하면 클릭 → silently drop → 1초까지 stale UI 가 됨; Claude r3 권고)
-let mtTicking2 = false;
-let mtTickPending = false;
+// deselect)으로 늘어 stale response overwriting 가능성 증가. tickInFlight +
+// pending flag 패턴: 이미 fetch 중이면 pending=true 만 set 하고 return, 직전
+// fetch 끝나면 do-while 로 coalesce 재실행해서 가장 최근 selection 으로 한 번 더
+// 폴링. (단순 return 만 하면 클릭 → silently drop → 1초까지 stale UI 가 됨)
+let tickInFlight = false;
+let tickPending = false;
 // MT_SELECTED_HOST 도 여기에 미리 선언 — tickOnce() 가 첫 statement 에서 sync 로
-// 읽기 때문에, 아래 line 902 의 tick() 초기 호출 시점에 TDZ (let 은 hoist 안 됨)
+// 읽기 때문에, 아래 line ~902 의 tick() 초기 호출 시점에 TDZ (let 은 hoist 안 됨)
 // 에 있으면 ReferenceError 가 try/catch 에 swallow 되어 첫 폴링이 silent fail.
-// 한 곳에 같이 두어 결합 관계도 명확히 (Claude r4 critical).
+// 한 곳에 같이 두어 결합 관계도 명확히.
 let MT_SELECTED_HOST = null;
 async function tick(){
-  if(mtTicking2){ mtTickPending = true; return; }
-  do {
-    mtTicking2 = true;
-    mtTickPending = false;
-    await tickOnce();
-    mtTicking2 = false;
-    // pending 이 set 됐다는 건 우리 fetch 도중 selection 이 바뀌었다는 신호 —
-    // 한 번 더 돌아 새 selection 으로 fresh fetch.
-  } while(mtTickPending);
+  if(tickInFlight){ tickPending = true; return; }
+  // try/finally 로 unexpected exception 발생해도 flag reset 보장 — 안 그러면
+  // tick 이 영구 dead 상태가 된다.
+  try {
+    do {
+      tickInFlight = true;
+      tickPending = false;
+      await tickOnce();
+      // pending 이 set 됐다는 건 우리 fetch 도중 selection 이 바뀌었다는 신호 —
+      // 한 번 더 돌아 새 selection 으로 fresh fetch.
+    } while(tickPending);
+  } finally { tickInFlight = false; }
 }
 async function tickOnce(){
   try{
@@ -820,6 +823,10 @@ async function tickOnce(){
       : '/state?_='+Date.now();
     const r = await fetch(url, {cache:'no-store'});
     const d = await r.json();
+    // fetch 도중 user 가 다른 컬럼 클릭 / auto-deselect 발생 시 selection 이 변경됨.
+    // stale 데이터로 detail 을 잠깐 그려 깜빡임을 만들지 않도록 즉시 bail —
+    // tick() 의 do-while 가 tickPending 을 통해 새 selection 으로 곧 재폴링한다.
+    if(selectedHost !== MT_SELECTED_HOST){ tickPending = true; return; }
     LAST = d;
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
@@ -850,7 +857,7 @@ async function tickOnce(){
     renderDetail(d);
     foot.textContent = 'heartbeat#'+d.heartbeat_seq+'  ·  updated '+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById('foot').textContent='연결 오류: '+e; }
-  // mtTicking2 / mtTickPending 은 caller(tick) 가 do-while 패턴으로 관리.
+  // tickInFlight / tickPending 은 caller(tick) 가 try/finally + do-while 로 관리.
 }
 // --- 제어판(plan 선택 → 시작/중지) ---------------------------------------
 let PLANS_KEY="";
