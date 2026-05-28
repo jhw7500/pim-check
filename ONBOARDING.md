@@ -7,7 +7,7 @@
 git clone https://github.com/jhw7500/pim-check.git
 cd pim-check
 python3 -m venv venv && source venv/bin/activate
-pip install pyyaml paramiko
+pip install pyyaml paramiko    # paramiko 는 SSH persistent client — 사실상 필수
 
 # 기본 설정
 python3 pim_check.py --init-config
@@ -16,6 +16,8 @@ python3 pim_check.py --init-config
 # 첫 테스트
 python3 pim_check.py --case 720p_2ch --html --history
 ```
+
+> ⚠️ **paramiko 미설치 시**: `ssh.py` 가 sshpass 폴백 사용 → 매 SSH 호출이 새 TCP/SSH handshake → target sshd 의 systemd-logind SSH session 무한 누적 (실측 25분 200+ session). `pim_web_viewer.py` 는 startup 시 부재를 감지해 stderr 안내 (PR #49). venv 활성화 상태로 viewer 실행하거나 `uv run python3 pim_web_viewer.py` 사용 권장.
 
 ## 대시보드
 

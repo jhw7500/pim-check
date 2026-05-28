@@ -21,7 +21,8 @@ docker run -p 8080:8080 pim-check
 **호스트 (개발 PC):**
 - Python 3.9+
 - PyYAML (`pip install pyyaml`)
-- sshpass (Linux) 또는 paramiko (`pip install paramiko`, Windows/Linux 모두 지원)
+- **paramiko** (`pip install paramiko` — **사실상 필수**): persistent SSH client. 미설치 시 sshpass 폴백으로 자동 전환되지만 매 SSH 호출이 새 TCP/SSH handshake 가 되어 성능 저하 + target sshd 의 systemd-logind SSH session 무한 누적 (실측: comprehensive plan 25분 진행 중 한 target 콘솔에 200+ session 등록). `pim_web_viewer.py` 는 startup 시 paramiko 부재를 감지해 stderr 에 안내 출력 (PR #49 회귀 가드).
+- sshpass (Linux, paramiko 폴백용): paramiko 가 설치된 환경에서는 사용되지 않음.
 
 **타겟:**
 - SSH 접속 가능
