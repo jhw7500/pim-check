@@ -141,6 +141,8 @@ def _acquire_active_lock(lock_f: IO[Any]) -> None:
     플랫폼별 semantics:
       - **POSIX** ``fcntl.flock(LOCK_EX)``: file-wide *advisory* lock — 협조하지
         않는 reader 는 차단되지 않으므로 lock file 을 별도로 열어도 충돌 없음.
+        flock 의 OSError 는 swallow 하지 않고 caller 로 propagate — bad fd 같은
+        예상 외 fd 문제는 graceful degradation 대상이 아니다 (Windows 와 비대칭).
       - **Windows** ``msvcrt.locking(LK_LOCK, 1)``: byte-range *mandatory* lock —
         잠긴 1 byte 범위는 OS 가 강제하므로 같은 lock file 을 reading 모드로 여는
         외부 도구/테스트는 ``AccessDenied`` 를 받는다. ``.active.json.lock`` 은
@@ -158,7 +160,9 @@ def _acquire_active_lock(lock_f: IO[Any]) -> None:
         try:
             lock_f.seek(0)
             _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_LOCK, 1)
-        except OSError:  # pragma: no cover — 10번 재시도 실패 (극히 드뭄) 또는 bad fd
+        except OSError:
+            # 10번 재시도 실패 (극히 드뭄) 또는 bad fd. 테스트가 이 경로를 mock 으로
+            # exercise + assertLogs 로 warning contract pin 하므로 pragma: no cover 부적절.
             _logger.warning(
                 "active.json msvcrt lock acquire 실패 — thread lock + atomic rename 만으로 진행"
             )
@@ -221,10 +225,12 @@ def register_active_host(
         lock_f = open(lock_path, "a+b") if has_file_lock else None
         try:
             if lock_f is not None:
-                # cold-start 시 두 프로세스가 모두 empty 를 보고 각자 sentinel 을 append
-                # 할 수 있다 — 그 race 는 benign: msvcrt.locking 은 길이와 무관하게 byte
-                # 0 만 잠그므로 lock semantics 영향 0. 결과는 multi-byte sentinel 파일
-                # (의미 없는 0x00 들) 로, lock 동작은 정상 유지된다.
+                # 불변: ``msvcrt.locking(LK_LOCK, 1)`` 호출 시점에 lock file 은
+                # **최소 1 byte 이상**. sentinel 자체는 내용 의미 없음 — locking 의
+                # "byte range 가 EOF 안" 전제만 만족시키면 된다. cold-start 시 두
+                # 프로세스가 동시에 empty 를 보고 각자 sentinel append 하는 race 는
+                # benign: 결과 파일이 multi-byte 가 돼도 locking 은 항상 byte 0 만
+                # 잠그므로 lock semantics 에 영향 없음.
                 lock_f.seek(0, os.SEEK_END)
                 if lock_f.tell() == 0:
                     lock_f.write(b"\x00")
