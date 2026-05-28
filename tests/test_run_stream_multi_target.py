@@ -276,6 +276,78 @@ class TestActiveHostsCrossProcessRace(unittest.TestCase):
         self.assertEqual(hosts, expected, f"missing={expected - hosts}, got={hosts}")
 
 
+class TestActiveHostsTTLPruning(unittest.TestCase):
+    """``started_at`` 이 ``ACTIVE_HOSTS_TTL_SEC`` 보다 오래된 entry 는 stale 로
+    간주해 read 시 in-memory 로 가리고 register 시 실제 파일에서도 제거 (PR C).
+
+    의도: 크래시한 producer 가 남긴 entry 가 active.json 에 무한 누적되어
+    viewer host 목록 / Stop All MT_MAX 검증을 오염시키지 않도록.
+    """
+
+    def test_read_active_hosts_hides_stale_entries(self):
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+
+        import time as _time
+        now = _time.time()
+        ttl = run_stream.ACTIVE_HOSTS_TTL_SEC
+        payload = {"hosts": [
+            {"host": "fresh-h", "slug": "fresh-h", "started_at": now - 60},
+            {"host": "stale-h", "slug": "stale-h", "started_at": now - ttl - 1},
+            {"host": "no-ts-h", "slug": "no-ts-h"},  # started_at 없음 → 보존.
+        ]}
+        with open(os.path.join(events_dir, run_stream.ACTIVE_HOSTS_NAME), "w") as f:
+            json.dump(payload, f)
+
+        data = read_active_hosts(events_dir)
+        hosts = {h["host"] for h in data["hosts"]}
+        # stale 은 가려지고, fresh + started_at 없는 entry 는 살아남는다.
+        self.assertEqual(hosts, {"fresh-h", "no-ts-h"})
+
+    def test_register_prunes_stale_entries_from_file(self):
+        """register 가 write critical section 에서 stale entry 를 실제 파일에서 제거."""
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+
+        import time as _time
+        now = _time.time()
+        ttl = run_stream.ACTIVE_HOSTS_TTL_SEC
+        payload = {"hosts": [
+            {"host": "stale-h", "slug": "stale-h", "started_at": now - ttl - 100},
+        ]}
+        with open(os.path.join(events_dir, run_stream.ACTIVE_HOSTS_NAME), "w") as f:
+            json.dump(payload, f)
+
+        run_stream.register_active_host(events_dir, "new-h", "smoke", "new-h", "r.jsonl")
+
+        # raw read (filter 없이) — 실제 파일에서도 stale 사라졌는지 검증.
+        with open(os.path.join(events_dir, run_stream.ACTIVE_HOSTS_NAME)) as f:
+            raw = json.load(f)
+        raw_hosts = {h["host"] for h in raw["hosts"]}
+        self.assertEqual(raw_hosts, {"new-h"}, f"stale-h 가 파일에 남아 있음: {raw_hosts}")
+
+    def test_filter_active_hosts_helper_contract(self):
+        """``_filter_active_hosts`` 의 contract: non-dict 제거, started_at None 보존,
+        cutoff 미만 제거, cutoff 이상 보존.
+        """
+        now = 1_000_000.0
+        ttl = 86400.0
+        hosts = [
+            "not-a-dict",
+            {"host": "no-ts"},
+            {"host": "boundary", "started_at": now - ttl},     # 정확히 cutoff = 보존
+            {"host": "stale", "started_at": now - ttl - 0.1},  # cutoff 미만 = 제거
+            {"host": "fresh", "started_at": now - 60},
+        ]
+        out = run_stream._filter_active_hosts(hosts, now=now, ttl_sec=ttl)
+        names = {h["host"] for h in out}
+        self.assertEqual(names, {"no-ts", "boundary", "fresh"})
+
+
 class TestActiveHostsWindowsFallback(unittest.TestCase):
     """`_fcntl = None` 환경에서 msvcrt.locking 분기가 호출되는지 검증 (PR B).
 

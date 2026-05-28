@@ -43,6 +43,10 @@ CURRENT_SYMLINK_NAME = "current.jsonl"
 BY_TARGET_DIR = "by-target"
 # multi-target viewer 가 enumerate 할 활성 host 인덱스 파일.
 ACTIVE_HOSTS_NAME = "active.json"
+# active.json entry 의 lifetime 상한 — started_at 이 이보다 오래된 항목은 stale 로
+# 간주해 read/register 시 자동 제거. 의도: 크래시한 producer 가 남긴 entry 가 무한히
+# 누적되어 viewer 의 host 목록 / Stop All MT_MAX 검증을 오염시키지 않도록.
+ACTIVE_HOSTS_TTL_SEC = 86400  # 24h
 # active.json read-modify-write 의 cross-process 직렬화에 쓰는 파일 락. 같은 프로세스 안의
 # 스레드 race 는 _ACTIVE_LOCK 으로, 다른 프로세스(별도 pim_check 인스턴스 또는 web 의
 # spawn) race 는 이 파일에 대한 fcntl.flock(LOCK_EX) 으로 막는다.
@@ -116,11 +120,41 @@ def _atomic_write_json(path: str, payload: dict) -> None:
         raise
 
 
+def _filter_active_hosts(
+    hosts: list, now: float | None = None,
+    ttl_sec: float = ACTIVE_HOSTS_TTL_SEC,
+) -> list[dict]:
+    """malformed (non-dict) + stale (started_at + ttl_sec < now) entry 제거.
+
+    동작:
+      - non-dict entry: 제거 (legacy 호환 — 문자열/list 잘못 섞이면 폐기).
+      - ``started_at`` 키 자체가 없는 entry: **보존** (legacy/수동 편집 호환).
+        명시적 timestamp 가 없으면 stale 판정 근거가 없으므로 다음 register 가
+        갱신할 때까지 살려둔다.
+      - ``started_at`` 이 명시됐고 ``< now - ttl_sec``: 제거 (실제 TTL prune).
+    ``now`` 는 테스트가 주입 가능 (기본은 호출 시점 ``time.time()``).
+    """
+    if now is None:
+        now = time.time()
+    cutoff = now - ttl_sec
+    out = []
+    for h in hosts:
+        if not isinstance(h, dict):
+            continue
+        started = h.get("started_at")
+        if started is not None and started < cutoff:
+            continue
+        out.append(h)
+    return out
+
+
 def read_active_hosts(events_dir: str) -> dict:
     """Read ``events/active.json``. Returns ``{"hosts": []}`` if missing/invalid.
 
     File-level 에서만 보호 — 멀티 프로세스 동시 갱신 race 는 update 의 atomic
-    rename 으로 차단된다.
+    rename 으로 차단된다. malformed/stale entry 는 in-memory 로 caller 에게서
+    가린다 (``_filter_active_hosts``); 실제 파일 정리는 ``register_active_host``
+    의 write critical section 에서 수행.
     """
     path = os.path.join(events_dir, ACTIVE_HOSTS_NAME)
     if not os.path.exists(path):
@@ -130,7 +164,7 @@ def read_active_hosts(events_dir: str) -> dict:
             data = json.load(f)
         if not isinstance(data, dict) or not isinstance(data.get("hosts"), list):
             return {"hosts": []}
-        return data
+        return {"hosts": _filter_active_hosts(data["hosts"])}
     except (OSError, ValueError):
         return {"hosts": []}
 
@@ -237,13 +271,10 @@ def register_active_host(
                     lock_f.flush()
                 _acquire_active_lock(lock_f)
             data = read_active_hosts(events_dir)
-            # malformed active.json (e.g. manually edited 후 non-dict 가 섞임) 에서도
-            # AttributeError 로 죽지 않도록 dict 만 필터. 비정상 항목은 폐기 — register
-            # 가 viewer 인프라를 멈추게 둘 가치가 없다.
-            hosts = [
-                h for h in data.get("hosts", [])
-                if isinstance(h, dict) and h.get("host") != host
-            ]
+            # read_active_hosts 가 in-memory 로 malformed/stale 을 이미 필터링하므로
+            # 여기서는 같은 host 중복 entry 만 제거 (slug 단위 1 컬럼 보장).
+            # 다음 write 시점에 stale 도 실제 파일에서 사라져 누수 방지.
+            hosts = [h for h in data["hosts"] if h.get("host") != host]
             hosts.append(entry)
             _atomic_write_json(
                 os.path.join(events_dir, ACTIVE_HOSTS_NAME), {"hosts": hosts},
