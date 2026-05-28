@@ -17,16 +17,25 @@ purely about where the run file lives and how ``current.jsonl`` points at it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
 import time
 from datetime import datetime
+from typing import IO, Any
 
-try:  # POSIX 만 — Windows 는 process-local lock 으로 graceful fallback.
+_logger = logging.getLogger(__name__)
+
+try:  # POSIX → fcntl.flock 으로 file-wide advisory lock.
     import fcntl as _fcntl
-except ImportError:  # pragma: no cover — POSIX 외 환경
+    _msvcrt = None  # type: ignore[assignment]
+except ImportError:  # pragma: no cover — POSIX 외 환경 (Windows 등)
     _fcntl = None  # type: ignore[assignment]
+    try:  # Windows → msvcrt.locking 으로 byte-range mandatory lock.
+        import msvcrt as _msvcrt  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — 비-POSIX, 비-Windows (희박)
+        _msvcrt = None  # type: ignore[assignment]
 
 CURRENT_SYMLINK_NAME = "current.jsonl"
 # multi-target 라우팅: events/<BY_TARGET_DIR>/<host_slug>/ 아래에 per-target 런 파일.
@@ -126,6 +135,54 @@ def read_active_hosts(events_dir: str) -> dict:
         return {"hosts": []}
 
 
+def _acquire_active_lock(lock_f: IO[Any]) -> None:
+    """active.json 의 cross-process exclusive lock 획득.
+
+    플랫폼별 semantics:
+      - **POSIX** ``fcntl.flock(LOCK_EX)``: file-wide *advisory* lock — 협조하지
+        않는 reader 는 차단되지 않으므로 lock file 을 별도로 열어도 충돌 없음.
+        flock 의 OSError 는 swallow 하지 않고 caller 로 propagate — bad fd 같은
+        예상 외 fd 문제는 graceful degradation 대상이 아니다 (Windows 와 비대칭).
+      - **Windows** ``msvcrt.locking(LK_LOCK, 1)``: byte-range *mandatory* lock —
+        잠긴 1 byte 범위는 OS 가 강제하므로 같은 lock file 을 reading 모드로 여는
+        외부 도구/테스트는 ``AccessDenied`` 를 받는다. ``.active.json.lock`` 은
+        register 가 잡고 있는 동안 read-open 금지.
+      - **LK_LOCK** 은 1초 간격 10번 재시도 후 OSError; deadlock 회피 위해 swallow
+        하고 thread lock + atomic rename 만으로 graceful degradation (운영자가
+        invisible degradation 을 감지하도록 ``_logger.warning`` 로 표면화).
+      - 둘 다 없으면 no-op — 동시 갱신은 ``_atomic_write_json`` 의 rename
+        atomicity 에만 의존 (lost-update 가능, 비-POSIX 비-Windows 한정).
+    """
+    if _fcntl is not None:
+        _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
+    elif _msvcrt is not None:
+        # seek 도 OSError 가능 (bad fd) — try 안에 넣어 finally 의 close() 가 항상 실행되게.
+        try:
+            lock_f.seek(0)
+            _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_LOCK, 1)
+        except OSError:
+            # 10번 재시도 실패 (극히 드뭄) 또는 bad fd. 테스트가 이 경로를 mock 으로
+            # exercise + assertLogs 로 warning contract pin 하므로 pragma: no cover 부적절.
+            _logger.warning(
+                "active.json msvcrt lock acquire 실패 — thread lock + atomic rename 만으로 진행"
+            )
+
+
+def _release_active_lock(lock_f: IO[Any]) -> None:
+    """``_acquire_active_lock`` 으로 잡은 lock 해제. 양쪽 OS 모두 idempotent."""
+    if _fcntl is not None:
+        try:
+            _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_UN)
+        except OSError:  # pragma: no cover — lock fd 가 이미 끊겼을 때
+            pass
+    elif _msvcrt is not None:
+        try:
+            lock_f.seek(0)
+            _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_UNLCK, 1)
+        except OSError:  # pragma: no cover — 이미 unlock 됐거나 bad fd
+            pass
+
+
 def register_active_host(
     events_dir: str, host: str, plan: str, board: str, run_basename: str,
 ) -> None:
@@ -137,10 +194,12 @@ def register_active_host(
 
     동시성:
       - **thread 간**: ``_ACTIVE_LOCK`` (process-local threading.Lock)
-      - **process 간**: ``ACTIVE_HOSTS_LOCK_NAME`` 파일에 ``fcntl.flock(LOCK_EX)``
-        — 별도 ``pim_check.py`` 인스턴스나 ``web.py`` 가 spawn 한 자식이 같은
+      - **process 간**: ``ACTIVE_HOSTS_LOCK_NAME`` 파일에 OS 별 file lock —
+        - POSIX: ``fcntl.flock(LOCK_EX)``
+        - Windows: ``msvcrt.locking(LK_LOCK, 1)``
+        별도 ``pim_check.py`` 인스턴스나 ``web.py`` 가 spawn 한 자식이 같은
         ``events_dir`` 의 ``active.json`` 을 동시에 갱신해도 lost-update 가
-        발생하지 않는다. POSIX 외 환경에서는 thread lock 만 적용된다.
+        발생하지 않는다. 비-POSIX 비-Windows 환경에서는 thread lock 만 적용.
     """
     slug = host_slug(host)
     current_rel = os.path.join(BY_TARGET_DIR, slug, CURRENT_SYMLINK_NAME)
@@ -158,11 +217,25 @@ def register_active_host(
     os.makedirs(events_dir, exist_ok=True)
     lock_path = os.path.join(events_dir, ACTIVE_HOSTS_LOCK_NAME)
     with _ACTIVE_LOCK:
-        # POSIX 면 cross-process flock 까지 잡고, 아니면 thread lock 만 적용.
-        lock_f = open(lock_path, "a+", encoding="utf-8") if _fcntl is not None else None
+        # POSIX → fcntl, Windows → msvcrt, 둘 다 없으면 thread lock 만 적용.
+        # 바이너리 모드 — lock file 내용은 의미 없는 sentinel 만이라 text-mode 의
+        # newline 변환/buffering 잡음 회피. msvcrt.locking 의 byte-range lock 은
+        # 비어 있는 파일(EOF 너머)에서 OSError 가능 — 최초 1 byte sentinel 보장.
+        has_file_lock = _fcntl is not None or _msvcrt is not None
+        lock_f = open(lock_path, "a+b") if has_file_lock else None
         try:
             if lock_f is not None:
-                _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
+                # 불변: ``msvcrt.locking(LK_LOCK, 1)`` 호출 시점에 lock file 은
+                # **최소 1 byte 이상**. sentinel 자체는 내용 의미 없음 — locking 의
+                # "byte range 가 EOF 안" 전제만 만족시키면 된다. cold-start 시 두
+                # 프로세스가 동시에 empty 를 보고 각자 sentinel append 하는 race 는
+                # benign: 결과 파일이 multi-byte 가 돼도 locking 은 항상 byte 0 만
+                # 잠그므로 lock semantics 에 영향 없음.
+                lock_f.seek(0, os.SEEK_END)
+                if lock_f.tell() == 0:
+                    lock_f.write(b"\x00")
+                    lock_f.flush()
+                _acquire_active_lock(lock_f)
             data = read_active_hosts(events_dir)
             # malformed active.json (e.g. manually edited 후 non-dict 가 섞임) 에서도
             # AttributeError 로 죽지 않도록 dict 만 필터. 비정상 항목은 폐기 — register
@@ -177,10 +250,7 @@ def register_active_host(
             )
         finally:
             if lock_f is not None:
-                try:
-                    _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_UN)
-                except OSError:  # pragma: no cover — lock fd 가 이미 끊겼을 때
-                    pass
+                _release_active_lock(lock_f)
                 lock_f.close()
 
 
