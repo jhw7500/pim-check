@@ -31,6 +31,45 @@ python3 web.py
 - **Auto Single/Rotate** — 자동 반복 실행
 - **케이스 이름 클릭** — 상세 페이지 (체크별 결과 + 추이 차트)
 
+## Multi-target viewer
+
+`pim_web_viewer.py` 는 단일 host 와 multi host 진행을 모두 지원한다 (v2.1.0).
+
+```bash
+# CLI 원커맨드 자동 시작 (단일 host) — PR #36
+python3 pim_web_viewer.py --plan comprehensive \
+  --target-host 192.168.0.200 --user root --password xxx --until-pass
+# → 서버 기동 후 0.3s 뒤 start_run() 자동 호출, 브라우저에서 포트 열면 즉시 진행 상황 확인
+# → 비밀번호: --password 우선, 미지정 시 PIM_PASSWORD env
+
+# Multi-host (web UI 에서 N개 host 선택 후 Start)
+python3 pim_web_viewer.py
+# → 브라우저에서 host 입력 후 "Start" → 컬럼 자동 추가
+```
+
+**Web API endpoint**:
+
+| Method | Path | 용도 |
+|---|---|---|
+| GET | `/api/active` | 현재 진행 중 host 목록 (`events/active.json`) |
+| GET | `/api/events?host=<slug>` | 특정 host 이벤트 스트림 |
+| POST | `/start` (body: `{targets:[...]}`) | N개 host 동시 spawn |
+| POST | `/stop` (body: `{host}` 또는 `{targets:[...]}`) | 선택 host stop |
+
+**UI 흐름**:
+- 단일 host: 기존 single-view 로 표시
+- 2개 이상: CSS grid 컬럼 자동 분할, host 별 RUNNING/DONE 배지
+- 컬럼 클릭: legacy single-view 가 해당 host 로 전환되어 상세 확인
+
+**이벤트 저장 구조**:
+```
+events/
+├── active.json              # 진행 중 host 인덱스
+├── current.jsonl            # legacy 단일 host 호환
+└── by-target/
+    └── <slug>/              # host 별 분리 (multi 진행 시)
+```
+
 ## Docker로 실행
 
 ```bash

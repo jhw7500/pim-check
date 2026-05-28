@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.1.0 (2026-05-27)
+
+### Multi-target viewer 시리즈
+
+`pim_web_viewer.py` 단일 host 만 지원하던 web viewer 를 N개 host 동시 진행 + per-host detail 드릴다운으로 확장.
+
+- **Per-target event 라우팅** (#38)
+  - `events/by-target/<slug>/` 디렉터리 구조 + `events/active.json` 인덱스
+  - `host=None` 인 legacy 경로 (`events/<file>.jsonl` + `events/current.jsonl`) 호환 유지
+  - `threading.Lock` + `fcntl.flock(LOCK_EX)` 로 single/cross-process race 차단
+
+- **Web API multi-target endpoint** (#40)
+  - `GET /api/active` — 현재 진행 중 host 목록
+  - `GET /api/events?host=<slug>` — 특정 host 이벤트 스트림
+  - `POST /start {targets: [...]}` — N개 host 동시 spawn
+  - `POST /stop {host}` 또는 `{targets: [...]}`
+
+- **Multi-column UI** (#41)
+  - CSS grid `auto-fit` 으로 host 수만큼 컬럼 자동 분할
+  - `tickMulti` 1.5s 폴링 + Stop/Start UX
+  - 단일 host 진행 시 기존 single-view 유지
+
+- **Column click → detail view** (#43)
+  - 컬럼 클릭으로 legacy single-view 가 해당 host 로 전환 (사용자 피드백 반영)
+
+- **JS escape 안전성** (#42, #44)
+  - `INDEX_HTML = r"""..."""` raw string 채택 (#44) — Python ↔ JS escape 함정 영구 차단
+  - Hotfix (#42): `split('\\n')` → `split('\\\\n')` 이중 escape 누락으로 script 전체 parse 실패하던 회귀 수정
+  - `tests/test_viewer_js_smoke.py` Playwright headless 로 모든 JS 함수 `typeof` 검증 (CI `js-smoke` job)
+
 ## v2.0.0 (2026-04-06)
 
 대규모 고도화. 사내 QA 도구에서 완전한 테스트 자동화 플랫폼으로 확장.
