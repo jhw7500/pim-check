@@ -9,7 +9,7 @@
 - **Per-target event 라우팅** (#38)
   - `events/by-target/<slug>/` 디렉터리 구조 + `events/active.json` 인덱스
   - `host=None` 인 legacy 경로 (`events/<file>.jsonl` + `events/current.jsonl`) 호환 유지
-  - `threading.Lock` + `fcntl.flock(LOCK_EX)` 로 single/cross-process race 차단
+  - `threading.Lock` + `fcntl.flock(LOCK_EX)` 로 single/cross-process race 차단 (POSIX 한정 — Windows fallback 은 후속 PR 예정, `run_stream.py` line 27–29 에 `_fcntl = None` import 가드 이미 존재)
 
 - **Web API multi-target endpoint** (#40)
   - `GET /api/active` — 현재 진행 중 host 목록
@@ -27,7 +27,7 @@
 
 - **JS escape 안전성** (#42, #44)
   - `INDEX_HTML = r"""..."""` raw string 채택 (#44) — Python ↔ JS escape 함정 영구 차단
-  - Hotfix (#42): `split('\\n')` → `split('\\\\n')` 이중 escape 누락으로 script 전체 parse 실패하던 회귀 수정
+  - Hotfix (#42): `split('\\n')` → `split('\\\\n')` (Python string literal 기준 — 실제 JS 출력은 `split('\n')` → `split('\\n')`) 이중 escape 누락으로 script 전체 parse 실패하던 회귀 수정
   - `tests/test_viewer_js_smoke.py` Playwright headless 로 모든 JS 함수 `typeof` 검증 (CI `js-smoke` job)
 
 ## v2.0.0 (2026-04-06)

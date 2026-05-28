@@ -37,10 +37,14 @@ python3 web.py
 
 ```bash
 # CLI 원커맨드 자동 시작 (단일 host) — PR #36
+# 권장: 비밀번호는 PIM_PASSWORD env 로 (argv 는 ps/proc 노출 위험)
+PIM_PASSWORD=xxx python3 pim_web_viewer.py --plan comprehensive \
+  --target-host 192.168.0.200 --user root --until-pass
+# → 서버 기동 후 0.3s 뒤 start_run() 자동 호출, 브라우저에서 포트 열면 즉시 진행 상황 확인
+
+# 빠른 로컬 테스트용 (--password 는 ps 에 노출되므로 권장 X)
 python3 pim_web_viewer.py --plan comprehensive \
   --target-host 192.168.0.200 --user root --password xxx --until-pass
-# → 서버 기동 후 0.3s 뒤 start_run() 자동 호출, 브라우저에서 포트 열면 즉시 진행 상황 확인
-# → 비밀번호: --password 우선, 미지정 시 PIM_PASSWORD env
 
 # Multi-host (web UI 에서 N개 host 선택 후 Start)
 python3 pim_web_viewer.py
@@ -53,8 +57,8 @@ python3 pim_web_viewer.py
 |---|---|---|
 | GET | `/api/active` | 현재 진행 중 host 목록 (`events/active.json`) |
 | GET | `/api/events?host=<slug>` | 특정 host 이벤트 스트림 |
-| POST | `/start` (body: `{targets:[...]}`) | N개 host 동시 spawn |
-| POST | `/stop` (body: `{host}` 또는 `{targets:[...]}`) | 선택 host stop |
+| POST | `/start` (body: `{plan, targets:[{host,user,password},...], until_pass?}`) | N개 host 동시 spawn |
+| POST | `/stop` (body: `{"host": "..."}` 또는 `{"targets": [...]}`) | 선택 host stop |
 
 **UI 흐름**:
 - 단일 host: 기존 single-view 로 표시
@@ -65,9 +69,9 @@ python3 pim_web_viewer.py
 ```
 events/
 ├── active.json              # 진행 중 host 인덱스
-├── current.jsonl            # legacy 단일 host 호환
+├── current.jsonl            # legacy 단일 host 진행 시에만 갱신 (multi-target 시 by-target 만 사용)
 └── by-target/
-    └── <slug>/              # host 별 분리 (multi 진행 시)
+    └── <slug>/              # host 별 분리 — <slug> 는 host 의 filesystem-safe 변환 (소문자 + `.` → `-`, 그 외 비-alnum → `_`; 예: 192.168.0.200 → 192-168-0-200)
 ```
 
 ## Docker로 실행
