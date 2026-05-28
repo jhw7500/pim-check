@@ -142,7 +142,9 @@ def _filter_active_hosts(
         if not isinstance(h, dict):
             continue
         started = h.get("started_at")
-        if started is not None and started < cutoff:
+        # isinstance 가드 — Python 3 에서 string/None < float 는 TypeError. 잘못된
+        # 타입은 stale 판정 근거 없음으로 간주해 보존 (started_at 누락 정책과 일관).
+        if isinstance(started, (int, float)) and started < cutoff:
             continue
         out.append(h)
     return out

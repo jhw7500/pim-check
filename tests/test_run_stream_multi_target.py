@@ -347,6 +347,25 @@ class TestActiveHostsTTLPruning(unittest.TestCase):
         names = {h["host"] for h in out}
         self.assertEqual(names, {"no-ts", "boundary", "fresh"})
 
+    def test_filter_guards_against_non_numeric_started_at(self):
+        """``started_at`` 이 string/None/list 등 비-numeric 이면 TypeError 없이 보존.
+
+        Python 3 에서 ``"abc" < 0`` 은 TypeError — Gemini PR #47 리뷰 지적. 잘못된
+        타입은 stale 판정 근거가 없으므로 보존하는 게 안전한 default.
+        """
+        now = 1_000_000.0
+        ttl = 86400.0
+        hosts = [
+            {"host": "str-ts", "started_at": "not-a-number"},
+            {"host": "none-ts", "started_at": None},
+            {"host": "list-ts", "started_at": [1, 2]},
+            {"host": "fresh", "started_at": now - 60},
+        ]
+        # TypeError 없이 통과해야 — 잘못된 타입은 보존, fresh 도 보존.
+        out = run_stream._filter_active_hosts(hosts, now=now, ttl_sec=ttl)
+        names = {h["host"] for h in out}
+        self.assertEqual(names, {"str-ts", "none-ts", "list-ts", "fresh"})
+
 
 class TestActiveHostsWindowsFallback(unittest.TestCase):
     """`_fcntl = None` 환경에서 msvcrt.locking 분기가 호출되는지 검증 (PR B).
