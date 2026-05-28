@@ -323,9 +323,18 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
         msvcrt_mock = MagicMock()
         msvcrt_mock.LK_LOCK = 1
         msvcrt_mock.LK_UNLCK = 0
-        # acquire 만 실패, release 는 정상 — graceful degradation 시 thread lock 으로 진행
-        # 하더라도 finally 의 release 경로는 여전히 호출돼 idempotent 하게 처리되어야 함.
-        msvcrt_mock.locking.side_effect = [OSError("retry exhausted"), None]
+        # acquire 만 실패, 이후 호출은 모두 정상 — graceful degradation 시에도 finally 의
+        # release 경로가 idempotent 하게 호출되어야 함. callable side_effect 로 미래 변경
+        # (helper 가 locking 추가 호출하는 경우 등) 에도 StopIteration 안 나도록 견고화.
+        _call_state = {"acquire_done": False}
+
+        def _locking_side_effect(fd, mode, length):
+            if mode == msvcrt_mock.LK_LOCK and not _call_state["acquire_done"]:
+                _call_state["acquire_done"] = True
+                raise OSError("retry exhausted")
+            return None
+
+        msvcrt_mock.locking.side_effect = _locking_side_effect
 
         with patch.object(run_stream, "_fcntl", None), \
              patch.object(run_stream, "_msvcrt", msvcrt_mock):

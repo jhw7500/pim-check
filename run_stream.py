@@ -23,15 +23,16 @@ import tempfile
 import threading
 import time
 from datetime import datetime
+from typing import IO, Any
 
 _logger = logging.getLogger(__name__)
 
-try:  # POSIX → fcntl.flock 으로 cross-process lock.
+try:  # POSIX → fcntl.flock 으로 file-wide advisory lock.
     import fcntl as _fcntl
     _msvcrt = None  # type: ignore[assignment]
 except ImportError:  # pragma: no cover — POSIX 외 환경 (Windows 등)
     _fcntl = None  # type: ignore[assignment]
-    try:  # Windows → msvcrt.locking 으로 byte-range lock (PR B).
+    try:  # Windows → msvcrt.locking 으로 byte-range mandatory lock.
         import msvcrt as _msvcrt  # type: ignore[no-redef]
     except ImportError:  # pragma: no cover — 비-POSIX, 비-Windows (희박)
         _msvcrt = None  # type: ignore[assignment]
@@ -134,16 +135,21 @@ def read_active_hosts(events_dir: str) -> dict:
         return {"hosts": []}
 
 
-def _acquire_active_lock(lock_f) -> None:
+def _acquire_active_lock(lock_f: IO[Any]) -> None:
     """active.json 의 cross-process exclusive lock 획득.
 
-    POSIX → ``fcntl.flock(LOCK_EX)`` (file-wide advisory lock).
-    Windows → ``msvcrt.locking(LK_LOCK, 1)`` (byte-range mandatory lock —
-    file 시작 1 byte 잠금으로 active.json read-modify-write 사이클 직렬화 충분).
-    ``LK_LOCK`` 은 1초 간격 10번 재시도 후 OSError; deadlock 회피 위해 OSError
-    swallow 하고 thread lock 만으로 진행한다.
-    둘 다 없으면 no-op — 동시 갱신은 ``_atomic_write_json`` 의 rename atomicity
-    에만 의존 (lost-update 가능, 비-POSIX 비-Windows 환경 한정).
+    플랫폼별 semantics:
+      - **POSIX** ``fcntl.flock(LOCK_EX)``: file-wide *advisory* lock — 협조하지
+        않는 reader 는 차단되지 않으므로 lock file 을 별도로 열어도 충돌 없음.
+      - **Windows** ``msvcrt.locking(LK_LOCK, 1)``: byte-range *mandatory* lock —
+        잠긴 1 byte 범위는 OS 가 강제하므로 같은 lock file 을 reading 모드로 여는
+        외부 도구/테스트는 ``AccessDenied`` 를 받는다. ``.active.json.lock`` 은
+        register 가 잡고 있는 동안 read-open 금지.
+      - **LK_LOCK** 은 1초 간격 10번 재시도 후 OSError; deadlock 회피 위해 swallow
+        하고 thread lock + atomic rename 만으로 graceful degradation (운영자가
+        invisible degradation 을 감지하도록 ``_logger.warning`` 로 표면화).
+      - 둘 다 없으면 no-op — 동시 갱신은 ``_atomic_write_json`` 의 rename
+        atomicity 에만 의존 (lost-update 가능, 비-POSIX 비-Windows 한정).
     """
     if _fcntl is not None:
         _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
@@ -153,13 +159,12 @@ def _acquire_active_lock(lock_f) -> None:
             lock_f.seek(0)
             _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_LOCK, 1)
         except OSError:  # pragma: no cover — 10번 재시도 실패 (극히 드뭄) 또는 bad fd
-            # 운영자가 invisible degradation 을 감지할 수 있도록 warning 남김.
             _logger.warning(
                 "active.json msvcrt lock acquire 실패 — thread lock + atomic rename 만으로 진행"
             )
 
 
-def _release_active_lock(lock_f) -> None:
+def _release_active_lock(lock_f: IO[Any]) -> None:
     """``_acquire_active_lock`` 으로 잡은 lock 해제. 양쪽 OS 모두 idempotent."""
     if _fcntl is not None:
         try:
@@ -187,7 +192,7 @@ def register_active_host(
       - **thread 간**: ``_ACTIVE_LOCK`` (process-local threading.Lock)
       - **process 간**: ``ACTIVE_HOSTS_LOCK_NAME`` 파일에 OS 별 file lock —
         - POSIX: ``fcntl.flock(LOCK_EX)``
-        - Windows: ``msvcrt.locking(LK_LOCK, 1)`` (PR B)
+        - Windows: ``msvcrt.locking(LK_LOCK, 1)``
         별도 ``pim_check.py`` 인스턴스나 ``web.py`` 가 spawn 한 자식이 같은
         ``events_dir`` 의 ``active.json`` 을 동시에 갱신해도 lost-update 가
         발생하지 않는다. 비-POSIX 비-Windows 환경에서는 thread lock 만 적용.
@@ -209,10 +214,17 @@ def register_active_host(
     lock_path = os.path.join(events_dir, ACTIVE_HOSTS_LOCK_NAME)
     with _ACTIVE_LOCK:
         # POSIX → fcntl, Windows → msvcrt, 둘 다 없으면 thread lock 만 적용.
+        # 바이너리 모드 — lock file 내용은 의미 없는 sentinel 만이라 text-mode 의
+        # newline 변환/buffering 잡음 회피. msvcrt.locking 의 byte-range lock 은
+        # 비어 있는 파일(EOF 너머)에서 OSError 가능 — 최초 1 byte sentinel 보장.
         has_file_lock = _fcntl is not None or _msvcrt is not None
-        lock_f = open(lock_path, "a+", encoding="utf-8") if has_file_lock else None
+        lock_f = open(lock_path, "a+b") if has_file_lock else None
         try:
             if lock_f is not None:
+                lock_f.seek(0, os.SEEK_END)
+                if lock_f.tell() == 0:
+                    lock_f.write(b"\x00")
+                    lock_f.flush()
                 _acquire_active_lock(lock_f)
             data = read_active_hosts(events_dir)
             # malformed active.json (e.g. manually edited 후 non-dict 가 섞임) 에서도
