@@ -409,6 +409,8 @@ def build_state(path: str) -> dict:
         "elapsed_s": round(st.elapsed_s, 1),
         "eta": round(st.eta_seconds, 1),
         "run_ended": st.run_ended,
+        "start_ts": st.start_ts,
+        "end_ts": st.end_ts,
         "producer_lost": (not st.run_ended) and idle > PRODUCER_LOST_AFTER,
         "idle_s": round(idle, 1),
         "cases": st.cases,
@@ -629,6 +631,20 @@ let LAST_RUN = null;   // 직전 폴링의 run_id (런 경계 감지용)
 function fmtEta(s){ s=Math.max(0,Math.round(s||0)); return s<60?("~"+s+"s"):("~"+Math.floor(s/60)+"m "+(s%60)+"s"); }
 function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); return s<60?(s+"s"):(Math.floor(s/60)+"m "+(s%60)+"s"); }
 function fmtClock(s){ s=Math.max(0,Math.floor(s||0)); const m=Math.floor(s/60); return m?(m+"m "+(s%60)+"s"):(s+"s"); }
+// ISO 8601 ts (서버 _now_iso 출력) → 로컬 시각 표시. Invalid/null 은 '—'.
+// 같은 날이면 HH:MM:SS, 다른 날이면 M/D HH:MM:SS 로 압축 (UI 폭 절약).
+function fmtAbsTs(ts){
+  if(!ts) return '—';
+  const d = new Date(ts);
+  if(isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const sameDay = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  const time = hh+':'+mm+':'+ss;
+  return sameDay ? time : ((d.getMonth()+1)+'/'+d.getDate()+' '+time);
+}
 function splitReason(r){ return String(r||'').split(';').map(s=>s.trim()).filter(Boolean); }
 
 // 서버 elapsed_s 를 기준점 삼아 매초 부드럽게 흐르는 경과 시간(폴링 사이도 진행).
@@ -724,6 +740,9 @@ function renderDetail(d){
     ? ('경과 '+fmtClock(Math.max(0, liveElapsed()-cd.started_s)))
     : ('소요 '+fmtDur(cd.duration_s));
   let metaTxt = 'phase '+(cd.phase||'—')+'  ·  '+timeTxt;
+  // 케이스별 절대 시각 — 시작은 항상 (있을 때), 완료는 not-running 일 때만.
+  if(cd.started_ts){ metaTxt += '  ·  시작 '+fmtAbsTs(cd.started_ts); }
+  if(cd.ended_ts && !running){ metaTxt += '  ·  완료 '+fmtAbsTs(cd.ended_ts); }
   if(cd.checks_total){ metaTxt += '  ·  검증 '+cd.checks_passed+'/'+cd.checks_total; }
   if(cd.fail_count){ metaTxt += '  ·  fault 이벤트 '+cd.fail_count+'건'; }
   meta.textContent = metaTxt;
@@ -839,7 +858,12 @@ async function tickOnce(){
     const foot = document.getElementById('foot');
     if(!d.exists){ SRV.exists=false; document.getElementById('meta').textContent='이벤트 스트림 없음 (pim_check.py --plan 실행 대기)'; foot.textContent='polling…'; return; }
     const hostTag = selectedHost ? '  [◉ '+selectedHost+']' : '';
-    document.getElementById('meta').textContent = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?')+hostTag;
+    // 상대 경과(아래 clocks)는 그대로 두고, meta 줄에 측정 시작 시각을 절대값으로 추가.
+    // 완료 시각은 run_ended 일 때만 (진행 중에는 의미 없음).
+    let metaTxt = 'plan='+(d.plan||'?')+'  board='+(d.board||'?')+'  run='+(d.run_id||'?')+hostTag;
+    metaTxt += '  ·  시작 '+fmtAbsTs(d.start_ts);
+    if(d.run_ended){ metaTxt += '  ·  완료 '+fmtAbsTs(d.end_ts); }
+    document.getElementById('meta').textContent = metaTxt;
     // 런 경계 감지: run_id 가 바뀌면 새 런의 elapsed_s 로 baseline 을 리셋한다.
     // (안 그러면 아래 max 클램프가 이전 런의 높은 elapsed 를 그대로 끌고 와 새 런 시계가 오염됨)
     const runChanged = (d.run_id != null && d.run_id !== LAST_RUN);
@@ -1001,7 +1025,12 @@ function mtCol(host, plan, st){
     return col;
   }
   const meta = document.createElement('div'); meta.className='mt-meta';
-  meta.textContent = 'run='+(st.run_id||'?')+'  ·  경과 '+mtFmtClock(st.elapsed_s);
+  // 상대 경과 + 절대 시각 — 측정 시작은 항상 표시, 완료는 run_ended 일 때만 (진행
+  // 중에는 의미 없음). 같은 날 안이면 HH:MM:SS, 일 바뀌면 M/D HH:MM:SS.
+  let metaTxt = 'run='+(st.run_id||'?')+'  ·  경과 '+mtFmtClock(st.elapsed_s)
+              +'  ·  시작 '+fmtAbsTs(st.start_ts);
+  if(st.run_ended){ metaTxt += '  ·  완료 '+fmtAbsTs(st.end_ts); }
+  meta.textContent = metaTxt;
   col.appendChild(meta);
   const bar = document.createElement('div'); bar.className='mt-bar2';
   const i = document.createElement('i'); const pct = st.total ? Math.round(100*st.completed/st.total) : 0;
