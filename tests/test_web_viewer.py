@@ -203,3 +203,34 @@ def test_confirmed_vs_resolved_separated(tmp_path):
     s = build_state(p)
     assert s["fail_classification"] == {"c1": "resolved", "c2": "confirmed"}
     assert s["case_detail"]["c2"]["status"] == "fail"
+
+
+# ---- _check_paramiko_available (silent sshpass 폴백 차단 검증) -------------------------
+
+def test_check_paramiko_available_returns_true_when_present(capsys):
+    """paramiko 가 환경에 있으면 True + stderr silent."""
+    import importlib
+    try:
+        importlib.import_module("paramiko")
+    except ImportError:  # pragma: no cover — pyproject 의존성이라 거의 항상 있음
+        import pytest
+        pytest.skip("paramiko unavailable in test env")
+    from pim_web_viewer import _check_paramiko_available
+    assert _check_paramiko_available() is True
+    assert capsys.readouterr().err == ""
+
+
+def test_check_paramiko_available_warns_when_missing(monkeypatch, capsys):
+    """paramiko import 실패 시 False + stderr 에 paramiko/sshpass 안내 출력.
+
+    sys.modules 에 ``None`` 을 박으면 다음 `import paramiko` 가 ImportError 발생
+    (Python 3.5+ 의 documented 동작). 함수 안 import 가 그 ImportError 를 잡아
+    경고 출력 + False 반환하는지 검증.
+    """
+    import sys
+    from pim_web_viewer import _check_paramiko_available
+    monkeypatch.setitem(sys.modules, "paramiko", None)
+    assert _check_paramiko_available() is False
+    err = capsys.readouterr().err
+    assert "paramiko" in err
+    assert "sshpass" in err.lower()

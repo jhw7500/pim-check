@@ -1341,6 +1341,37 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
 
+def _check_paramiko_available() -> bool:
+    """자식 spawn 환경에서 paramiko import 가능 여부 검증 (PR: silent 폴백 차단).
+
+    pim_check 자식은 ``sys.executable`` 로 spawn 되므로 viewer 와 같은 interpreter.
+    여기서 import 가능 = 자식도 가능 = paramiko persistent client 사용. import 실패
+    = 자식이 sshpass 폴백 (``ssh.py._run_subprocess``) — 매 SSH 호출이 새 TCP/SSH
+    handshake 가 되어 target sshd 의 systemd-logind 가 새 session 을 무한 누적
+    (실측 25분 만에 200+ session 사례). stderr 에 명확한 안내 출력, 시작은 진행
+    (사용자가 의도적으로 sshpass 폴백을 쓸 수 있는 여지 보존).
+
+    return: True = paramiko 사용 가능 (silent), False = 부재 (안내 출력 후 진행).
+    """
+    try:
+        import paramiko  # noqa: F401
+        return True
+    except ImportError:
+        print(
+            "\npim_web_viewer: ⚠️  paramiko 패키지가 없습니다 — 자식 pim_check 가\n"
+            "  sshpass 폴백을 사용해 매 SSH 호출마다 새 연결을 만듭니다.\n"
+            "  (성능 저하 + target systemd-logind 의 SSH session 누적 risk.)\n"
+            "\n"
+            "  해결책 (택일):\n"
+            "    1. uv run python3 pim_web_viewer.py     ← venv paramiko 사용 (권장)\n"
+            f"    2. python3 -m pip install --user paramiko    ({sys.executable!r} 에 설치)\n"
+            "       PEP 668 차단 시 --break-system-packages 추가\n"
+            "    3. apt install python3-paramiko         (system 전역, sudo 필요)\n",
+            file=sys.stderr,
+        )
+        return False
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="pim_web_viewer",
@@ -1367,6 +1398,12 @@ def main(argv=None) -> int:
     if args.auto_plan and not args.target_host:
         print("pim_web_viewer: --plan 사용 시 --target-host 필요", file=sys.stderr)
         return 2
+    # paramiko 부재 silent 폴백 차단. 자식 pim_check 는 `sys.executable` 로 spawn 되므로
+    # 같은 interpreter 의 paramiko import 가능 여부 = 자식의 폴백 여부. import 실패 시
+    # 자식이 sshpass 폴백 (매 SSH 호출 새 연결) — 성능 저하 + target systemd-logind 의
+    # SSH session 무한 누적 risk. comprehensive plan 실측에서 target 의 sshd 가 25분 만에
+    # 200+ session 을 등록한 회귀 사례 가드.
+    _check_paramiko_available()
     _Handler.events_path = _events_path(args.path)
     # spawn 한 plan 런 자식 프로세스가 종료/중지 시 좀비로 남지 않도록 자동 reap.
     # (start_run 은 fire-and-forget Popen 이라 wait() 하지 않음)
