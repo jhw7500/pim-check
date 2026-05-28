@@ -25,6 +25,11 @@ class ViewerState:
         self.elapsed_s: float = 0.0
         self.last_heartbeat_seq: int = 0
         self.run_ended: bool = False
+        # 절대 시각 (ISO 8601 문자열) — run_start/run_end 이벤트의 ts 캡처.
+        # 상대 시간(elapsed_s/eta) 외에 측정 시작/완료 시각을 UI 에 표시하기 위함.
+        # 이벤트에 ts 가 없으면 None 유지.
+        self.start_ts: str | None = None
+        self.end_ts: str | None = None
         self._cases: list[str] = []           # plan 순서 유지
         self._status: dict[str, str] = {}      # name -> pending/running/pass/fail
         self._fail_summaries: dict[str, str] = {}  # name -> reason (발생 순서)
@@ -33,6 +38,11 @@ class ViewerState:
         self._case_phase: dict[str, str] = {}          # name -> 마지막 phase
         self._case_started_s: dict[str, float] = {}    # name -> 첫 case_start elapsed_s
         self._case_ended_s: dict[str, float] = {}      # name -> 마지막 case_end elapsed_s
+        # 케이스별 절대 시각 (ISO 8601). 케이스 detail UI 에서 측정/완료 시각을
+        # 절대값으로 표시. 상대(*_s) 와 병렬로 보존 — 같은 *_s 정책 (started 는
+        # setdefault, ended 는 마지막 값 덮어쓰기).
+        self._case_started_ts: dict[str, str] = {}
+        self._case_ended_ts: dict[str, str] = {}
         self._case_pending: dict[str, str] = {}        # name -> 마지막 '준비 중' reason (fault 아님)
         self._case_desc: dict[str, str] = {}           # name -> 케이스 설명 (case_start)
         self._case_checklist: dict[str, list[dict]] = {}  # name -> [{name,command,expected}]
@@ -62,6 +72,11 @@ class ViewerState:
             self._cases = list(event.get("cases") or [])
             self.total_cases = event.get("total_cases", len(self._cases))
             self._status = {c: "pending" for c in self._cases}
+            # 절대 시각 캡처 — run_start 만이 측정 시작 시각의 권위 값. case_start
+            # 의 ts 는 첫 case 가 시작된 시각이라 plan 로드/접속 오버헤드를 놓친다.
+            start_ts = event.get("ts")
+            if isinstance(start_ts, str):
+                self.start_ts = start_ts
             # 대기 케이스도 검증 항목을 미리 보여주도록 run_start 의 plan 을 캡처.
             for cname, plan in (event.get("case_plans") or {}).items():
                 if not isinstance(plan, dict):
@@ -82,6 +97,9 @@ class ViewerState:
                     self._case_phase[name] = phase
                 if isinstance(es, (int, float)):
                     self._case_started_s.setdefault(name, float(es))
+                start_ts = event.get("ts")
+                if isinstance(start_ts, str):
+                    self._case_started_ts.setdefault(name, start_ts)
                 desc = event.get("case_desc")
                 if desc is not None:
                     self._case_desc[name] = desc
@@ -113,6 +131,9 @@ class ViewerState:
                     self._case_phase[name] = phase
                 if isinstance(es, (int, float)):
                     self._case_ended_s[name] = float(es)
+                end_ts = event.get("ts")
+                if isinstance(end_ts, str):
+                    self._case_ended_ts[name] = end_ts
                 # 케이스 종료 → 준비 중/체크 상태 정리.
                 self._case_pending.pop(name, None)
                 self._case_latest_reason_by_check.pop(name, None)
@@ -131,6 +152,9 @@ class ViewerState:
             self.fail_count = event.get("fail_count", self.fail_count)
             self.current_case = None
             self.run_ended = True
+            end_ts = event.get("ts")
+            if isinstance(end_ts, str):
+                self.end_ts = end_ts
         elif et == "heartbeat":
             seq = event.get("heartbeat_seq")
             if isinstance(seq, int):
@@ -360,6 +384,8 @@ class ViewerState:
                 "phase": self._case_phase.get(name),
                 "started_s": start,
                 "ended_s": end,
+                "started_ts": self._case_started_ts.get(name),
+                "ended_ts": self._case_ended_ts.get(name),
                 "duration_s": round(duration, 2) if duration is not None else None,
                 "classification": self._classify(name),
                 "fail_count": len(self._case_fails.get(name, [])),
