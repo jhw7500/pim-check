@@ -150,6 +150,10 @@ def _spawn_one_target(events_dir: str, clean: dict, until_pass: bool) -> int:
     os.makedirs(events_dir, exist_ok=True)
     child_env = {**os.environ, "PIM_PASSWORD": clean["password"]}
     with open(os.path.join(events_dir, "viewer_run.log"), "ab") as logf:
+        # NOTE: _check_paramiko_available() 가 같은 sys.executable 의 paramiko import
+        # 가능 여부로 자식의 sshpass 폴백 위험을 판단한다. 만약 여기를 다른 interpreter
+        # (e.g. shutil.which('python3'), 하드코딩 경로, 별도 venv) 로 바꾸면 그 함수의
+        # 보장이 silent 하게 깨진다 — 그쪽도 같이 갱신할 것.
         argv = [sys.executable, os.path.join(REPO_DIR, "pim_check.py"),
                 "--plan", clean["plan"], "--host", clean["host"],
                 "--user", clean["user"],
@@ -1352,11 +1356,14 @@ def _check_paramiko_available() -> bool:
     (사용자가 의도적으로 sshpass 폴백을 쓸 수 있는 여지 보존).
 
     return: True = paramiko 사용 가능 (silent), False = 부재 (안내 출력 후 진행).
+
+    참고: ``ssh.py._has_paramiko()`` 도 동일한 import probe 를 사용 (runtime 분기용).
+    두 함수는 서로 다른 목적 (startup 진단 vs runtime 선택) 으로 의도적으로 분리.
     """
     try:
         import paramiko  # noqa: F401
         return True
-    except ImportError:
+    except Exception:
         print(
             "\npim_web_viewer: ⚠️  paramiko 패키지가 없습니다 — 자식 pim_check 가\n"
             "  sshpass 폴백을 사용해 매 SSH 호출마다 새 연결을 만듭니다.\n"
@@ -1403,7 +1410,7 @@ def main(argv=None) -> int:
     # 자식이 sshpass 폴백 (매 SSH 호출 새 연결) — 성능 저하 + target systemd-logind 의
     # SSH session 무한 누적 risk. comprehensive plan 실측에서 target 의 sshd 가 25분 만에
     # 200+ session 을 등록한 회귀 사례 가드.
-    _check_paramiko_available()
+    _ = _check_paramiko_available()  # side-effect: paramiko 부재 시 stderr 안내
     _Handler.events_path = _events_path(args.path)
     # spawn 한 plan 런 자식 프로세스가 종료/중지 시 좀비로 남지 않도록 자동 reap.
     # (start_run 은 fire-and-forget Popen 이라 wait() 하지 않음)
