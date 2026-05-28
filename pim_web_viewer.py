@@ -1363,7 +1363,7 @@ def _check_paramiko_available() -> bool:
     try:
         import paramiko  # noqa: F401
         return True
-    except Exception:
+    except ImportError:
         print(
             "\npim_web_viewer: ⚠️  paramiko 패키지가 없습니다 — 자식 pim_check 가\n"
             "  sshpass 폴백을 사용해 매 SSH 호출마다 새 연결을 만듭니다.\n"
@@ -1410,7 +1410,7 @@ def main(argv=None) -> int:
     # 자식이 sshpass 폴백 (매 SSH 호출 새 연결) — 성능 저하 + target systemd-logind 의
     # SSH session 무한 누적 risk. comprehensive plan 실측에서 target 의 sshd 가 25분 만에
     # 200+ session 을 등록한 회귀 사례 가드.
-    _ = _check_paramiko_available()  # side-effect: paramiko 부재 시 stderr 안내
+    _check_paramiko_available()  # warn-and-continue — return 값은 caller 에 무의미
     _Handler.events_path = _events_path(args.path)
     # spawn 한 plan 런 자식 프로세스가 종료/중지 시 좀비로 남지 않도록 자동 reap.
     # (start_run 은 fire-and-forget Popen 이라 wait() 하지 않음)
