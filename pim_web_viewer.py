@@ -592,6 +592,7 @@ INDEX_HTML = r"""<!doctype html>
     <span class="title">Multi-target 실행 중</span>
     <span class="count" id="mtCount">0 hosts</span>
     <button class="stopall" id="mt_stop_all">■ Stop All</button>
+    <span class="cmsg" id="mt_stop_msg"></span>
   </div>
   <div class="mt-grid" id="mtGrid" style="display:none"></div>
   <div class="sub" id="meta">waiting for event stream…</div>
@@ -1124,29 +1125,53 @@ async function stopHost(host){
 }
 async function stopAll(){
   const btn = document.getElementById('mt_stop_all');
+  const msg = document.getElementById('mt_stop_msg');
   // disabled 를 *모든 await 이전에* 설정 — fetchActive/Promise.all 등 await 도중
   // 두 번째 click 이 들어와도 두 동시 호출 모두 guard 를 통과해서 confirm 가
   // 중복 뜨고 stop 도 중복 전송되는 race 를 막는다.
   if(btn.disabled) return;
   btn.disabled = true;
+  if(msg){ msg.textContent='활성 host 조회 중…'; msg.className='cmsg'; }
   try {
     const data = await fetchActive();
-    if(data === null){ alert('활성 호스트 목록을 가져오지 못했습니다.'); return; }
-    const hosts = (data.hosts||[]).map(h => h.host);
-    if(hosts.length === 0) return;
+    if(data === null){
+      if(msg){ msg.textContent='활성 호스트 목록 조회 실패'; msg.className='cmsg err'; }
+      alert('활성 호스트 목록을 가져오지 못했습니다.'); return;
+    }
+    // TOCTOU snapshot — 이 시점의 active.json 결과를 그대로 const 로 동결하고
+    // 이후 모든 결정(확인 다이얼로그/`/stop` payload)이 같은 snapshot 만 본다.
+    // fetchHostState 들과 confirm 사이에 새 host 가 spawn 되어도 이번 round 의
+    // stop 대상은 변하지 않으며, 새 host 는 다음 stopAll 사이클에서 처리된다.
+    const snapshotHosts = (data.hosts||[]).map(h => h.host);
+    if(snapshotHosts.length === 0){
+      if(msg){ msg.textContent='활성 host 없음'; msg.className='cmsg'; }
+      return;
+    }
     // 활성 host 만 필터 — server 가 spawn 시점에 MAX_CONCURRENT_TARGETS 를 강제하므로
     // running.length 가 MT_MAX 를 넘는 일은 정상 흐름에 없음. 만약 초과한다면 server
     // cap 변경 / stale active.json edge case 신호 — 잘라내 묵음 처리하기보다 console
     // 경고로 노출 (silently skip 했다가 사용자가 "왜 일부만 멈춰?" 가 더 혼란스럽다).
-    const states = await Promise.all(hosts.map(h => fetchHostState(h)));
-    const running = mtRunningHosts(hosts, states);
+    const states = await Promise.all(snapshotHosts.map(h => fetchHostState(h)));
+    const running = mtRunningHosts(snapshotHosts, states);
     if(running.length > MT_MAX){
       console.warn('mt: running.length('+running.length+') > MT_MAX('+MT_MAX+') — server limit drift 의심');
     }
-    if(running.length === 0){ alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return; }
-    if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')) return;
+    if(running.length === 0){
+      if(msg){ msg.textContent='실행 중인 host 가 없음 (이미 완료/중지됨)'; msg.className='cmsg'; }
+      alert('실행 중인 host 가 없습니다 (이미 완료/중지됨).'); return;
+    }
+    if(!confirm('Stop '+running.length+' running host'+(running.length>1?'s':'')+'?')){
+      if(msg){ msg.textContent='취소됨'; msg.className='cmsg'; }
+      return;
+    }
+    if(msg){ msg.textContent='멈추는 중… ('+running.length+' host)'; msg.className='cmsg'; }
     const res = await mtPostJSON('/stop', {targets: running});
-    if(!res.ok) alert('Stop All 실패: '+(res.body.error || ('HTTP '+res.status)));
+    if(!res.ok){
+      if(msg){ msg.textContent='Stop All 실패: '+(res.body.error || ('HTTP '+res.status)); msg.className='cmsg err'; }
+      alert('Stop All 실패: '+(res.body.error || ('HTTP '+res.status)));
+    } else {
+      if(msg){ msg.textContent='완료 — '+running.length+' host stop 요청됨'; msg.className='cmsg ok'; }
+    }
   } finally { btn.disabled = false; }
 }
 async function startMulti(){

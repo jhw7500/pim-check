@@ -50,17 +50,21 @@ def test_active_hosts_returns_registered_entries(tmp_path, monkeypatch):
     os.makedirs(events_dir, exist_ok=True)
     _patch_dir(monkeypatch, events_dir)
     # Step 1 의 register_active_host 가 만든 파일과 같은 형태를 시뮬레이션.
+    # started_at 은 *현재* 기준 fresh — TTL prune (ACTIVE_HOSTS_TTL_SEC) 에 걸리지
+    # 않도록. 고정 epoch 을 쓰면 시간이 지나며 회귀 테스트가 silently 깨진다.
+    import time as _time
+    now = _time.time()
     payload = {"hosts": [
         {"host": "192.168.0.5", "slug": "192-168-0-5", "plan": "smoke",
          "board": "192.168.0.5",
          "current": "by-target/192-168-0-5/current.jsonl",
          "run": "by-target/192-168-0-5/T1_smoke_192-168-0-5.jsonl",
-         "started_at": 1700000000.0},
+         "started_at": now - 60},
         {"host": "host-b", "slug": "host-b", "plan": "comprehensive",
          "board": "host-b",
          "current": "by-target/host-b/current.jsonl",
          "run": "by-target/host-b/T2_comprehensive_host-b.jsonl",
-         "started_at": 1700000010.0},
+         "started_at": now - 30},
     ]}
     with open(os.path.join(events_dir, "active.json"), "w") as f:
         json.dump(payload, f)
