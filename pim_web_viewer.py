@@ -1227,6 +1227,10 @@ async function startMulti(){
     if(res.ok){
       msg.textContent = '시작됨 — '+(res.body.started||[]).length+' host';
       msg.className='cmsg ok';
+      // textarea reset — incremental start 지원. form 을 다시 열어 새 host 만
+      // 입력할 때 직전 host (이미 RUNNING) 가 textarea 에 남아 all-or-nothing
+      // 409 conflict 로 거부되던 회귀를 막는다 (사용자 보고: 스탑 없이 host 추가 불가).
+      document.getElementById('mt_hosts').value = '';
       document.getElementById('mtform').classList.remove('open');
     } else {
       msg.textContent = '실패: '+(res.body.error || ('HTTP '+res.status));
