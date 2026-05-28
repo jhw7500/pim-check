@@ -274,5 +274,91 @@ class TestActiveHostsCrossProcessRace(unittest.TestCase):
         self.assertEqual(hosts, expected, f"missing={expected - hosts}, got={hosts}")
 
 
+class TestActiveHostsWindowsFallback(unittest.TestCase):
+    """`_fcntl = None` 환경에서 msvcrt.locking 분기가 호출되는지 검증 (PR B).
+
+    실제 Windows CI 가 없어 mock 으로 환경 시뮬레이션 — Linux CI 에서도 msvcrt
+    분기가 정상 호출되는지 회귀 가드 (Windows 사용자가 fcntl 없이도 동시
+    /start race 안전성을 가지도록).
+    """
+
+    def test_register_uses_msvcrt_when_fcntl_absent(self):
+        from unittest.mock import MagicMock, patch
+        import run_stream
+
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+
+        msvcrt_mock = MagicMock()
+        msvcrt_mock.LK_LOCK = 1
+        msvcrt_mock.LK_UNLCK = 0
+
+        with patch.object(run_stream, "_fcntl", None), \
+             patch.object(run_stream, "_msvcrt", msvcrt_mock):
+            run_stream.register_active_host(
+                events_dir, "win-h", "smoke", "win-h", "r.jsonl",
+            )
+
+        # 결과: active.json 에 정상 등록.
+        data = read_active_hosts(events_dir)
+        self.assertIn("win-h", {h["host"] for h in data["hosts"]})
+
+        # msvcrt.locking 이 LK_LOCK + LK_UNLCK 으로 각각 호출됐는지.
+        calls = msvcrt_mock.locking.call_args_list
+        self.assertGreaterEqual(
+            len(calls), 2, f"expected at least lock+unlock, got: {calls}",
+        )
+        modes = [c.args[1] for c in calls]
+        self.assertIn(msvcrt_mock.LK_LOCK, modes, "LK_LOCK 호출 없음")
+        self.assertIn(msvcrt_mock.LK_UNLCK, modes, "LK_UNLCK 호출 없음")
+
+    def test_register_swallows_msvcrt_oserror_and_proceeds(self):
+        """msvcrt.locking 이 OSError (10번 재시도 실패) 를 던져도 deadlock 없이 진행."""
+        from unittest.mock import MagicMock, patch
+        import run_stream
+
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+
+        msvcrt_mock = MagicMock()
+        msvcrt_mock.LK_LOCK = 1
+        msvcrt_mock.LK_UNLCK = 0
+        # acquire 만 실패, release 는 정상 (graceful degradation 시 thread lock 으로 진행).
+        msvcrt_mock.locking.side_effect = [OSError("retry exhausted"), None]
+
+        with patch.object(run_stream, "_fcntl", None), \
+             patch.object(run_stream, "_msvcrt", msvcrt_mock):
+            run_stream.register_active_host(
+                events_dir, "oserr-h", "smoke", "oserr-h", "r.jsonl",
+            )
+
+        # OSError swallow 후에도 register 완료 (lost-update 가능성 작음 — atomic rename 보장).
+        data = read_active_hosts(events_dir)
+        self.assertIn("oserr-h", {h["host"] for h in data["hosts"]})
+
+    def test_register_works_without_any_file_lock(self):
+        """`_fcntl=_msvcrt=None` (비-POSIX 비-Windows) graceful — thread lock 만 적용."""
+        from unittest.mock import patch
+        import run_stream
+
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        events_dir = os.path.join(base, "events")
+        os.makedirs(events_dir, exist_ok=True)
+
+        with patch.object(run_stream, "_fcntl", None), \
+             patch.object(run_stream, "_msvcrt", None):
+            run_stream.register_active_host(
+                events_dir, "noflock-h", "smoke", "noflock-h", "r.jsonl",
+            )
+
+        data = read_active_hosts(events_dir)
+        self.assertIn("noflock-h", {h["host"] for h in data["hosts"]})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,10 +23,15 @@ import threading
 import time
 from datetime import datetime
 
-try:  # POSIX 만 — Windows 는 process-local lock 으로 graceful fallback.
+try:  # POSIX → fcntl.flock 으로 cross-process lock.
     import fcntl as _fcntl
-except ImportError:  # pragma: no cover — POSIX 외 환경
+    _msvcrt = None  # type: ignore[assignment]
+except ImportError:  # pragma: no cover — POSIX 외 환경 (Windows 등)
     _fcntl = None  # type: ignore[assignment]
+    try:  # Windows → msvcrt.locking 으로 byte-range lock (PR B).
+        import msvcrt as _msvcrt  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — 비-POSIX, 비-Windows (희박)
+        _msvcrt = None  # type: ignore[assignment]
 
 CURRENT_SYMLINK_NAME = "current.jsonl"
 # multi-target 라우팅: events/<BY_TARGET_DIR>/<host_slug>/ 아래에 per-target 런 파일.
@@ -126,6 +131,42 @@ def read_active_hosts(events_dir: str) -> dict:
         return {"hosts": []}
 
 
+def _acquire_active_lock(lock_f) -> None:
+    """active.json 의 cross-process exclusive lock 획득.
+
+    POSIX → ``fcntl.flock(LOCK_EX)`` (file-wide advisory lock).
+    Windows → ``msvcrt.locking(LK_LOCK, 1)`` (byte-range mandatory lock —
+    file 시작 1 byte 잠금으로 active.json read-modify-write 사이클 직렬화 충분).
+    ``LK_LOCK`` 은 1초 간격 10번 재시도 후 OSError; deadlock 회피 위해 OSError
+    swallow 하고 thread lock 만으로 진행한다.
+    둘 다 없으면 no-op — 동시 갱신은 ``_atomic_write_json`` 의 rename atomicity
+    에만 의존 (lost-update 가능, 비-POSIX 비-Windows 환경 한정).
+    """
+    if _fcntl is not None:
+        _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
+    elif _msvcrt is not None:
+        lock_f.seek(0)
+        try:
+            _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_LOCK, 1)
+        except OSError:  # pragma: no cover — 10번 재시도 실패 (극히 드뭄)
+            pass
+
+
+def _release_active_lock(lock_f) -> None:
+    """``_acquire_active_lock`` 으로 잡은 lock 해제. 양쪽 OS 모두 idempotent."""
+    if _fcntl is not None:
+        try:
+            _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_UN)
+        except OSError:  # pragma: no cover — lock fd 가 이미 끊겼을 때
+            pass
+    elif _msvcrt is not None:
+        lock_f.seek(0)
+        try:
+            _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_UNLCK, 1)
+        except OSError:  # pragma: no cover — 이미 unlock 됐을 때
+            pass
+
+
 def register_active_host(
     events_dir: str, host: str, plan: str, board: str, run_basename: str,
 ) -> None:
@@ -137,10 +178,12 @@ def register_active_host(
 
     동시성:
       - **thread 간**: ``_ACTIVE_LOCK`` (process-local threading.Lock)
-      - **process 간**: ``ACTIVE_HOSTS_LOCK_NAME`` 파일에 ``fcntl.flock(LOCK_EX)``
-        — 별도 ``pim_check.py`` 인스턴스나 ``web.py`` 가 spawn 한 자식이 같은
+      - **process 간**: ``ACTIVE_HOSTS_LOCK_NAME`` 파일에 OS 별 file lock —
+        - POSIX: ``fcntl.flock(LOCK_EX)``
+        - Windows: ``msvcrt.locking(LK_LOCK, 1)`` (PR B)
+        별도 ``pim_check.py`` 인스턴스나 ``web.py`` 가 spawn 한 자식이 같은
         ``events_dir`` 의 ``active.json`` 을 동시에 갱신해도 lost-update 가
-        발생하지 않는다. POSIX 외 환경에서는 thread lock 만 적용된다.
+        발생하지 않는다. 비-POSIX 비-Windows 환경에서는 thread lock 만 적용.
     """
     slug = host_slug(host)
     current_rel = os.path.join(BY_TARGET_DIR, slug, CURRENT_SYMLINK_NAME)
@@ -158,11 +201,12 @@ def register_active_host(
     os.makedirs(events_dir, exist_ok=True)
     lock_path = os.path.join(events_dir, ACTIVE_HOSTS_LOCK_NAME)
     with _ACTIVE_LOCK:
-        # POSIX 면 cross-process flock 까지 잡고, 아니면 thread lock 만 적용.
-        lock_f = open(lock_path, "a+", encoding="utf-8") if _fcntl is not None else None
+        # POSIX → fcntl, Windows → msvcrt, 둘 다 없으면 thread lock 만 적용.
+        has_file_lock = _fcntl is not None or _msvcrt is not None
+        lock_f = open(lock_path, "a+", encoding="utf-8") if has_file_lock else None
         try:
             if lock_f is not None:
-                _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
+                _acquire_active_lock(lock_f)
             data = read_active_hosts(events_dir)
             # malformed active.json (e.g. manually edited 후 non-dict 가 섞임) 에서도
             # AttributeError 로 죽지 않도록 dict 만 필터. 비정상 항목은 폐기 — register
@@ -177,10 +221,7 @@ def register_active_host(
             )
         finally:
             if lock_f is not None:
-                try:
-                    _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_UN)
-                except OSError:  # pragma: no cover — lock fd 가 이미 끊겼을 때
-                    pass
+                _release_active_lock(lock_f)
                 lock_f.close()
 
 
