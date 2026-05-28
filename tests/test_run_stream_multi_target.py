@@ -336,8 +336,11 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
 
         msvcrt_mock.locking.side_effect = _locking_side_effect
 
+        # acquire OSError 시 _logger.warning 으로 observability 보장 — assertLogs 로
+        # warning 발화의 contract 를 pin (silent 화 회귀 차단).
         with patch.object(run_stream, "_fcntl", None), \
-             patch.object(run_stream, "_msvcrt", msvcrt_mock):
+             patch.object(run_stream, "_msvcrt", msvcrt_mock), \
+             self.assertLogs("run_stream", level="WARNING") as log_ctx:
             run_stream.register_active_host(
                 events_dir, "oserr-h", "smoke", "oserr-h", "r.jsonl",
             )
@@ -345,6 +348,12 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
         # OSError swallow 후에도 register 완료 (lost-update 가능성 작음 — atomic rename 보장).
         data = read_active_hosts(events_dir)
         self.assertIn("oserr-h", {h["host"] for h in data["hosts"]})
+
+        # warning 메시지에 graceful degradation 단서가 들어 있는지 확인.
+        self.assertTrue(
+            any("msvcrt lock acquire 실패" in m for m in log_ctx.output),
+            f"expected acquire 실패 warning, got: {log_ctx.output}",
+        )
 
         # acquire 실패 후에도 release 가 LK_UNLCK 로 시도됐는지 — finally 의 release 경로 회귀 가드.
         calls = msvcrt_mock.locking.call_args_list

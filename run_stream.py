@@ -221,6 +221,10 @@ def register_active_host(
         lock_f = open(lock_path, "a+b") if has_file_lock else None
         try:
             if lock_f is not None:
+                # cold-start 시 두 프로세스가 모두 empty 를 보고 각자 sentinel 을 append
+                # 할 수 있다 — 그 race 는 benign: msvcrt.locking 은 길이와 무관하게 byte
+                # 0 만 잠그므로 lock semantics 영향 0. 결과는 multi-byte sentinel 파일
+                # (의미 없는 0x00 들) 로, lock 동작은 정상 유지된다.
                 lock_f.seek(0, os.SEEK_END)
                 if lock_f.tell() == 0:
                     lock_f.write(b"\x00")
