@@ -17,11 +17,14 @@ purely about where the run file lives and how ``current.jsonl`` points at it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
 import time
 from datetime import datetime
+
+_logger = logging.getLogger(__name__)
 
 try:  # POSIX → fcntl.flock 으로 cross-process lock.
     import fcntl as _fcntl
@@ -145,11 +148,15 @@ def _acquire_active_lock(lock_f) -> None:
     if _fcntl is not None:
         _fcntl.flock(lock_f.fileno(), _fcntl.LOCK_EX)
     elif _msvcrt is not None:
-        lock_f.seek(0)
+        # seek 도 OSError 가능 (bad fd) — try 안에 넣어 finally 의 close() 가 항상 실행되게.
         try:
+            lock_f.seek(0)
             _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_LOCK, 1)
-        except OSError:  # pragma: no cover — 10번 재시도 실패 (극히 드뭄)
-            pass
+        except OSError:  # pragma: no cover — 10번 재시도 실패 (극히 드뭄) 또는 bad fd
+            # 운영자가 invisible degradation 을 감지할 수 있도록 warning 남김.
+            _logger.warning(
+                "active.json msvcrt lock acquire 실패 — thread lock + atomic rename 만으로 진행"
+            )
 
 
 def _release_active_lock(lock_f) -> None:
@@ -160,10 +167,10 @@ def _release_active_lock(lock_f) -> None:
         except OSError:  # pragma: no cover — lock fd 가 이미 끊겼을 때
             pass
     elif _msvcrt is not None:
-        lock_f.seek(0)
         try:
+            lock_f.seek(0)
             _msvcrt.locking(lock_f.fileno(), _msvcrt.LK_UNLCK, 1)
-        except OSError:  # pragma: no cover — 이미 unlock 됐을 때
+        except OSError:  # pragma: no cover — 이미 unlock 됐거나 bad fd
             pass
 
 

@@ -18,9 +18,11 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import run_stream  # noqa: E402
 from run_stream import (  # noqa: E402
     ACTIVE_HOSTS_NAME,
     BY_TARGET_DIR,
@@ -283,9 +285,6 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
     """
 
     def test_register_uses_msvcrt_when_fcntl_absent(self):
-        from unittest.mock import MagicMock, patch
-        import run_stream
-
         base = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
         events_dir = os.path.join(base, "events")
@@ -314,11 +313,8 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
         self.assertIn(msvcrt_mock.LK_LOCK, modes, "LK_LOCK 호출 없음")
         self.assertIn(msvcrt_mock.LK_UNLCK, modes, "LK_UNLCK 호출 없음")
 
-    def test_register_swallows_msvcrt_oserror_and_proceeds(self):
-        """msvcrt.locking 이 OSError (10번 재시도 실패) 를 던져도 deadlock 없이 진행."""
-        from unittest.mock import MagicMock, patch
-        import run_stream
-
+    def test_register_swallows_msvcrt_oserror_and_still_releases(self):
+        """msvcrt.locking acquire 가 OSError 를 던져도 deadlock 없이 진행 + release 시도 보장."""
         base = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
         events_dir = os.path.join(base, "events")
@@ -327,7 +323,8 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
         msvcrt_mock = MagicMock()
         msvcrt_mock.LK_LOCK = 1
         msvcrt_mock.LK_UNLCK = 0
-        # acquire 만 실패, release 는 정상 (graceful degradation 시 thread lock 으로 진행).
+        # acquire 만 실패, release 는 정상 — graceful degradation 시 thread lock 으로 진행
+        # 하더라도 finally 의 release 경로는 여전히 호출돼 idempotent 하게 처리되어야 함.
         msvcrt_mock.locking.side_effect = [OSError("retry exhausted"), None]
 
         with patch.object(run_stream, "_fcntl", None), \
@@ -340,11 +337,17 @@ class TestActiveHostsWindowsFallback(unittest.TestCase):
         data = read_active_hosts(events_dir)
         self.assertIn("oserr-h", {h["host"] for h in data["hosts"]})
 
+        # acquire 실패 후에도 release 가 LK_UNLCK 로 시도됐는지 — finally 의 release 경로 회귀 가드.
+        calls = msvcrt_mock.locking.call_args_list
+        modes = [c.args[1] for c in calls]
+        self.assertIn(msvcrt_mock.LK_LOCK, modes, "LK_LOCK 호출 없음")
+        self.assertIn(
+            msvcrt_mock.LK_UNLCK, modes,
+            "acquire OSError 후에도 LK_UNLCK 가 호출되어야 — finally release 경로 누락",
+        )
+
     def test_register_works_without_any_file_lock(self):
         """`_fcntl=_msvcrt=None` (비-POSIX 비-Windows) graceful — thread lock 만 적용."""
-        from unittest.mock import patch
-        import run_stream
-
         base = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
         events_dir = os.path.join(base, "events")
