@@ -24,12 +24,12 @@ class RecordingCheck(BaseCheck):
     name = "recording"
 
     def collect(self, ssh, config: dict) -> dict:
-        # 최근 200 라인에서 "Session complete" 발생 수를 센다.
-        # since 시계 의존을 피해(부팅 직후 NTP 미동기) 라인 수 기반으로 robust 하게.
-        # 필터는 Python 에서 — shell grep 은 no-match 시 exit 1 이라 ssh.run 이
-        # 명령 실패로 처리할 수 있다(녹화 0세션 = FAIL 로 잡아야 할 케이스). journalctl
-        # 만 실행해 SSH 명령이 항상 exit 0 이도록 한다.
-        output = ssh.run("journalctl -t gstApp --no-pager -n 200 2>/dev/null")
+        # 현재 부팅(-b)의 최근 200 라인에서 "Session complete" 발생 수를 센다.
+        #  - -b: 이전 부팅/케이스의 stale 세션을 세지 않도록 현재 부팅으로 제한.
+        #  - -n 200: --since 의 NTP 의존(부팅 직후 시계 미동기) 회피.
+        #  - 필터는 Python 에서: shell grep 은 no-match 시 exit 1 이라 ssh.run 이 명령
+        #    실패로 처리할 수 있어, journalctl 만 실행해 항상 exit 0 이도록 한다.
+        output = ssh.run("journalctl -t gstApp -b --no-pager -n 200 2>/dev/null")
         lines = [ln for ln in (output or "").splitlines() if "Session complete" in ln]
         latest = None
         if lines:
@@ -53,9 +53,13 @@ class RecordingCheck(BaseCheck):
 
         count = data.get("session_count", 0)
         if count < 1:
+            # 부팅 직후 첫 세션 롤오버 전이면 0건이 정상(아직 준비 중)이다. hard fail 이
+            # 아닌 stabilization 신호로 분류해(NEED_2_FINALIZES_AFTER_BOOT) retry/pending
+            # 처리되게 한다 — verify_retry.is_stabilization_reason 단일 출처와 연동.
+            # 짧은 stabilize 케이스의 false-fail 을 막는다.
             return (
                 False,
-                "No recording session completed in logs (recording stalled?)",
+                "No recording session completed yet after boot — NEED_2_FINALIZES_AFTER_BOOT",
             )
 
         # latest 파싱 실패(포맷 drift 등) 시 'unknown' — 출력에 'None' 노출 방지.

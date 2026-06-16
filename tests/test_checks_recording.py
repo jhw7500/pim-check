@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from checks.recording import RecordingCheck
+from verify_retry import is_stabilization_reason
 
 
 # session_progress 가 non-null 이면 "녹화 연속성 검증 요구" 의미 (값 자체는 호환용 보존).
@@ -39,6 +40,8 @@ class TestRecordingCheckCollect(unittest.TestCase):
 
         self.assertEqual(data["session_count"], 2)
         self.assertEqual(data["latest_session"], "20260616_0501")
+        # 현재 부팅으로 제한(-b) — 이전 부팅의 stale 세션을 세지 않도록.
+        self.assertIn("-b", ssh.run.call_args[0][0])
 
     def test_collect_no_output(self):
         """ssh.run() → None 반환 시 session_count=0"""
@@ -80,12 +83,13 @@ class TestRecordingCheckValidate(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIn("2", reason)
 
-    def test_validate_no_session_fails(self):
-        """session_count=0 + config 설정 → (False, 녹화 미진행)"""
+    def test_validate_no_session_is_stabilization(self):
+        """session_count=0 → 부팅 직후 준비 중일 수 있으므로 hard fail 이 아닌
+        stabilization(pending) 신호로 분류돼 retry 된다."""
         data = {"raw_output": "", "session_count": 0, "latest_session": None}
         passed, reason = self.check.validate(data, CONFIG)
         self.assertFalse(passed)
-        self.assertIn("session", reason.lower())
+        self.assertTrue(is_stabilization_reason(reason))
 
     def test_validate_null_config_skips(self):
         """session_progress 미설정 → (True, 'Skipped...')"""
