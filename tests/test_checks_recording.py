@@ -50,6 +50,24 @@ class TestRecordingCheckCollect(unittest.TestCase):
         self.assertEqual(data["session_count"], 0)
         self.assertIsNone(data["latest_session"])
 
+    def test_collect_session_without_parsable_id(self):
+        """'Session complete' 는 있으나 id 파싱 불가(포맷 drift) → count는 세되 latest=None"""
+        ssh = MagicMock()
+        ssh.run.return_value = "Jun 16 t gstApp[1]: [GST] Session complete"  # ': <id>' 없음
+
+        data = self.check.collect(ssh, CONFIG)
+
+        self.assertEqual(data["session_count"], 1)
+        self.assertIsNone(data["latest_session"])
+
+    def test_validate_passes_with_unknown_latest(self):
+        """latest 파싱 실패해도 count>=1 이면 PASS, 출력에 'None' 대신 'unknown'"""
+        data = {"raw_output": "Session complete", "session_count": 1, "latest_session": None}
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertTrue(passed)
+        self.assertIn("unknown", reason)
+        self.assertNotIn("None", reason)
+
 
 class TestRecordingCheckValidate(unittest.TestCase):
     def setUp(self):

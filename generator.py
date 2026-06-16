@@ -196,7 +196,9 @@ def generate_cases(profiles_dir: str) -> list[str]:
     # 녹화 연속성(recording.session_progress)은 보드 전역 동작이라 모든 조합에
     # 중복 검증할 필요가 없다. 채널수별 1개 대표 케이스에만 남기고(축소) 나머지는
     # 제거한다. expected_channels 는 infer_agent 가 쓰므로 유지.
-    seen_session_ch: set = set()
+    # 대표 선정은 schema 순회상 채널수별 first-seen — 스키마 축 순서를 바꾸면 어느
+    # 케이스가 대표가 되는지도 바뀐다(검증 효과는 동일).
+    seen_session_ch = set()
 
     # groups 구조 지원 (하위 호환: groups가 없으면 단일 그룹으로 동작)
     if "groups" in generation:

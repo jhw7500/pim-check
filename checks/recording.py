@@ -43,6 +43,8 @@ class RecordingCheck(BaseCheck):
         }
 
     def validate(self, data: dict, config: dict) -> tuple[bool, str]:
+        # session_progress 는 non-null 이면 "연속성 검증 활성"의 의미만 가지며, 값 자체는
+        # 비교에 쓰이지 않는다(예: "4/4" → "1/4" 로 바꿔도 동작 동일).
         expected = config.get("recording", {}).get("session_progress")
 
         # 미설정(null)이면 연속성 검증을 요구하지 않음 → skip.
@@ -56,4 +58,6 @@ class RecordingCheck(BaseCheck):
                 "No recording session completed in logs (recording stalled?)",
             )
 
-        return (True, f"OK ({count} sessions, latest {data.get('latest_session')})")
+        # latest 파싱 실패(포맷 drift 등) 시 'unknown' — 출력에 'None' 노출 방지.
+        latest = data.get("latest_session") or "unknown"
+        return (True, f"OK ({count} sessions, latest {latest})")
