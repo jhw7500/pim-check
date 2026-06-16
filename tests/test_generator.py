@@ -206,6 +206,28 @@ class TestGenerateCases(unittest.TestCase):
             self.assertIn("edgeconf_changes", data["setup"])
             self.assertIn("checks", data)
 
+    def test_session_progress_deduped_by_channel_count(self):
+        """session_progress 는 채널수별 1개 대표 케이스에만 남는다(축소).
+
+        스키마: 2ch/4ch × 720p/fhd = 4 케이스, 채널수 2종 → session_progress 는 2개만.
+        expected_channels 는 모든 케이스에 유지된다(infer_agent 사용).
+        """
+        generated = generate_cases(self.profiles_dir)
+        ch_with_sp = set()
+        n_with_sp = 0
+        n_with_expected = 0
+        for path in generated:
+            with open(path) as f:
+                rec = (yaml.safe_load(f).get("checks", {}) or {}).get("recording", {}) or {}
+            if rec.get("expected_channels") is not None:
+                n_with_expected += 1
+            if rec.get("session_progress") is not None:
+                n_with_sp += 1
+                ch_with_sp.add(rec.get("expected_channels"))
+        self.assertEqual(n_with_expected, 4)        # 전 케이스 expected_channels 유지
+        self.assertEqual(n_with_sp, 2)              # 채널수(2,4)별 1개씩만
+        self.assertEqual(ch_with_sp, {2, 4})
+
 
 if __name__ == "__main__":
     unittest.main()

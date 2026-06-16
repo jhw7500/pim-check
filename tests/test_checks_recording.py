@@ -1,5 +1,9 @@
 """
 tests/test_checks_recording.py - RecordingCheck 단위 테스트
+
+현 FW gstApp 은 세션 롤오버마다 "[GST][muxSinkBin.cpp:119] Session complete: <YYYYMMDD_HHMM>"
+로깅한다. RecordingCheck 는 이 "Session complete" 발생 수로 녹화 연속성(세션이 실제로
+완료되며 굴러가는지)을 검증한다. (구 FW 의 "recording progress N/M" 포맷은 폐기됨)
 """
 from __future__ import annotations
 
@@ -9,55 +13,62 @@ from unittest.mock import MagicMock
 from checks.recording import RecordingCheck
 
 
+# session_progress 가 non-null 이면 "녹화 연속성 검증 요구" 의미 (값 자체는 호환용 보존).
 CONFIG = {"recording": {"expected_channels": 4, "session_progress": "4/4"}}
 CONFIG_NO_PROGRESS = {"recording": {"expected_channels": 4}}
+
+LOG_TWO_SESSIONS = (
+    "Jun 16 05:01:00 t gstApp[581]: [GST][muxSinkBin.cpp:119] Session complete: 20260616_0500\n"
+    "Jun 16 05:02:00 t gstApp[581]: [GST][muxSinkBin.cpp:119] Session complete: 20260616_0501"
+)
 
 
 class TestRecordingCheckCollect(unittest.TestCase):
     def setUp(self):
         self.check = RecordingCheck()
 
-    def test_collect_gets_progress(self):
-        """'4/4' 포함 로그 → progress='4/4' 반환"""
+    def test_collect_counts_session_complete(self):
+        """'Session complete' 2줄 → session_count=2, latest=마지막 세션 id"""
         ssh = MagicMock()
-        ssh.run.return_value = "Apr 02 10:00:01 target gstApp[1234]: recording progress 4/4 channels active"
+        ssh.run.return_value = LOG_TWO_SESSIONS
 
         data = self.check.collect(ssh, CONFIG)
 
-        self.assertEqual(data["progress"], "4/4")
+        self.assertEqual(data["session_count"], 2)
+        self.assertEqual(data["latest_session"], "20260616_0501")
 
     def test_collect_no_output(self):
-        """ssh.run() → None 반환 시 progress=None 반환"""
+        """ssh.run() → None 반환 시 session_count=0"""
         ssh = MagicMock()
         ssh.run.return_value = None
 
         data = self.check.collect(ssh, CONFIG)
 
-        self.assertIsNone(data["progress"])
+        self.assertEqual(data["session_count"], 0)
+        self.assertIsNone(data["latest_session"])
 
 
 class TestRecordingCheckValidate(unittest.TestCase):
     def setUp(self):
         self.check = RecordingCheck()
 
-    def test_validate_correct_progress_passes(self):
-        """actual='4/4', expected='4/4' → (True, 'OK')"""
-        data = {"raw_output": "progress 4/4", "progress": "4/4"}
+    def test_validate_sessions_present_passes(self):
+        """session_count>=1 + config 설정 → (True, OK)"""
+        data = {"raw_output": LOG_TWO_SESSIONS, "session_count": 2, "latest_session": "20260616_0501"}
         passed, reason = self.check.validate(data, CONFIG)
         self.assertTrue(passed)
-        self.assertEqual(reason, "OK")
+        self.assertIn("2", reason)
 
-    def test_validate_wrong_progress_fails(self):
-        """actual='2/4', expected='4/4' → (False, 불일치 메시지)"""
-        data = {"raw_output": "progress 2/4", "progress": "2/4"}
+    def test_validate_no_session_fails(self):
+        """session_count=0 + config 설정 → (False, 녹화 미진행)"""
+        data = {"raw_output": "", "session_count": 0, "latest_session": None}
         passed, reason = self.check.validate(data, CONFIG)
         self.assertFalse(passed)
-        self.assertIn("2/4", reason)
-        self.assertIn("4/4", reason)
+        self.assertIn("session", reason.lower())
 
     def test_validate_null_config_skips(self):
         """session_progress 미설정 → (True, 'Skipped...')"""
-        data = {"raw_output": "", "progress": None}
+        data = {"raw_output": "", "session_count": 0, "latest_session": None}
         passed, reason = self.check.validate(data, CONFIG_NO_PROGRESS)
         self.assertTrue(passed)
         self.assertIn("Skipped", reason)

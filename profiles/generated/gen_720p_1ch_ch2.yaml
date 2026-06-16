@@ -19,7 +19,6 @@ checks:
     max_streak: 0
   recording:
     expected_channels: 1
-    session_progress: 1/1
   custom_commands:
   - name: i2c-2 AP1302 미응답 (1ch_ch2)
     command: i2cdetect -y 2 2>/dev/null | awk 'NR>1 {for(i=2;i<=NF;i++) if ($i=="11"
