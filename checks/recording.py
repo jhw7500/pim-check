@@ -26,11 +26,11 @@ class RecordingCheck(BaseCheck):
     def collect(self, ssh, config: dict) -> dict:
         # 최근 200 라인에서 "Session complete" 발생 수를 센다.
         # since 시계 의존을 피해(부팅 직후 NTP 미동기) 라인 수 기반으로 robust 하게.
-        output = ssh.run(
-            "journalctl -t gstApp --no-pager -n 200 2>/dev/null"
-            " | grep -F 'Session complete'"
-        )
-        lines = [ln for ln in (output or "").splitlines() if ln.strip()]
+        # 필터는 Python 에서 — shell grep 은 no-match 시 exit 1 이라 ssh.run 이
+        # 명령 실패로 처리할 수 있다(녹화 0세션 = FAIL 로 잡아야 할 케이스). journalctl
+        # 만 실행해 SSH 명령이 항상 exit 0 이도록 한다.
+        output = ssh.run("journalctl -t gstApp --no-pager -n 200 2>/dev/null")
+        lines = [ln for ln in (output or "").splitlines() if "Session complete" in ln]
         latest = None
         if lines:
             m = re.search(r"Session complete:\s*(\S+)", lines[-1])

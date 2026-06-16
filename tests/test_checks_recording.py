@@ -17,8 +17,11 @@ from checks.recording import RecordingCheck
 CONFIG = {"recording": {"expected_channels": 4, "session_progress": "4/4"}}
 CONFIG_NO_PROGRESS = {"recording": {"expected_channels": 4}}
 
+# journalctl 원본(필터 전) — 노이즈 라인이 섞여 있어도 "Session complete"만 세야 한다.
 LOG_TWO_SESSIONS = (
+    "Jun 16 05:01:00 t gstApp[581]: [GST][main.cpp:463] All channels aligned to 00s. Next target : 02m 00s\n"
     "Jun 16 05:01:00 t gstApp[581]: [GST][muxSinkBin.cpp:119] Session complete: 20260616_0500\n"
+    "Jun 16 05:02:00 t gstApp[581]: [GST][main.cpp:463] All channels aligned to 00s. Next target : 03m 00s\n"
     "Jun 16 05:02:00 t gstApp[581]: [GST][muxSinkBin.cpp:119] Session complete: 20260616_0501"
 )
 
