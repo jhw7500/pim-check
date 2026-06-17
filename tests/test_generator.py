@@ -147,8 +147,14 @@ class TestGenerateCases(unittest.TestCase):
                         },
                         "channels": {
                             "combinations": [
-                                {"name": "2ch", "values": {".ch2": False}, "expect": {"channel_count": 2}},
-                                {"name": "4ch", "values": {".ch2": True}, "expect": {"channel_count": 4}},
+                                {"name": "2ch", "values": {
+                                    ".VHL_CAM.i2c2.ch0.enable": True, ".VHL_CAM.i2c2.ch1.enable": True,
+                                    ".VHL_CAM.i2c1.ch2.enable": False, ".VHL_CAM.i2c1.ch3.enable": False,
+                                }, "expect": {"channel_count": 2}},
+                                {"name": "4ch", "values": {
+                                    ".VHL_CAM.i2c2.ch0.enable": True, ".VHL_CAM.i2c2.ch1.enable": True,
+                                    ".VHL_CAM.i2c1.ch2.enable": True, ".VHL_CAM.i2c1.ch3.enable": True,
+                                }, "expect": {"channel_count": 4}},
                             ]
                         },
                     }
@@ -185,7 +191,9 @@ class TestGenerateCases(unittest.TestCase):
         manual = {
             "name": "manual",
             "setup": {"edgeconf_changes": {
-                ".VHL_CAM.capture.enable": False, ".w": 1280, ".ch2": False,
+                ".VHL_CAM.capture.enable": False, ".w": 1280,
+                ".VHL_CAM.i2c2.ch0.enable": True, ".VHL_CAM.i2c2.ch1.enable": True,
+                ".VHL_CAM.i2c1.ch2.enable": False, ".VHL_CAM.i2c1.ch3.enable": False,
             }},
         }
         with open(os.path.join(self.profiles_dir, "cases", "manual_720p.yaml"), "w") as f:

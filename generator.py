@@ -239,13 +239,20 @@ def generate_cases(profiles_dir: str) -> list[str]:
                     continue
 
             # session_progress 축소: 채널수별 첫 케이스만 유지, 나머지는 제거.
+            # 대표는 expected_channels(라벨)가 아니라 '실제 enable 된 채널 수'로 선정한다 —
+            # 라벨과 실제 설정이 어긋나는 케이스(일부 fps 변형은 ch0 만 enable)에서도 대표가
+            # 실제 채널 구성을 반영하도록. sum 결과는 항상 int 라 None 키 혼입도 없다.
             rec = case_data.get("checks", {}).get("recording")
             if rec and rec.get("session_progress") is not None:
-                chc = rec.get("expected_channels")
-                if chc in seen_session_ch:
+                edge = (case_data.get("setup") or {}).get("edgeconf_changes", {})
+                actual_ch = sum(
+                    1 for k, v in edge.items()
+                    if k.endswith(".enable") and ".ch" in k and v is True
+                )
+                if actual_ch in seen_session_ch:
                     rec.pop("session_progress", None)
                 else:
-                    seen_session_ch.add(chc)
+                    seen_session_ch.add(actual_ch)
 
             # 파일명 생성
             name_map = {axis: c["name"] for axis, c in combo}
