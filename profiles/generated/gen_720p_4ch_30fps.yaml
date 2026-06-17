@@ -26,7 +26,6 @@ checks:
     max_streak: 0
   recording:
     expected_channels: 4
-    session_progress: 4/4
   custom_commands:
   - name: edgeconf fps 반영
     command: jq -r '.VHL_CAM.fps' /root/shared_v/edgeconf_pim.json

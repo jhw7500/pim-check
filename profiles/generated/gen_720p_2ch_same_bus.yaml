@@ -19,7 +19,6 @@ checks:
     max_streak: 0
   recording:
     expected_channels: 2
-    session_progress: 2/2
   custom_commands:
   - name: i2c-2 dual mode (2ch_same_bus → 11,12)
     command: i2cdetect -y 2 2>/dev/null | awk 'NR>1 {for(i=2;i<=NF;i++) if ($i=="11"

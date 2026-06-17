@@ -193,6 +193,12 @@ def generate_cases(profiles_dir: str) -> list[str]:
     generation = schema["generation"]
     sources = schema["sources"]
     generated = []
+    # 녹화 연속성(recording.session_progress)은 보드 전역 동작이라 모든 조합에
+    # 중복 검증할 필요가 없다. 채널수별 1개 대표 케이스에만 남기고(축소) 나머지는
+    # 제거한다. expected_channels 는 infer_agent 가 쓰므로 유지.
+    # 대표 선정은 schema 순회상 채널수별 first-seen — 스키마 축 순서를 바꾸면 어느
+    # 케이스가 대표가 되는지도 바뀐다(검증 효과는 동일).
+    seen_session_ch = set()
 
     # groups 구조 지원 (하위 호환: groups가 없으면 단일 그룹으로 동작)
     if "groups" in generation:
@@ -231,6 +237,27 @@ def generate_cases(profiles_dir: str) -> list[str]:
                        for m in manual_changes):
                     print(f"  skip: {slug} (manual case exists)")
                     continue
+
+            # session_progress 축소: 채널수별 첫 케이스만 유지, 나머지는 제거.
+            # 대표는 expected_channels(라벨)가 아니라 '실제 enable 된 채널 수'로 선정한다 —
+            # 라벨과 실제 설정이 어긋나는 케이스(일부 fps 변형은 ch0 만 enable)에서도 대표가
+            # 실제 채널 구성을 반영하도록. sum 결과는 항상 int 라 None 키 혼입도 없다.
+            rec = case_data.get("checks", {}).get("recording")
+            if rec and rec.get("session_progress") is not None:
+                edge = (case_data.get("setup") or {}).get("edgeconf_changes", {})
+                actual_ch = sum(
+                    1 for k, v in edge.items()
+                    if k.endswith(".enable") and ".ch" in k and v is True
+                )
+                if actual_ch == 0:
+                    # 채널 enable 키를 못 찾음(예상 밖) — 0 을 seen 에 넣어 이후 무채널
+                    # 케이스가 조용히 session_progress 를 잃는 silent failure 를 피한다.
+                    # 대표로 유지하고 경고만 남긴다.
+                    print(f"  warning: {slug} has session_progress but no channel-enable keys; keeping it")
+                elif actual_ch in seen_session_ch:
+                    rec.pop("session_progress", None)
+                else:
+                    seen_session_ch.add(actual_ch)
 
             # 파일명 생성
             name_map = {axis: c["name"] for axis, c in combo}

@@ -147,8 +147,14 @@ class TestGenerateCases(unittest.TestCase):
                         },
                         "channels": {
                             "combinations": [
-                                {"name": "2ch", "values": {".ch2": False}, "expect": {"channel_count": 2}},
-                                {"name": "4ch", "values": {".ch2": True}, "expect": {"channel_count": 4}},
+                                {"name": "2ch", "values": {
+                                    ".VHL_CAM.i2c2.ch0.enable": True, ".VHL_CAM.i2c2.ch1.enable": True,
+                                    ".VHL_CAM.i2c1.ch2.enable": False, ".VHL_CAM.i2c1.ch3.enable": False,
+                                }, "expect": {"channel_count": 2}},
+                                {"name": "4ch", "values": {
+                                    ".VHL_CAM.i2c2.ch0.enable": True, ".VHL_CAM.i2c2.ch1.enable": True,
+                                    ".VHL_CAM.i2c1.ch2.enable": True, ".VHL_CAM.i2c1.ch3.enable": True,
+                                }, "expect": {"channel_count": 4}},
                             ]
                         },
                     }
@@ -185,7 +191,9 @@ class TestGenerateCases(unittest.TestCase):
         manual = {
             "name": "manual",
             "setup": {"edgeconf_changes": {
-                ".VHL_CAM.capture.enable": False, ".w": 1280, ".ch2": False,
+                ".VHL_CAM.capture.enable": False, ".w": 1280,
+                ".VHL_CAM.i2c2.ch0.enable": True, ".VHL_CAM.i2c2.ch1.enable": True,
+                ".VHL_CAM.i2c1.ch2.enable": False, ".VHL_CAM.i2c1.ch3.enable": False,
             }},
         }
         with open(os.path.join(self.profiles_dir, "cases", "manual_720p.yaml"), "w") as f:
@@ -205,6 +213,68 @@ class TestGenerateCases(unittest.TestCase):
             self.assertIn("setup", data)
             self.assertIn("edgeconf_changes", data["setup"])
             self.assertIn("checks", data)
+
+    def test_session_progress_deduped_by_channel_count(self):
+        """session_progress 는 채널수별 1개 대표 케이스에만 남는다(축소).
+
+        스키마: 2ch/4ch × 720p/fhd = 4 케이스, 채널수 2종 → session_progress 는 2개만.
+        expected_channels 는 모든 케이스에 유지된다(infer_agent 사용).
+        """
+        generated = generate_cases(self.profiles_dir)
+        ch_with_sp = set()
+        n_with_sp = 0
+        n_with_expected = 0
+        for path in generated:
+            with open(path) as f:
+                rec = (yaml.safe_load(f).get("checks", {}) or {}).get("recording", {}) or {}
+            if rec.get("expected_channels") is not None:
+                n_with_expected += 1
+            if rec.get("session_progress") is not None:
+                n_with_sp += 1
+                ch_with_sp.add(rec.get("expected_channels"))
+        self.assertEqual(n_with_expected, 4)        # 전 케이스 expected_channels 유지
+        self.assertEqual(n_with_sp, 2)              # 채널수(2,4)별 1개씩만
+        self.assertEqual(ch_with_sp, {2, 4})
+
+    def test_no_channel_keys_keeps_session_progress(self):
+        """채널 enable 키가 없는 케이스(actual_ch=0)는 dedup 되지 않고 session_progress 를
+        유지한다 — 무채널 케이스가 조용히 누락되는 silent failure 방지 가드."""
+        pdir = os.path.join(self.tmpdir, "profiles2")
+        os.makedirs(os.path.join(pdir, "cases"))
+        with open(os.path.join(pdir, "base.yaml"), "w") as f:
+            yaml.dump({"monitor": {"duration_sec": 300}}, f)
+        schema = {
+            "version": 1,
+            "sources": {"edgeconf": {"path": "/x", "axes": {
+                "resolution": {"combinations": [
+                    {"name": "720p", "values": {".w": 1280}},
+                    {"name": "fhd", "values": {".w": 1920}},
+                ]},
+                # enable 키 없이 channel_count 만 → build_case 는 session_progress 를 넣지만
+                # dedup 의 actual_ch 는 0 이 된다.
+                "channels": {"combinations": [
+                    {"name": "1ch", "values": {".dummy": 1}, "expect": {"channel_count": 1}},
+                ]},
+            }}},
+            "expectations": {
+                "cam_state": {"dir": "/tmp/cam_state", "expected_state": "healthy", "max_streak": 0},
+                "stabilize_sec": {"*+*": 30},
+            },
+            "generation": {"cross": ["resolution", "channels"],
+                           "output_dir": os.path.join(pdir, "generated"),
+                           "filename_pattern": "gen_{resolution}_{channels}.yaml"},
+        }
+        with open(os.path.join(pdir, "schema.yaml"), "w") as f:
+            yaml.dump(schema, f)
+
+        generated = generate_cases(pdir)
+        n_sp = sum(
+            1 for p in generated
+            if ((yaml.safe_load(open(p)).get("checks", {}) or {}).get("recording", {}) or {}).get("session_progress") is not None
+        )
+        # 720p/fhd × 1ch = 2 케이스, 둘 다 actual_ch=0 → 가드로 둘 다 유지(=2).
+        # 가드 없으면 0 이 seen 에 들어가 두 번째가 silent 누락(=1)된다.
+        self.assertEqual(n_sp, 2)
 
 
 if __name__ == "__main__":
