@@ -236,6 +236,46 @@ class TestGenerateCases(unittest.TestCase):
         self.assertEqual(n_with_sp, 2)              # 채널수(2,4)별 1개씩만
         self.assertEqual(ch_with_sp, {2, 4})
 
+    def test_no_channel_keys_keeps_session_progress(self):
+        """채널 enable 키가 없는 케이스(actual_ch=0)는 dedup 되지 않고 session_progress 를
+        유지한다 — 무채널 케이스가 조용히 누락되는 silent failure 방지 가드."""
+        pdir = os.path.join(self.tmpdir, "profiles2")
+        os.makedirs(os.path.join(pdir, "cases"))
+        with open(os.path.join(pdir, "base.yaml"), "w") as f:
+            yaml.dump({"monitor": {"duration_sec": 300}}, f)
+        schema = {
+            "version": 1,
+            "sources": {"edgeconf": {"path": "/x", "axes": {
+                "resolution": {"combinations": [
+                    {"name": "720p", "values": {".w": 1280}},
+                    {"name": "fhd", "values": {".w": 1920}},
+                ]},
+                # enable 키 없이 channel_count 만 → build_case 는 session_progress 를 넣지만
+                # dedup 의 actual_ch 는 0 이 된다.
+                "channels": {"combinations": [
+                    {"name": "1ch", "values": {".dummy": 1}, "expect": {"channel_count": 1}},
+                ]},
+            }}},
+            "expectations": {
+                "cam_state": {"dir": "/tmp/cam_state", "expected_state": "healthy", "max_streak": 0},
+                "stabilize_sec": {"*+*": 30},
+            },
+            "generation": {"cross": ["resolution", "channels"],
+                           "output_dir": os.path.join(pdir, "generated"),
+                           "filename_pattern": "gen_{resolution}_{channels}.yaml"},
+        }
+        with open(os.path.join(pdir, "schema.yaml"), "w") as f:
+            yaml.dump(schema, f)
+
+        generated = generate_cases(pdir)
+        n_sp = sum(
+            1 for p in generated
+            if ((yaml.safe_load(open(p)).get("checks", {}) or {}).get("recording", {}) or {}).get("session_progress") is not None
+        )
+        # 720p/fhd × 1ch = 2 케이스, 둘 다 actual_ch=0 → 가드로 둘 다 유지(=2).
+        # 가드 없으면 0 이 seen 에 들어가 두 번째가 silent 누락(=1)된다.
+        self.assertEqual(n_sp, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

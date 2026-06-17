@@ -249,7 +249,12 @@ def generate_cases(profiles_dir: str) -> list[str]:
                     1 for k, v in edge.items()
                     if k.endswith(".enable") and ".ch" in k and v is True
                 )
-                if actual_ch in seen_session_ch:
+                if actual_ch == 0:
+                    # 채널 enable 키를 못 찾음(예상 밖) — 0 을 seen 에 넣어 이후 무채널
+                    # 케이스가 조용히 session_progress 를 잃는 silent failure 를 피한다.
+                    # 대표로 유지하고 경고만 남긴다.
+                    print(f"  warning: {slug} has session_progress but no channel-enable keys; keeping it")
+                elif actual_ch in seen_session_ch:
                     rec.pop("session_progress", None)
                 else:
                     seen_session_ch.add(actual_ch)
