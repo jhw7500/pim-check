@@ -6,11 +6,14 @@
 """
 from __future__ import annotations
 
+import re
+
 from unittest.mock import MagicMock
 
 from setup import (
     SetupManager,
     READINESS_POLL_INTERVAL,
+    FSYNC_MARKER_RE,
     FSYNC_SETTLE_SEC,
     profile_is_camera,
 )
@@ -239,10 +242,30 @@ class TestStageCameraInitFsync:
         mgr._ready_dmesg_fsync(_clock=_FixedClock())
         cmd = mgr.ssh.run.call_args[0][0]
         assert "dmesg" in cmd
-        assert "max9296_fsync fps :" in cmd
-        assert "grep -c" in cmd
+        assert FSYNC_MARKER_RE in cmd
+        # ERE 패턴이라 -E 필수 (구형/2.5+ 로그 포맷을 한 패턴으로 매칭).
+        assert "grep -cE" in cmd
         # self-exiting-zero: ssh.run None 규약에 의존하지 않도록 '|| echo 0'
         assert "|| echo 0" in cmd
+
+    def test_marker_re_matches_old_and_new_dmesg_formats(self):
+        """구형(pre-2.5)과 2.5+ 실측 dmesg 라인을 모두 매칭해야 한다.
+
+        2.5 실측 (2026-08-21 보드):
+        '[I2C:1][max9296.c:4619] max9296_fsync side fps : 15, low : 65666, ...'
+        """
+        pattern = re.compile(FSYNC_MARKER_RE)
+        old_line = "[I2C:1][max9296.c:1234] max9296_fsync fps : 30, low : 1"
+        new_lines = [
+            "[I2C:1][max9296.c:4619] max9296_fsync side fps : 15, low : 65666, high : 1000",
+            "[I2C:2][max9296.c:4619] max9296_fsync dual fps : 30, low : 1, high : 2",
+            "[I2C:2][max9296.c:4619] max9296_fsync single fps : 15, low : 1, high : 2",
+        ]
+        assert pattern.search(old_line)
+        for line in new_lines:
+            assert pattern.search(line), line
+        # 무관한 라인은 매칭하지 않는다.
+        assert not pattern.search("max9296_fsync thread started")
 
     def test_count_parsed_from_self_exiting_output(self):
         mgr = _mgr()
