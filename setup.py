@@ -44,6 +44,53 @@ RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 # 때마다 같은 파손이 재발하지 않도록. ' fps :' 요구가 무관 라인(스레드명 등) 매칭을
 # 막는다.
 FSYNC_MARKER_RE = "max9296_fsync( [a-z-]+)? fps :"
+
+# 세션 앵커 — "이번 테스트 세션이 시작된 시각"의 단일 출처.
+#
+# 케이스 체크(custom_commands)는 이 앵커 이후의 local0.log 세션만 골라 fps/bitrate/
+# duration 을 검증한다. 지금까지는 각 케이스가 `uptime -s`(부팅 시각)를 직접 읽었는데,
+# 그건 "케이스 사이의 재시작 = 재부팅"이라는 전제에 의존한다. 하드리셋으로 재부팅을
+# 대체하면(pim-package-jhw#46) `uptime -s` 가 바뀌지 않아 **직전 케이스의 녹화 세션이
+# 그대로 매칭**된다 — 이전 케이스 영상으로 검증하는 오측.
+#
+# 그래서 앵커를 파일 하나로 외부화한다. 케이스는 이 파일을 읽고, 없거나 stale 이면
+# `uptime -s` 로 폴백한다(오늘과 동일 동작). 하드리셋을 도입할 때 바꿀 곳은
+# `_write_session_anchor` **한 곳**이고 케이스 38곳은 불변이다.
+#
+# 파일 형식(2줄): 1행 = 앵커 시각, 2행 = 그 앵커를 기록한 부팅의 `boot_id`.
+#
+# 2행이 `uptime -s` 가 아니라 boot_id 인 이유: `uptime -s` 는 현재시각 - uptime 으로
+# 계산돼 **같은 부팅에서도 ±1초 흔들린다**(보드 실측: 같은 부팅이 15:41:58/15:41:59
+# 로 읽힘). 문자열 대조로 쓰면 jitter 때마다 폴백해 앵커가 무시된다 — 오늘은 폴백값이
+# 같아 무해하지만 하드리셋에서는 리셋 시각 대신 부팅 시각을 쓰게 된다.
+# boot_id(`/proc/sys/kernel/random/boot_id`)는 부팅마다 고정된 UUID 라 흔들림이 없고,
+# checks/cam_health.py 가 이미 같은 목적(이전 부팅 잔존 감지)으로 쓰는 선례가 있다.
+#
+# 2행(cross-boot 가드)에 대해 — 이 보드는 **재부팅 시 /tmp 를 비운다**(실측:
+# 마커 파일·하위 디렉터리·앵커 모두 재부팅 후 소멸). /tmp 가 tmpfs 는 아니지만
+# tmpfiles.d 의 `D /tmp 1777 root root -` 를 systemd-tmpfiles 가 부팅마다 적용한다.
+# 따라서 이 보드에서 cross-boot 잔존은 발생하지 않고, 발생하더라도 세션 시작 때
+# writer 가 덮어쓴다. 2행 대조는 **writer 가 이번 부팅에 돌지 않은 경우**
+# (비카메라 케이스, 설정 일치로 setup 이 skip 된 경로)를 위한 방어이며, /tmp 를
+# 비우지 않는 다른 보드/구성에서 의미를 갖는다. 비용이 사실상 없어 유지한다.
+#
+# 남는 위험(문서화): **같은 부팅 안에서** 이전 케이스의 앵커가 재사용되는 경우.
+# 2행 대조로는 걸러지지 않는다. 구체 경로는 **setup-skip** 이다 — 보드 설정이 이미
+# 케이스와 일치하면 run_setup 이 "Config already matches target" 로 조기 반환해
+# 재부팅도 _stabilize 도 하지 않고, 따라서 session_anchor writer 가 돌지 않는다.
+# 오늘은 앵커 = 부팅 시각이라 이전 케이스가 남긴 값도 현재 부팅 시각과 같아 무해하다.
+#
+# **하드리셋 전환 체크리스트**: 앵커를 리셋 시각으로 바꾸는 순간 이 경로가 실질
+# 위험이 된다(직전 케이스의 리셋 시각을 그대로 씀). 전환 시 setup-skip 경로에서도
+# 앵커를 갱신하도록 함께 처리할 것.
+#
+# 케이스가 뱉는 `FAIL:NEED_2_FINALIZES_AFTER_BOOT` 는 이제 의미상 "앵커 이후"지만
+# 문구를 그대로 둔다 — checks/recording.py 가 이 문자열을 stabilization 신호 토큰으로
+# 쓰고 있어(verify_retry 단일 출처 계약) 이름만 바꾸면 그 계약이 조용히 끊긴다.
+SESSION_ANCHOR_PATH = "/tmp/pim_check_anchor"
+# 부팅마다 고정된 UUID — 잔존 앵커 판별용 (cam_health 와 동일 출처).
+BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
 # 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
 # 보드별 튜닝을 위해 환경변수 PIM_FSYNC_SETTLE_SEC 로 override 가능
 # (verify_retry 의 PIM_VERIFY_* 와 동일한 패턴).
@@ -275,6 +322,10 @@ class SetupManager:
         self._ready_fsync: bool = False
         # fsync 로그 최초 관측 시각(monotonic) — FSYNC_SETTLE_SEC 경과 판정용.
         self._fsync_seen_at: float | None = None
+        # dmesg 델타 판정 앵커(보드 모노토닉 초). 재부팅 경로는 링버퍼가 비워지므로
+        # 0 이면 충분하다. 하드리셋 도입 시 리셋 시점의 uptime 을 넣으면 직전 부팅의
+        # fsync 라인이 게이트를 조기 개방하는 것을 막는다.
+        self._dmesg_anchor_uptime: float = 0.0
         # 안정화 AE 정착 readiness 의 기대값 목록 (pim-check#61).
         # run_setup(ready_ae_targets=...) 로 주입 (기본 빈 목록 → 단계 skip).
         self._ready_ae_targets: list[dict] = []
@@ -509,34 +560,97 @@ class SetupManager:
             return False
         return bool(out and out.strip())
 
+    def _dmesg_fsync_probe_command(self) -> str:
+        """fsync 로그를 세 숫자로 요약하는 명령 — `t=총건수 p=타임스탬프파싱 n=앵커이후`.
+
+        awk 한 번에 세므로 왕복이 1회이고, 출력이 항상 존재해 ssh.run 의 None 규약에
+        의존하지 않는다(grep -c 는 0건일 때 exit 1 이라 None 이 온다).
+
+        `n` 은 dmesg 의 모노토닉 타임스탬프(`[   24.915150]`)가 앵커보다 큰 라인 수다.
+        재부팅 경로에서는 링버퍼가 비워지므로 앵커 0 에서 n == p 이고 기존 동작과 같다.
+        하드리셋(SoC 재부팅 없음)은 링버퍼를 비우지 않아 **직전 부팅의 fsync 라인이
+        남는데**, 그 경우 앵커를 리셋 시각으로 올리면 n 이 0 이 되어 게이트가 조기
+        개방되지 않는다.
+        """
+        # awk 프로그램은 중괄호를 리터럴로 쓰므로 .format()/f-string 의 치환 대상이
+        # 되면 안 된다. 특히 marker 는 정규식이라 나중에 수량자(`{1,3}`)가 들어오면
+        # .format() 이 KeyError 나 잘못된 치환으로 조용히 깨진다 — 연결로 끼운다.
+        awk_prog = (
+            "/" + FSYNC_MARKER_RE + "/ {t++; "
+            "if (match($0, /^\\[ *[0-9]+\\.[0-9]+\\]/)) "
+            "{p++; ts=substr($0, RSTART+1, RLENGTH-2)+0; if (ts > a) n++}} "
+            'END {printf "t=%d p=%d n=%d\\n", t, p, n}'
+        )
+        return (f"dmesg 2>/dev/null | awk -v a={self._dmesg_anchor_uptime} "
+                f"'{awk_prog}'")
+
     def _ready_dmesg_fsync(self, _clock=None) -> bool:
-        """카메라 init readiness — dmesg 에 max9296_fsync fps 로그(구형/2.5+ 포맷
+        """카메라 init readiness — 앵커 이후의 max9296_fsync fps 로그(구형/2.5+ 포맷
         모두, FSYNC_MARKER_RE)가 뜨고 FSYNC_SETTLE_SEC 초 경과하면 True.
 
-        dmesg 는 부팅마다 ring buffer 가 초기화되므로 이 로그는 per-boot 카메라 init
-        신호다. 로그가 보이면 최초 관측 시각을 기록하고, settle 시간이 지나야 ISP
-        레지스터가 유효(settle)하다고 판단해 True 를 반환한다. 로그가 사라지거나 SSH
-        실패면 settle 타이머를 리셋한다(재부팅/재초기화 대비)."""
+        로그가 보이면 최초 관측 시각을 기록하고, settle 시간이 지나야 ISP 레지스터가
+        유효(settle)하다고 판단해 True 를 반환한다. 로그가 사라지거나 SSH 실패면
+        settle 타이머를 리셋한다(재부팅/재초기화 대비).
+
+        판정 대상은 `_dmesg_anchor_uptime`(모노토닉 초) **이후**의 라인이다. 재부팅
+        경로에서는 앵커 0 + 링버퍼 초기화라 기존과 동일하게 동작한다. 커널이
+        printk 타임스탬프를 끈 보드(파싱 0건)에서는 앵커 델타를 적용할 수 없으므로
+        기존 동작(존재만으로 판정)으로 폴백한다 — 게이트가 영영 안 열리는 것보다 낫다.
+        """
         clock = _clock or time.monotonic
-        # '|| echo 0' 으로 명령 자체가 항상 exit 0 + 단일 정수를 출력하게 한다.
-        # (grep -c 는 0건이면 exit 1 이라 ssh.run 이 None 을 반환하는데, 그 ssh.py
-        #  규약에 의존하지 않도록 self-exiting-zero 로 만든다.)
         try:
-            out = self.ssh.run(f"dmesg 2>/dev/null | grep -cE '{FSYNC_MARKER_RE}' || echo 0")
+            out = self.ssh.run(self._dmesg_fsync_probe_command())
         except Exception:
             self._fsync_seen_at = None
             return False
-        try:
-            count = int(out.strip()) if out else 0
-        except ValueError:
-            count = 0
-        if count <= 0:
+
+        counts = {"t": 0, "p": 0, "n": 0}
+        for token in (out or "").split():
+            key, _, value = token.partition("=")
+            if key in counts:
+                try:
+                    counts[key] = int(value)
+                except ValueError:
+                    counts[key] = 0
+
+        # 타임스탬프를 하나도 못 읽었으면 앵커 델타가 불가능 — 총건수로 폴백.
+        effective = counts["n"] if counts["p"] > 0 else counts["t"]
+        if effective <= 0:
             self._fsync_seen_at = None
             return False
         now = clock()
         if self._fsync_seen_at is None:
             self._fsync_seen_at = now
         return (now - self._fsync_seen_at) >= FSYNC_SETTLE_SEC
+
+    def _write_session_anchor(self) -> bool:
+        """세션 앵커 파일을 보드에 기록한다 (readiness 단계 — SSH 복구 후 재시도됨).
+
+        1행 = 앵커 시각, 2행 = 기록한 부팅의 boot_id.
+
+        **세션 시작마다 무조건 다시 쓴다.** "기존 값이 유효하면 건너뛴다"로 만들면
+        하드리셋(같은 부팅 안에서 새 세션)일 때 이전 세션의 앵커가 그대로 남는다 —
+        정확히 이 게이트가 막으려던 상황이다. 오늘은 앵커 = 부팅 시각이라 값이
+        불변이므로 디바운스 재호출에서도 내용이 같다(멱등).
+
+        무조건 기록이 미래에도 안전한 이유: 이 단계는 **세션 시작 시점에만** 돌고
+        (리부트 후 _stabilize), 그 시점의 앵커는 정의상 "이번 세션의 시작"이다.
+        하드리셋으로 바뀌어도 같은 성질이라 덮어쓰기가 잃을 정보가 없다.
+
+        **오늘 앵커 = 부팅 시각**이라 케이스의 기존 `uptime -s` 동작과 완전히 같다.
+        하드리셋으로 케이스 간 재시작을 대체하게 되면 여기서 리셋 시각을 쓰도록
+        바꾸면 되고, 케이스 쪽은 손대지 않아도 된다 (SESSION_ANCHOR_PATH 주석 참조).
+        """
+        try:
+            out = self.ssh.run(
+                f"printf '%s\\n%s\\n' \"$(uptime -s)\" "
+                f"\"$(cat {BOOT_ID_PATH} 2>/dev/null)\" "
+                f"> {SESSION_ANCHOR_PATH}; sync; cat {SESSION_ANCHOR_PATH} 2>/dev/null"
+            )
+        except Exception:
+            return False
+        lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+        return len(lines) == 2 and bool(lines[0])
 
     def _ae_probe_command(self) -> str:
         """gstApp 경과초 + 타겟 레지스터 값을 한 번의 SSH 왕복으로 읽는 명령.
@@ -612,6 +726,11 @@ class SetupManager:
         2차(코어 프로세스)·3차(영상파일 생성)는 run_setup 으로 각각 주입된 경우에만
         추가된다 (profile/인프라 단일 출처 — setup 에 하드코딩하지 않음)."""
         stages = [("ssh", self._ready_ssh)]
+        # 세션 앵커는 SSH 복구 직후 — 케이스 체크가 "이 시각 이후" 로그만 보게 하는
+        # 기준점이라 다른 준비 단계보다 먼저 찍혀야 한다. 카메라 케이스만 대상
+        # (앵커를 읽는 custom_commands 가 카메라 케이스에만 있다).
+        if self._ready_fsync:
+            stages.append(("session_anchor", self._write_session_anchor))
         procs = list(self._ready_processes_list)
         if procs:
             stages.append(("processes", lambda: self._ready_processes(procs)))
@@ -768,6 +887,7 @@ class SetupManager:
         self._ready_recording_paths = list(ready_recording_paths or [])
         self._ready_fsync = bool(ready_fsync)
         self._fsync_seen_at = None  # 이번 setup 의 settle 타이머 초기화
+        self._dmesg_anchor_uptime = 0.0  # 재부팅 경로 기본값(링버퍼 초기화 전제)
         self._ready_ae_targets = list(ready_ae_targets or [])
         self._ae_match_at = None    # 이번 setup 의 AE 정착 타이머 초기화
         edge_changes = setup_config.get("edgeconf_changes", {})

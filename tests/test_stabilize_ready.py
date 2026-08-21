@@ -18,6 +18,7 @@ from setup import (
     AE_SETTLE_MATCH_GAP_SEC,
     AE_SETTLE_GSTAPP_ETIME_SEC,
     ISP_SINGLE_ADDR,
+    SESSION_ANCHOR_PATH,
     ISP_DUAL_CH_ADDRS,
     ae_settle_targets,
     profile_is_camera,
@@ -206,12 +207,12 @@ class TestStageCameraInitFsync:
 
     def test_not_ready_when_log_absent(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "0"  # grep -c → 0건
+        mgr.ssh.run.return_value = "t=0 p=0 n=0"
         assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
 
     def test_settle_requires_elapsed_time(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "1"  # 로그 1건 존재
+        mgr.ssh.run.return_value = "t=1 p=1 n=1"  # 앵커 이후 로그 1건
         clk = _FixedClock(start=100.0)
         # 최초 관측: settle 0초 → 아직 무효
         assert mgr._ready_dmesg_fsync(_clock=clk) is False
@@ -224,7 +225,7 @@ class TestStageCameraInitFsync:
 
     def test_log_disappear_resets_settle_timer(self):
         mgr = _mgr()
-        seq = iter(["1", "0", "1"])
+        seq = iter(["t=1 p=1 n=1", "t=0 p=0 n=0", "t=1 p=1 n=1"])
         mgr.ssh.run.side_effect = lambda *a, **k: next(seq)
         clk = _FixedClock(start=0.0)
         mgr._ready_dmesg_fsync(_clock=clk)            # seen_at=0
@@ -242,17 +243,80 @@ class TestStageCameraInitFsync:
         assert mgr._ready_dmesg_fsync() is False
         assert mgr._fsync_seen_at is None
 
-    def test_grep_command_uses_marker_and_self_exits_zero(self):
+    def test_probe_command_counts_marker_and_anchor_delta(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "0"
+        mgr.ssh.run.return_value = "t=0 p=0 n=0"
         mgr._ready_dmesg_fsync(_clock=_FixedClock())
         cmd = mgr.ssh.run.call_args[0][0]
         assert "dmesg" in cmd
         assert FSYNC_MARKER_RE in cmd
-        # ERE 패턴이라 -E 필수 (구형/2.5+ 로그 포맷을 한 패턴으로 매칭).
-        assert "grep -cE" in cmd
-        # self-exiting-zero: ssh.run None 규약에 의존하지 않도록 '|| echo 0'
-        assert "|| echo 0" in cmd
+        # awk 단일 패스 — 총건수/타임스탬프파싱/앵커이후 세 숫자를 항상 출력한다.
+        # (grep -c 는 0건일 때 exit 1 이라 ssh.run 이 None 을 반환 — 그 규약에
+        #  의존하지 않도록 END 에서 무조건 찍는다.)
+        assert "awk -v a=" in cmd
+        assert 't=%d p=%d n=%d' in cmd
+        # 앵커가 명령에 실려야 델타 판정이 성립한다.
+        mgr._dmesg_anchor_uptime = 461.7
+        mgr._ready_dmesg_fsync(_clock=_FixedClock())
+        assert "awk -v a=461.7" in mgr.ssh.run.call_args[0][0]
+
+    def test_probe_command_survives_marker_with_regex_braces(self):
+        """marker 에 정규식 수량자(`{1,3}`)가 들어와도 명령 조립이 깨지지 않아야 한다.
+
+        awk 프로그램은 중괄호를 리터럴로 쓴다. marker 를 .format() 으로 끼우면
+        수량자가 치환 필드로 해석돼 KeyError 나 잘못된 치환이 난다 — 연결로 끼운다.
+        """
+        import setup as setup_mod
+
+        original = setup_mod.FSYNC_MARKER_RE
+        try:
+            setup_mod.FSYNC_MARKER_RE = "max9296_fsync( [a-z-]{1,12})? fps :"
+            mgr = _mgr()
+            cmd = mgr._dmesg_fsync_probe_command()   # 예외 없이 조립돼야 한다
+            assert "[a-z-]{1,12}" in cmd             # 수량자가 원형 그대로
+            assert 't=%d p=%d n=%d' in cmd           # awk 리터럴 중괄호 보존
+            assert "{t++;" in cmd
+        finally:
+            setup_mod.FSYNC_MARKER_RE = original
+
+    def test_anchor_delta_blocks_stale_pre_anchor_lines(self):
+        """하드리셋 시나리오 — 링버퍼에 직전 부팅 fsync 가 남아도 게이트는 안 열린다.
+
+        재부팅은 dmesg 링버퍼를 비우지만 하드리셋(SoC 재부팅 없음)은 비우지 않는다.
+        총건수(t)만 보면 조기 개방되고, 앵커 이후(n)를 보면 막힌다.
+        """
+        mgr = _mgr()
+        mgr._dmesg_anchor_uptime = 500.0
+        mgr.ssh.run.return_value = "t=3 p=3 n=0"   # 전부 앵커 이전(직전 부팅)
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        clk.v = 100.0
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False
+        # 리셋 이후 라인이 생기면 통과한다.
+        mgr.ssh.run.return_value = "t=4 p=4 n=1"
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False   # 최초 관측
+        clk.v = 100.0 + FSYNC_SETTLE_SEC
+        assert mgr._ready_dmesg_fsync(_clock=clk) is True
+
+    def test_falls_back_to_total_when_timestamps_unparseable(self):
+        """printk 타임스탬프가 꺼진 보드 — 앵커 델타 불가 시 기존 동작으로 폴백.
+
+        게이트가 영영 안 열리는 것보다 '존재만으로 판정'이 낫다.
+        """
+        mgr = _mgr()
+        mgr._dmesg_anchor_uptime = 500.0
+        mgr.ssh.run.return_value = "t=2 p=0 n=0"
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_dmesg_fsync(_clock=clk) is False   # 최초 관측
+        clk.v = FSYNC_SETTLE_SEC
+        assert mgr._ready_dmesg_fsync(_clock=clk) is True
+
+    def test_malformed_probe_output_is_not_ready(self):
+        mgr = _mgr()
+        for out in ("", None, "garbage", "t=x p=y n=z"):
+            mgr._fsync_seen_at = None
+            mgr.ssh.run.return_value = out
+            assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False, out
 
     def test_marker_re_matches_old_and_new_dmesg_formats(self):
         """구형(pre-2.5)과 2.5+ 실측 dmesg 라인을 모두 매칭해야 한다.
@@ -290,7 +354,7 @@ class TestStageCameraInitFsync:
         mgr._ready_fsync = True
         mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
         assert [n for n, _ in mgr._stabilize_stages()] == [
-            "ssh", "processes", "camera_init", "recording"]
+            "ssh", "session_anchor", "processes", "camera_init", "recording"]
 
     def test_camera_init_stage_skipped_when_not_camera(self):
         mgr = _mgr()
@@ -695,14 +759,15 @@ class TestStageAeSettle:
         mgr._ready_ae_targets = list(self._T)
         mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
         assert [n for n, _ in mgr._stabilize_stages()] == [
-            "ssh", "processes", "camera_init", "ae_settle", "recording"]
+            "ssh", "session_anchor", "processes", "camera_init", "ae_settle",
+            "recording"]
 
     def test_stage_absent_when_no_targets(self):
         mgr = _mgr()
         mgr._ready_fsync = True
         mgr._ready_recording_paths = ["/dev/shm"]
         assert [n for n, _ in mgr._stabilize_stages()] == [
-            "ssh", "camera_init", "recording"]
+            "ssh", "session_anchor", "camera_init", "recording"]
 
     def test_earlier_stage_timeout_short_circuits_ae_settle(self):
         """앞 단계(camera_init)가 예산을 다 쓰면 ae_settle 은 **평가되지 않는다**.
@@ -818,3 +883,125 @@ class TestAeSettleAddressMatchesCaseCorpus:
         # 2026-08-21 기준 실측 96건(케이스가 ae_on 을 명시한 채널만 대조 대상).
         assert checked >= 80, f"대조 건수가 너무 적다 ({checked}) — 코퍼스 탐색 경로 확인"
         assert not mismatches, "\n".join(mismatches[:10])
+
+
+class TestSessionAnchor:
+    """세션 앵커 — 케이스 체크가 "이 시각 이후" 로그만 보게 하는 기준점.
+
+    지금까지 각 케이스가 `uptime -s`(부팅 시각)를 직접 읽었는데, 그건 "케이스 사이의
+    재시작 = 재부팅"이라는 전제에 의존한다. 하드리셋으로 재부팅을 대체하면
+    `uptime -s` 가 안 바뀌어 직전 케이스 세션이 매칭된다. 앵커를 파일로 외부화해
+    바꿀 곳을 `_write_session_anchor` 한 곳으로 모은다.
+    """
+
+    def test_writes_boot_time_and_boot_id(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "2026-08-21 14:42:05\n80c4ba4d-8ab6-4a3a-a663-c06d"
+        assert mgr._write_session_anchor() is True
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert "uptime -s" in cmd                       # 1행 = 앵커 시각
+        assert "/proc/sys/kernel/random/boot_id" in cmd  # 2행 = 잔존 판별용
+        assert SESSION_ANCHOR_PATH in cmd
+
+    def test_always_rewrites_rather_than_skipping_on_match(self):
+        """세션 시작마다 무조건 다시 쓴다 — 조건부로 만들면 하드리셋에서 깨진다.
+
+        "기존 값이 유효하면 건너뛴다"로 구현하면 같은 부팅 안에서 새 세션이 시작되는
+        하드리셋일 때 이전 세션의 앵커가 그대로 남는다 — 정확히 이 게이트가 막으려던
+        상황이다. 오늘은 앵커 = 부팅 시각이라 값이 불변이라 디바운스 재호출에서도
+        내용이 같다(멱등).
+        """
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "2026-08-21 14:42:05\n2026-08-21 14:42:05"
+        mgr._write_session_anchor()
+        cmd = mgr.ssh.run.call_args[0][0]
+        # 기존 파일을 읽어 비교하는 분기가 없어야 한다.
+        assert "NR==2" not in cmd
+        assert f"> {SESSION_ANCHOR_PATH}" in cmd
+
+    def test_returns_false_on_missing_or_short_output(self):
+        mgr = _mgr()
+        for out in (None, "", "2026-08-21 14:42:05", "\n\n"):
+            mgr.ssh.run.return_value = out
+            assert mgr._write_session_anchor() is False, out
+
+    def test_returns_false_on_ssh_error(self):
+        mgr = _mgr()
+        mgr.ssh.run.side_effect = RuntimeError("boom")
+        assert mgr._write_session_anchor() is False
+
+    def test_stage_present_only_for_camera_cases(self):
+        mgr = _mgr()
+        mgr._ready_recording_paths = ["/dev/shm"]
+        # 비카메라: 앵커를 읽는 custom_commands 가 없으므로 단계도 없다.
+        assert "session_anchor" not in [n for n, _ in mgr._stabilize_stages()]
+        mgr._ready_fsync = True
+        stages = [n for n, _ in mgr._stabilize_stages()]
+        assert stages[:2] == ["ssh", "session_anchor"]
+
+    def test_run_setup_resets_dmesg_anchor(self):
+        mgr = _mgr()
+        mgr._dmesg_anchor_uptime = 461.7
+        mgr.run_setup({})
+        # 재부팅 경로 기본값 — 링버퍼가 비워지므로 0 이면 충분하다.
+        assert mgr._dmesg_anchor_uptime == 0.0
+
+
+class TestCasesUseSessionAnchor:
+    """케이스가 부팅 앵커를 직접 읽지 않고 세션 앵커를 거치는지 상시 고정.
+
+    새 케이스가 `BOOT=$(uptime -s)` 관행으로 다시 들어오면 하드리셋 전환 때 조용히
+    직전 케이스 영상으로 검증하게 된다 — 그 재발을 여기서 잡는다.
+    """
+
+    def test_no_case_reads_uptime_boot_time_directly(self):
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parent.parent / "profiles"
+        offenders = []
+        anchored = 0
+        for path in sorted(root.rglob("*.yaml")):
+            text = path.read_text()
+            if "uptime -s" not in text:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if "uptime -s" not in line:
+                    continue
+                if SESSION_ANCHOR_PATH in line:
+                    anchored += line.count("uptime -s")
+                else:
+                    offenders.append(f"{path.name}:{i}")
+        assert not offenders, (
+            "세션 앵커를 거치지 않고 uptime -s 를 직접 읽는 곳:\n"
+            + "\n".join(offenders[:10]))
+        # 코퍼스가 비면 테스트가 조용히 무의미해진다 — 2026-08 기준 실측 38건.
+        assert anchored >= 30, f"앵커 사용처가 너무 적다 ({anchored})"
+
+    def test_anchor_snippet_falls_back_when_file_absent(self):
+        """리더 스니펫은 파일이 없거나 stale 이면 `uptime -s` 로 폴백해야 한다.
+
+        /tmp 가 tmpfs 가 아니라 재부팅에도 파일이 남으므로, 2행(기록 시점의 부팅
+        시각) 대조가 stale 판정의 핵심이다. 보드 실측으로 4개 시나리오 확인함.
+        """
+        import pathlib
+
+        import yaml
+
+        root = pathlib.Path(__file__).resolve().parent.parent / "profiles"
+        checked = 0
+        for path in sorted(root.rglob("*.yaml")):
+            prof = yaml.safe_load(path.read_text())
+            if not isinstance(prof, dict):
+                continue
+            for cmd in ((prof.get("checks") or {}).get("custom_commands") or []):
+                command = cmd.get("command", "")
+                if SESSION_ANCHOR_PATH not in command:
+                    continue
+                checked += 1
+                # 2행 = boot_id 대조(잔존 거부) + 빈 값일 때 uptime -s 폴백.
+                # boot_id 인 이유: uptime -s 는 같은 부팅에서도 ±1초 흔들려
+                # (보드 실측) 문자열 대조에 쓰면 jitter 마다 앵커가 무시된다.
+                assert "/proc/sys/kernel/random/boot_id" in command, cmd.get("name")
+                assert "NR==2 && $0==i" in command, cmd.get("name")
+                assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, cmd.get("name")
+        assert checked >= 30, f"앵커 사용처가 너무 적다 ({checked})"
