@@ -60,6 +60,10 @@ FSYNC_MARKER_RE = "max9296_fsync( [a-z-]+)? fps :"
 # 파일 형식(2줄): 1행 = 앵커 시각, 2행 = 그 앵커를 기록한 시점의 `uptime -s`.
 # 2행이 필요한 이유: 이 보드의 /tmp 는 tmpfs 가 아니라 루트 fs 라 **재부팅에도 파일이
 # 남는다**. 2행이 현재 부팅 시각과 다르면 이전 부팅의 잔존물이므로 리더가 폴백한다.
+#
+# 케이스가 뱉는 `FAIL:NEED_2_FINALIZES_AFTER_BOOT` 는 이제 의미상 "앵커 이후"지만
+# 문구를 그대로 둔다 — checks/recording.py 가 이 문자열을 stabilization 신호 토큰으로
+# 쓰고 있어(verify_retry 단일 출처 계약) 이름만 바꾸면 그 계약이 조용히 끊긴다.
 SESSION_ANCHOR_PATH = "/tmp/pim_check_anchor"
 
 # 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
