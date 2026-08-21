@@ -2,43 +2,49 @@
   {
     "channel": 0,
     "bps": 1024,
-    "result": "NO_VIDEO",
-    "elapsed": 94.3
+    "expected_bps": 1024000,
+    "actual_bps": 1028679,
+    "actual_kbps": 1028.7,
+    "diff_pct": 0.5,
+    "tolerance_pct": 25,
+    "video": "/mnt/sd_cam/VD3001_20260615_054700-ch0.mp4",
+    "result": "PASS",
+    "elapsed": 47.6
   },
   {
     "channel": 0,
     "bps": 2048,
     "expected_bps": 2048000,
-    "actual_bps": 2063625,
-    "actual_kbps": 2063.6,
-    "diff_pct": 0.8,
+    "actual_bps": 2045855,
+    "actual_kbps": 2045.9,
+    "diff_pct": -0.1,
     "tolerance_pct": 10,
-    "video": "/dev/shm/recordings/VD3001_20260428_125300-ch0.mp4",
+    "video": "/mnt/sd_cam/VD3001_20260615_054800-ch0.mp4",
     "result": "PASS",
-    "elapsed": 75.6
+    "elapsed": 57.4
   },
   {
     "channel": 0,
     "bps": 4096,
     "expected_bps": 4096000,
-    "actual_bps": 4154024,
-    "actual_kbps": 4154.0,
-    "diff_pct": 1.4,
+    "actual_bps": 4096396,
+    "actual_kbps": 4096.4,
+    "diff_pct": 0.0,
     "tolerance_pct": 10,
-    "video": "/dev/shm/recordings/VD3001_20260428_125400-ch0.mp4",
+    "video": "/mnt/sd_cam/VD3001_20260615_054900-ch0.mp4",
     "result": "PASS",
-    "elapsed": 61.3
+    "elapsed": 65.0
   },
   {
     "channel": 0,
     "bps": 8192,
     "expected_bps": 8192000,
-    "actual_bps": 7992296,
-    "actual_kbps": 7992.3,
-    "diff_pct": -2.4,
+    "actual_bps": 8246968,
+    "actual_kbps": 8247.0,
+    "diff_pct": 0.7,
     "tolerance_pct": 10,
-    "video": "/dev/shm/recordings/VD3001_20260428_125500-ch0.mp4",
+    "video": "/mnt/sd_cam/VD3001_20260615_055000-ch0.mp4",
     "result": "PASS",
-    "elapsed": 62.1
+    "elapsed": 59.3
   }
 ]
