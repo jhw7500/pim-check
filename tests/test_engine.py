@@ -40,7 +40,8 @@ class TestEngine:
         results = engine.run_snapshot()
 
         assert isinstance(results, list)
-        assert len(results) == 8
+        # 8 기본 체크 + cam_health + max9296_abi (2026-08 배포 조합 sync).
+        assert len(results) == 10
         for entry in results:
             assert "name" in entry
             assert "passed" in entry

@@ -28,6 +28,22 @@ checks:
     expected_state: healthy
     max_streak: 0
 
+  # gstApp 내장 camera-health v1 producer (2026-08 배포 조합) 스냅샷.
+  # path: null 로 케이스별 비활성화 (gstApp 을 의도적으로 죽이는 fault 케이스 등).
+  cam_health:
+    path: /run/pim-camera/gstApp.json
+    stale_ms: 5000
+    # 부팅 직후 gstApp 기동 ~ 첫 발행(1Hz) 사이의 파일 부재는 이 시간까지
+    # stabilization(NEED_PRODUCER_SNAPSHOT_AFTER_BOOT)으로 분류 — hard fail 아님.
+    early_boot_grace_sec: 180
+
+  # max9296 드라이버 배포 조합 단언 (2026-08: 2.5 + prepare/health_raw sysfs ABI).
+  # expected_version: null 로 케이스별 비활성화. adapter 1 → ch2/ch3, 2 → ch0/ch1.
+  max9296_abi:
+    expected_version: "2.5"
+    adapters: [1, 2]
+    i2c_addr: "0048"
+
   legacy_files:
     must_not_exist:
       - /tmp/bg_cam_err_streak
@@ -55,11 +71,17 @@ checks:
       - "Oops"
       - "oom-kill"
       - "CAM_STATE.*invalid"
+      # gstApp 의 max9296 prepare 실패 (LOG_CRIT: invalid request / owner lock
+      # failed / LEGACY_NO_ABI). 정상 prepare 는 NOTICE 라 -p err 에 안 잡힌다.
+      # 로그 태그 '[MAX9296_PREPARE]' 에 앵커 — 태그 밖 우연 언급 오매칭 방지.
+      - '\[MAX9296_PREPARE\]'
 
 # 체크별 재시도 횟수 (SSH 에러 시)
 retry_policy:
   process: 2
   cam_state: 2
+  cam_health: 1
+  max9296_abi: 1
   thermal: 0
   recording: 1
   custom_commands: 1

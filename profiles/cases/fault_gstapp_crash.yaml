@@ -10,16 +10,26 @@ setup:
   inject_command: "pkill -9 gstApp; sleep 2; echo 'gstApp killed'"
 
 checks:
+  # gstApp 을 의도적으로 죽이는 케이스 — producer 스냅샷이 kill 구간에 stale 이
+  # 되는 건 주입 효과지 결함이 아니므로 cam_health 체크를 끈다. respawn 중
+  # prepare 과도 상태(worker_errno 등)도 주입 효과라 max9296_abi 도 끈다.
+  cam_health:
+    path: null
+  max9296_abi:
+    expected_version: null
+
   custom_commands:
     - name: "gstApp respawned within 60s"
       command: "for i in $(seq 1 12); do pgrep -x gstApp > /dev/null && { echo RESPAWNED:$((i*5))s; exit 0; }; sleep 5; done; echo NOT_RESPAWNED"
       expected_regex: "^RESPAWNED:"
       on_fail: "gstApp not respawned within 60s after crash"
 
+    # 2026-08 배포 조합부터 chk_cam_operate.sh 는 cam-operate.service 유닛으로
+    # 관리된다 (이전에는 유닛이 없어 이 journalctl 이 항상 0 이었음 — 2026-06 확인).
     - name: "chk_cam_operate detected and recorded"
-      command: "journalctl -u chk_cam_operate.service --since '2 min ago' 2>/dev/null | grep -iE 'restart|crash|respawn|launch' | wc -l"
+      command: "journalctl -u cam-operate.service --since '2 min ago' 2>/dev/null | grep -iE 'restart|crash|respawn|launch|killcam' | wc -l"
       expected_min: 1
-      on_fail: "chk_cam_operate did not log gstApp crash recovery"
+      on_fail: "cam-operate.service did not log gstApp crash recovery"
 
     - name: "cam_state recovers to healthy"
       command: "for i in $(seq 1 24); do s=$(cat /tmp/cam_state/state 2>/dev/null); [ \"$s\" = \"healthy\" ] && { echo HEALTHY:$((i*5))s; exit 0; }; sleep 5; done; echo NOT_HEALTHY:state=$s"
@@ -32,4 +42,4 @@ checks:
       on_fail: "gstApp core dump generated — unexpected behavior"
 
 teardown:
-  recovery_command: "pgrep -x gstApp > /dev/null || systemctl restart chk_cam_operate.service 2>&1; sleep 5; pgrep -x gstApp && echo 'gstApp running' || echo 'manual restart needed'"
+  recovery_command: "pgrep -x gstApp > /dev/null || systemctl restart cam-operate.service 2>&1; sleep 5; pgrep -x gstApp && echo 'gstApp running' || echo 'manual restart needed'"

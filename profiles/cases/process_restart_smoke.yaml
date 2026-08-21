@@ -12,6 +12,12 @@ checks:
     dir: /tmp/cam_state
     expected_state: healthy
     max_streak: 0
+  # gstApp 을 60초 pkill 하는 주입 케이스 — kill 구간의 producer stale/prepare
+  # 과도 상태는 주입 효과지 결함이 아니므로 두 체크를 끈다 (fault_gstapp_crash 동일).
+  cam_health:
+    path: null
+  max9296_abi:
+    expected_version: null
   custom_commands:
     - name: 사전 gstApp+ord+vcm 동시 실행
       command: pgrep -x gstApp >/dev/null && pgrep -x ord >/dev/null && pgrep -x vcm >/dev/null && echo ALL_RUNNING || echo SOMEONE_DOWN

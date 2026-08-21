@@ -36,6 +36,9 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
     # 경우 — 녹화가 완성된 뒤 재시도하면 해소된다.
     "FAIL:NO_BR",   # bitrate 측정 불가 (파일 미완성)
     "FAIL:NO_DUR",  # duration 측정 불가 (파일 미완성)
+    # 부팅 직후 gstApp 기동 ~ camera-health 첫 발행(1Hz) 사이 창 — cam_health 체크가
+    # early_boot_grace_sec 안의 파일 부재를 이 토큰으로 분류한다 (checks/cam_health.py).
+    "NEED_PRODUCER_SNAPSHOT",
 )
 
 

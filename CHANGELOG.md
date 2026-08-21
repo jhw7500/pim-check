@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased (2026-08-21)
+
+### 배포 조합 sync — max9296 2.5 · gstApp camera-health (`docs/03-analysis/deploy-sync-2026-08-21.md`)
+
+- **fix(setup)**: 카메라 readiness 의 dmesg fsync 마커를 ERE(`FSYNC_MARKER_RE`)로 교체.
+  드라이버 2.5 부터 로그가 `max9296_fsync <mode> fps :` 로 바뀌어 구 리터럴은 0 매칭
+  → 카메라 케이스 준비 게이트가 열리지 않던 파손 수정 (구/신 포맷 모두 매칭).
+- **feat(checks)**: `max9296_abi` 신설 — modinfo version(기본 2.5) + prepare 상태라인
+  (errno/worker_errno=0, state≠FAILED) + health_raw JSON(deserializer OK, enable 채널
+  link up, serializer OK). 카메라 on/off 무관 상시 유효.
+- **feat(checks)**: `cam_health` 신설 — gstApp 내장 camera-health v1 producer 스냅샷
+  (`/run/pim-camera/gstApp.json`) 신선도(stale_ms, boot_id 대조) + FAIL observation 0.
+- **base.yaml**: 두 체크 기본값·retry_policy 추가, `logs.error_patterns` 에
+  `\[MAX9296_PREPARE\]`(gstApp prepare 실패 LOG_CRIT, 태그 앵커) 추가.
+- **fault_gstapp_crash · process_restart_smoke**: gstApp 을 pkill 하는 두 케이스에서
+  kill/respawn 구간 오탐 방지로 `cam_health`·`max9296_abi` 비활성화.
+  fault_gstapp_crash 는 회복 감시 유닛도 실존하는 `cam-operate.service` 로 정정
+  (2026-06 백로그 #2 전제 변경 — chk_cam_operate.sh 가 유닛으로 승격됨).
+- **리뷰 반영 강화**: 체크 예외 유출 차단(JSON 모양 가드), 음수 age 상한(1s),
+  uptime 불능 표면화, 부팅 직후 grace(NEED_PRODUCER_SNAPSHOT stabilization 토큰),
+  fsync mode open set(`( [a-z-]+)?`), errno 정수 비교, 0ch deserializer 단언 스킵.
+- **fix(cases)**: 케이스 custom_commands 의 fsync fps 추출 grep 21건
+  (profiles/cases/*.yaml)도 동일한 구 리터럴 파손 — smoke 타겟 검증(1차)이 적발,
+  `( [a-z-]+)?` ERE 로 일괄 교체. smoke 1차에서 신규 cam_health 가 실제 4채널
+  GSTREAMER_SOURCE_STALL 을 포착(참양성)한 것도 실증됨.
+- **fix(cases) 백로그 스위프 (21파일)**: ① manual gain 8192→512 — 실효 시
+  센서 ≈16× 백색 포화로 bitrate 검증과 충돌 (근본 원인: max9296#26 의
+  라이프사이클 race, `docs/03-analysis/deploy-sync-2026-08-21.md` §4)
+  ② AE_GAIN(0x5006) 기대값 갱신 + smoke 3케이스에 readback 신설
+  ③ bitrate 체크 보유 19파일에 `enc:"h265"` + 채널별 qp/profile [0,0]
+  명시 고정 — 보드 edgeconf 인코더 드리프트로 인한 검증 비결정화 차단.
+- Phase 0 보류 항목(외부 producer 2종·aggregator·manifest sha)은 분석 문서에 기록.
+
 ## v2.1.0 (2026-05-27)
 
 ### Multi-target viewer 시리즈

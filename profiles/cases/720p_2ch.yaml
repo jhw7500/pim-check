@@ -10,6 +10,16 @@ setup:
     ".VHL_CAM.fps": 30
     ".VHL_CAM.recording_time": 2
     ".VHL_CAM.muxer": mp4
+    # 인코더 상태 명시 고정 — enc/qp 드리프트로 bitrate 검증이
+    # 비결정화되는 것 차단 (2026-08-21 deploy-sync 분석. qp [0,0]=무클램프
+    # → rate control 이 목표 추종, ch3 실측 근거)
+    ".VHL_CAM.enc": "h265"
+    ".VHL_CAM.i2c2.ch0.qp_min": [0, 0]
+    ".VHL_CAM.i2c2.ch0.qp_max": [0, 0]
+    ".VHL_CAM.i2c2.ch0.profile": [0, 0]
+    ".VHL_CAM.i2c2.ch1.qp_min": [0, 0]
+    ".VHL_CAM.i2c2.ch1.qp_max": [0, 0]
+    ".VHL_CAM.i2c2.ch1.profile": [0, 0]
     ".VHL_CAM.capture.enable": false
     ".VHL_CAM.i2c2.exp_time": 2000
     ".VHL_CAM.i2c2.ch0.enable": true
@@ -19,7 +29,7 @@ setup:
     ".VHL_CAM.i2c2.ch0.vflip": false
     ".VHL_CAM.i2c2.ch0.hflip": true
     ".VHL_CAM.i2c2.ch0.ae_on": false
-    ".VHL_CAM.i2c2.ch0.ae_gain": 8192
+    ".VHL_CAM.i2c2.ch0.ae_gain": 512
     ".VHL_CAM.i2c2.ch0.awb": "auto"
     ".VHL_CAM.i2c2.ch1.vflip": false
     ".VHL_CAM.i2c2.ch1.hflip": false
@@ -75,6 +85,9 @@ checks:
     - name: ch0 AE_CTRL (ae_on=false)
       command: i2ctransfer -f -y 2 w2@0x11 0x50 0x02 r2 2>/dev/null | tr -d ' '
       expected: '0x020x90'
+    - name: ch0 AE_GAIN (gain=512, manual)
+      command: i2ctransfer -f -y 2 w2@0x11 0x50 0x06 r2 2>/dev/null | tr -d ' '
+      expected: '0x020x00'
     - name: ch1 AE_CTRL (ae_on=true)
       command: i2ctransfer -f -y 2 w2@0x12 0x50 0x02 r2 2>/dev/null | tr -d ' '
       expected: '0x020x99'
@@ -88,7 +101,7 @@ checks:
       command: i2ctransfer -f -y 2 w2@0x11 0x50 0x0c r4 2>/dev/null | tr -d ' '
       expected: '0x000x000x070xd0'
     - name: dmesg max9296_fsync fps (expected 30)
-      command: "dmesg 2>/dev/null | grep -oE 'max9296_fsync fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'"
+      command: "dmesg 2>/dev/null | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'"
       expected: '30'
       on_fail: dmesg max9296_fsync fps 30과 다름 (HW level)
     - name: ch0 led_flash (enable=T, wiper=16)

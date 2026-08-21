@@ -4,7 +4,7 @@
 # checks
 
 ## Purpose
-QA 체크 모듈 디렉토리. `BaseCheck` 추상 클래스를 상속하는 8개 체크가 구현되어 있으며, `plugins/` 디렉토리를 통한 동적 플러그인 로드를 지원한다. `__init__.py`의 `ALL_CHECKS` 리스트가 엔진에서 사용하는 체크 목록이다.
+QA 체크 모듈 디렉토리. `BaseCheck` 추상 클래스를 상속하는 10개 체크가 구현되어 있으며, `plugins/` 디렉토리를 통한 동적 플러그인 로드를 지원한다. `__init__.py`의 `ALL_CHECKS` 리스트가 엔진에서 사용하는 체크 목록이다.
 
 ## Key Files
 
@@ -14,6 +14,8 @@ QA 체크 모듈 디렉토리. `BaseCheck` 추상 클래스를 상속하는 8개
 | `base_check.py` | `BaseCheck` ABC — `collect(ssh, config) -> dict`, `validate(data, config) -> (bool, str)` |
 | `process.py` | `ProcessCheck` — 필수/선택 프로세스 실행 여부 + CPU 사용률 (pgrep + ps) |
 | `cam_state.py` | `CamStateCheck` — `/tmp/cam_state/` 디렉토리의 상태 파일 및 에러 스트릭 체크 |
+| `cam_health.py` | `CamHealthCheck` — gstApp 내장 camera-health v1 producer 스냅샷(`/run/pim-camera/gstApp.json`) 신선도 + FAIL observation |
+| `max9296_abi.py` | `Max9296AbiCheck` — max9296 드라이버 버전(modinfo) + prepare/health_raw sysfs ABI 상태 |
 | `thermal.py` | `ThermalCheck` — CPU/SoC 온도 (`/sys/devices/virtual/thermal/thermal_zone*/temp`) |
 | `jq_fork.py` | `JqForkCheck` — jq 프로세스 과다 포크 감지 |
 | `log.py` | `LogCheck` — journalctl 에러 로그 패턴 매칭 (kernel panic, OOM 등) |
