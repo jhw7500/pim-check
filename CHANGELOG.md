@@ -2,6 +2,33 @@
 
 ## Unreleased (2026-08-21)
 
+### 세션 앵커 도입 — 하드리셋 전환의 잔여 관문 2건 해소
+
+`cam_hard_reset.sh`(pim-package-jhw#46) 로 케이스 간 재부팅을 대체하려면 "재시작 =
+재부팅" 전제에 기댄 두 곳이 먼저 리셋 인지형이 돼야 한다. **오늘 동작은 그대로
+보존하면서 앵커만 명시화**한다 (재부팅 경로에서 동작 불변).
+
+- **fix(setup)**: 카메라 init(fsync) 게이트를 **앵커 이후 델타 판정**으로 교체.
+  기존에는 `dmesg | grep -c` 로 존재만 봤는데, 그건 "링버퍼가 부팅마다 초기화된다"에
+  의존한다. 하드리셋은 SoC 를 재부팅하지 않아 링버퍼가 안 비워지므로 **직전 부팅의
+  fsync 라인이 게이트를 즉시 열어버린다**(카메라 init 전). 이제 awk 한 패스로
+  `t=총건수 p=타임스탬프파싱 n=앵커이후` 를 세고 `n` 으로 판정한다
+  (`_dmesg_anchor_uptime`, 재부팅 경로 기본 0 → 기존과 동일).
+  printk 타임스탬프가 꺼진 보드(p=0)에서는 총건수로 폴백한다.
+- **feat(setup)**: **세션 앵커 파일**(`/tmp/pim_check_anchor`) 신설 + readiness 단계
+  `session_anchor` 를 `ssh` 직후에 추가(카메라 케이스만). 1행 = 앵커 시각,
+  2행 = 기록 시점의 `uptime -s`. 이 보드의 `/tmp` 는 tmpfs 가 아니라 **재부팅에도
+  파일이 남으므로**, 2행이 현재 부팅 시각과 다르면 리더가 폴백하도록 자기검증한다.
+- **fix(cases)**: 카메라 케이스 5개의 부팅 앵커 **38곳**을 세션 앵커 경유로 교체
+  (`fhd_4ch` 10, `720p_4ch` 10, `fhd_3ch_012` 8, `fhd_2ch_03` 5, `720p_2ch` 5).
+  기존 `BOOT=$(uptime -s)` → 앵커 파일을 읽고 없거나 stale 이면 `uptime -s` 폴백.
+  하드리셋은 `uptime -s` 를 바꾸지 않으므로 그대로 두면 **직전 케이스의 녹화 세션이
+  매칭**돼 이전 케이스 영상으로 fps/bitrate/duration 을 검증하게 된다.
+- **바꿀 곳이 한 곳으로 모였다**: 하드리셋 도입 시 `_write_session_anchor` 가 리셋
+  시각을, `_dmesg_anchor_uptime` 이 리셋 시점 uptime 을 쓰면 되고 케이스 38곳은 불변.
+- 새 케이스가 `BOOT=$(uptime -s)` 관행으로 되돌아오는 것을 막는 코퍼스 속성 테스트
+  추가 (`TestCasesUseSessionAnchor`).
+
 ### AE 정착 readiness 게이트 (pim-check#61)
 
 - **feat(setup)**: 리부트 후 안정화 readiness 에 `ae_settle` 단계 신설 —
