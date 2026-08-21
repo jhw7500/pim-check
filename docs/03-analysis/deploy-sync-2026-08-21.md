@@ -92,9 +92,34 @@ custom_commands stale-read 등)는 보드-무관 검사 버그로 이번 sync �
 config 경로 shell quoting(저장소 전반 컨벤션과 통일 유지), 엔진 스냅샷
 테스트의 체크 수 hard-pin(구성 회귀를 잡는 의도된 고정).
 
-## 4. 검증
+## 4. 타겟 검증 (smoke 플랜, 2026-08-21)
 
-- 단위: `uv run pytest` 전건 통과 (baseline 708 → 신규 체크·회귀 테스트 추가) —
-  fixture 는 보드 실측 출력, 리뷰가 재현한 실패 모드 전부 회귀 테스트로 고정.
-- 보드: 192.168.214.4 라이브 스냅샷 10/10 PASS + 수정된 fsync 게이트 실측 통과
-  (검증 실행 결과는 커밋 로그에 기록).
+`pim_check.py --plan smoke --host 192.168.214.4` 엔드투엔드 1차 실행이
+**2차 파손 위치를 적발**했다:
+
+- **케이스 YAML 의 fsync fps 추출 grep 21건** (profiles/cases/*.yaml 의
+  custom_commands `dmesg max9296_fsync fps (expected N)`): setup.py 와 동일한
+  구 리터럴 `'max9296_fsync fps : [0-9]+'` 를 사용 → 2.5 보드에서 빈 문자열
+  추출 → 카메라 케이스 전부 FAIL. `( [a-z-]+)?` 삽입으로 구/신 포맷 모두
+  추출하도록 21개 파일 일괄 교체 (generated/·schema·generator 는 해당 없음 확인).
+- 1차 실행 결과: 1/8 PASS — process_restart_smoke(opt-out 정정 케이스) 통과,
+  카메라 5케이스는 위 grep 단독(3건) 또는 grep+비트레이트(2건) FAIL,
+  board_hw_check 는 **신규 cam_health 가 실제 4채널
+  GSTREAMER_SOURCE_STALL 을 포착**해 FAIL(참양성), config_integrity 는 스톨을
+  감지한 chk_cam_operate 워치독의 보드 재부팅과 겹쳐 NO_SSH.
+- readiness `[ready] camera_init` 이 매 케이스 통과 — setup.py 의 fsync ERE
+  수정이 실플로우에서 검증됨.
+
+### 후속 확인 항목 (보드 관측 — 검사 버그 아님)
+
+- **4ch 케이스 비트레이트 이상**: 720p_4ch ch2 3205kbps(기대 4096±20%, 하한
+  -2.2%p 미달), fhd_4ch ch0 82kbps(기대 8192 — 거의 무기록). fhd_4ch 구간부터
+  전채널 소스 스톨 → 워치독 재부팅으로 이어진 정황. 재실행 재현 여부로
+  일시 스톨 vs FW 회귀(gstApp cacb78a·driver 2.5 4ch 부하) 판별 필요.
+
+## 5. 검증 요약
+
+- 단위: `uv run pytest` 전건 통과 (baseline 708 → 748) — fixture 는 보드 실측
+  출력, 리뷰가 재현한 실패 모드 전부 회귀 테스트로 고정.
+- 보드: 192.168.214.4 라이브 스냅샷 10/10 PASS + smoke 타겟 검증 (1차: 파손
+  적발, 케이스 grep 수정 후 재실행 결과는 커밋 로그에 기록).

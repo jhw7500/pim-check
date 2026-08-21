@@ -239,7 +239,7 @@ checks:
     on_fail: 'ch1 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: dmesg max9296_fsync fps (expected 30)
     command: |-
-      F=$(dmesg 2>/dev/null | grep -oE 'max9296_fsync fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\n' ',' | sed 's/,$//')
+      F=$(dmesg 2>/dev/null | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\n' ',' | sed 's/,$//')
       [ -z "$F" ] && echo FAIL:NO_DMESG && exit 0
       [ "$F" = "30" ] && echo OK || echo FAIL:got=$F
     expected: 'OK'

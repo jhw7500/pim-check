@@ -21,6 +21,10 @@
 - **리뷰 반영 강화**: 체크 예외 유출 차단(JSON 모양 가드), 음수 age 상한(1s),
   uptime 불능 표면화, 부팅 직후 grace(NEED_PRODUCER_SNAPSHOT stabilization 토큰),
   fsync mode open set(`( [a-z-]+)?`), errno 정수 비교, 0ch deserializer 단언 스킵.
+- **fix(cases)**: 케이스 custom_commands 의 fsync fps 추출 grep 21건
+  (profiles/cases/*.yaml)도 동일한 구 리터럴 파손 — smoke 타겟 검증(1차)이 적발,
+  `( [a-z-]+)?` ERE 로 일괄 교체. smoke 1차에서 신규 cam_health 가 실제 4채널
+  GSTREAMER_SOURCE_STALL 을 포착(참양성)한 것도 실증됨.
 - Phase 0 보류 항목(외부 producer 2종·aggregator·manifest sha)은 분석 문서에 기록.
 
 ## v2.1.0 (2026-05-27)

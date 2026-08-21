@@ -88,7 +88,7 @@ checks:
       command: i2ctransfer -f -y 2 w2@0x11 0x50 0x0c r4 2>/dev/null | tr -d ' '
       expected: '0x000x000x070xd0'
     - name: dmesg max9296_fsync fps (expected 30)
-      command: "dmesg 2>/dev/null | grep -oE 'max9296_fsync fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'"
+      command: "dmesg 2>/dev/null | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'"
       expected: '30'
       on_fail: dmesg max9296_fsync fps 30과 다름 (HW level)
     - name: ch0 led_flash (enable=T, wiper=16)
