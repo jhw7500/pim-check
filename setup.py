@@ -388,14 +388,22 @@ class SetupManager:
 
         전송은 base64 로 한다. 설정이 JSON 이라 따옴표를 포함하는데, 원문을 셸
         인용으로 넘기면 이스케이프 사고가 나기 쉽다.
+
+        저장 전에 **base64 문자집합을 검증**한다. 출력에 경고 등 잡음이 섞인 채로
+        저장되면 복원 때 `base64 -d` 가 실패하고, 그러면 조용히 `.bak` 폴백으로
+        떨어진다 — 이 기능이 없애려던 바로 그 경로다. 잡음이면 차라리 여기서
+        실패로 처리해 경고를 남기는 편이 낫다.
+        공백/개행은 제거하고 본다 — `-w0` 을 지원하지 않는 보드에서 76열로 접혀
+        나오는 출력도 그대로 받아들이기 위해서다.
         """
         try:
             out = self.ssh.run(f"base64 -w0 {conf_path} 2>/dev/null")
         except Exception:
             return False
-        if not out or not out.strip():
+        compact = re.sub(r"\s+", "", out or "")
+        if not compact or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", compact):
             return False
-        self._config_snapshots[conf_path] = out.strip()
+        self._config_snapshots[conf_path] = compact
         return True
 
     def restore_from_snapshot(self, conf_path: str) -> bool:

@@ -37,6 +37,25 @@ class TestSnapshotConfig:
             assert mgr.snapshot_config(EDGECONF_PATH) is False
             assert EDGECONF_PATH not in mgr._config_snapshots
 
+    def test_non_base64_output_is_rejected(self):
+        """잡음이 섞인 출력을 저장하면 복원 때 base64 -d 가 죽고 조용히 .bak 폴백으로
+        떨어진다 — 이 기능이 없애려던 경로다. 여기서 실패로 잡는다."""
+        mgr = _mgr()
+        for out in ("eyJhIjogMX0=\nWarning: something",
+                    "base64: /x: No such file or directory",
+                    "not base64!!",
+                    "eyJh IjogMX0= trailing words"):
+            mgr.ssh.run.return_value = out
+            assert mgr.snapshot_config(EDGECONF_PATH) is False, out
+            assert EDGECONF_PATH not in mgr._config_snapshots
+
+    def test_wrapped_base64_is_accepted_and_compacted(self):
+        """-w0 미지원 보드는 76열로 접어 출력한다 — 개행을 제거하고 받아들인다."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "eyJhIjog\nMX0=\n"
+        assert mgr.snapshot_config(EDGECONF_PATH) is True
+        assert mgr._config_snapshots[EDGECONF_PATH] == "eyJhIjogMX0="
+
     def test_ssh_error_is_failure_not_raise(self):
         mgr = _mgr()
         mgr.ssh.run.side_effect = RuntimeError("boom")
@@ -94,8 +113,11 @@ class TestRunSetupTakesSnapshot:
         mgr.backup = MagicMock(return_value=True)
         mgr.snapshot_config = MagicMock(
             side_effect=lambda p: order.append(("snapshot", p)) or True)
+        # 람다 파라미터명을 실제 시그니처(changes, conf_path)에 맞춘다 —
+        # 호출부가 키워드 인자로 바뀌어도 TypeError 가 나지 않도록.
         mgr.apply_changes = MagicMock(
-            side_effect=lambda c, p=EDGECONF_PATH: order.append(("apply", p)))
+            side_effect=lambda changes, conf_path=EDGECONF_PATH:
+                order.append(("apply", conf_path)))
         mgr.run_setup({"edgeconf_changes": {".a": 1}})
         assert order == [("snapshot", EDGECONF_PATH), ("apply", EDGECONF_PATH)]
 
