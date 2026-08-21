@@ -57,14 +57,33 @@ FSYNC_MARKER_RE = "max9296_fsync( [a-z-]+)? fps :"
 # `uptime -s` 로 폴백한다(오늘과 동일 동작). 하드리셋을 도입할 때 바꿀 곳은
 # `_write_session_anchor` **한 곳**이고 케이스 38곳은 불변이다.
 #
-# 파일 형식(2줄): 1행 = 앵커 시각, 2행 = 그 앵커를 기록한 시점의 `uptime -s`.
-# 2행이 필요한 이유: 이 보드의 /tmp 는 tmpfs 가 아니라 루트 fs 라 **재부팅에도 파일이
-# 남는다**. 2행이 현재 부팅 시각과 다르면 이전 부팅의 잔존물이므로 리더가 폴백한다.
+# 파일 형식(2줄): 1행 = 앵커 시각, 2행 = 그 앵커를 기록한 부팅의 `boot_id`.
+#
+# 2행이 `uptime -s` 가 아니라 boot_id 인 이유: `uptime -s` 는 현재시각 - uptime 으로
+# 계산돼 **같은 부팅에서도 ±1초 흔들린다**(보드 실측: 같은 부팅이 15:41:58/15:41:59
+# 로 읽힘). 문자열 대조로 쓰면 jitter 때마다 폴백해 앵커가 무시된다 — 오늘은 폴백값이
+# 같아 무해하지만 하드리셋에서는 리셋 시각 대신 부팅 시각을 쓰게 된다.
+# boot_id(`/proc/sys/kernel/random/boot_id`)는 부팅마다 고정된 UUID 라 흔들림이 없고,
+# checks/cam_health.py 가 이미 같은 목적(이전 부팅 잔존 감지)으로 쓰는 선례가 있다.
+#
+# 2행(cross-boot 가드)에 대해 — 이 보드는 **재부팅 시 /tmp 를 비운다**(실측:
+# 마커 파일·하위 디렉터리·앵커 모두 재부팅 후 소멸). /tmp 가 tmpfs 는 아니지만
+# tmpfiles.d 의 `D /tmp 1777 root root -` 를 systemd-tmpfiles 가 부팅마다 적용한다.
+# 따라서 이 보드에서 cross-boot 잔존은 발생하지 않고, 발생하더라도 세션 시작 때
+# writer 가 덮어쓴다. 2행 대조는 **writer 가 이번 부팅에 돌지 않은 경우**
+# (비카메라 케이스, 설정 일치로 setup 이 skip 된 경로)를 위한 방어이며, /tmp 를
+# 비우지 않는 다른 보드/구성에서 의미를 갖는다. 비용이 사실상 없어 유지한다.
+#
+# 남는 위험(문서화): **같은 부팅 안에서** 이전 케이스의 앵커가 재사용되는 경우.
+# 2행 대조로는 걸러지지 않는다. 오늘은 앵커 = 부팅 시각이라 값이 같아 무해하고,
+# 하드리셋 도입 시에는 writer 가 세션마다 리셋 시각을 다시 쓰므로 해소된다.
 #
 # 케이스가 뱉는 `FAIL:NEED_2_FINALIZES_AFTER_BOOT` 는 이제 의미상 "앵커 이후"지만
 # 문구를 그대로 둔다 — checks/recording.py 가 이 문자열을 stabilization 신호 토큰으로
 # 쓰고 있어(verify_retry 단일 출처 계약) 이름만 바꾸면 그 계약이 조용히 끊긴다.
 SESSION_ANCHOR_PATH = "/tmp/pim_check_anchor"
+# 부팅마다 고정된 UUID — 잔존 앵커 판별용 (cam_health 와 동일 출처).
+BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 
 # 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
 # 보드별 튜닝을 위해 환경변수 PIM_FSYNC_SETTLE_SEC 로 override 가능
@@ -596,8 +615,12 @@ class SetupManager:
     def _write_session_anchor(self) -> bool:
         """세션 앵커 파일을 보드에 기록한다 (readiness 단계 — SSH 복구 후 재시도됨).
 
-        1행 = 앵커 시각, 2행 = 기록 시점의 `uptime -s`. 이미 유효한 파일이 있으면
-        다시 쓰지 않는다(디바운스 재호출에서 멱등).
+        1행 = 앵커 시각, 2행 = 기록한 부팅의 boot_id.
+
+        **세션 시작마다 무조건 다시 쓴다.** "기존 값이 유효하면 건너뛴다"로 만들면
+        하드리셋(같은 부팅 안에서 새 세션)일 때 이전 세션의 앵커가 그대로 남는다 —
+        정확히 이 게이트가 막으려던 상황이다. 오늘은 앵커 = 부팅 시각이라 값이
+        불변이므로 디바운스 재호출에서도 내용이 같다(멱등).
 
         **오늘 앵커 = 부팅 시각**이라 케이스의 기존 `uptime -s` 동작과 완전히 같다.
         하드리셋으로 케이스 간 재시작을 대체하게 되면 여기서 리셋 시각을 쓰도록
@@ -605,9 +628,8 @@ class SetupManager:
         """
         try:
             out = self.ssh.run(
-                f"B=$(uptime -s); "
-                f"A=$(awk 'NR==2' {SESSION_ANCHOR_PATH} 2>/dev/null); "
-                f"[ \"$A\" = \"$B\" ] || printf '%s\\n%s\\n' \"$B\" \"$B\" "
+                f"printf '%s\\n%s\\n' \"$(uptime -s)\" "
+                f"\"$(cat {BOOT_ID_PATH} 2>/dev/null)\" "
                 f"> {SESSION_ANCHOR_PATH}; sync; cat {SESSION_ANCHOR_PATH} 2>/dev/null"
             )
         except Exception:

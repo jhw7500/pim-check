@@ -875,23 +875,30 @@ class TestSessionAnchor:
     바꿀 곳을 `_write_session_anchor` 한 곳으로 모은다.
     """
 
-    def test_writes_boot_time_as_anchor(self):
+    def test_writes_boot_time_and_boot_id(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "2026-08-21 14:42:05\n2026-08-21 14:42:05"
+        mgr.ssh.run.return_value = "2026-08-21 14:42:05\n80c4ba4d-8ab6-4a3a-a663-c06d"
         assert mgr._write_session_anchor() is True
         cmd = mgr.ssh.run.call_args[0][0]
-        assert "uptime -s" in cmd
+        assert "uptime -s" in cmd                       # 1행 = 앵커 시각
+        assert "/proc/sys/kernel/random/boot_id" in cmd  # 2행 = 잔존 판별용
         assert SESSION_ANCHOR_PATH in cmd
 
-    def test_rewrites_only_when_boot_line_differs(self):
-        """멱등 — 2행이 현재 부팅 시각과 같으면 다시 쓰지 않는다(디바운스 재호출)."""
+    def test_always_rewrites_rather_than_skipping_on_match(self):
+        """세션 시작마다 무조건 다시 쓴다 — 조건부로 만들면 하드리셋에서 깨진다.
+
+        "기존 값이 유효하면 건너뛴다"로 구현하면 같은 부팅 안에서 새 세션이 시작되는
+        하드리셋일 때 이전 세션의 앵커가 그대로 남는다 — 정확히 이 게이트가 막으려던
+        상황이다. 오늘은 앵커 = 부팅 시각이라 값이 불변이라 디바운스 재호출에서도
+        내용이 같다(멱등).
+        """
         mgr = _mgr()
         mgr.ssh.run.return_value = "2026-08-21 14:42:05\n2026-08-21 14:42:05"
         mgr._write_session_anchor()
         cmd = mgr.ssh.run.call_args[0][0]
-        # 보드에서 2행을 읽어 현재 부팅 시각과 비교한 뒤에만 기록한다.
-        assert "awk 'NR==2'" in cmd
-        assert "||" in cmd or "] ||" in cmd
+        # 기존 파일을 읽어 비교하는 분기가 없어야 한다.
+        assert "NR==2" not in cmd
+        assert f"> {SESSION_ANCHOR_PATH}" in cmd
 
     def test_returns_false_on_missing_or_short_output(self):
         mgr = _mgr()
@@ -972,7 +979,10 @@ class TestCasesUseSessionAnchor:
                 if SESSION_ANCHOR_PATH not in command:
                     continue
                 checked += 1
-                # 2행 대조(stale 거부) + 빈 값일 때 uptime -s 폴백
-                assert "NR==2 && $0==b" in command, cmd.get("name")
-                assert '[ -z "$BOOT" ] && BOOT=$B' in command, cmd.get("name")
+                # 2행 = boot_id 대조(잔존 거부) + 빈 값일 때 uptime -s 폴백.
+                # boot_id 인 이유: uptime -s 는 같은 부팅에서도 ±1초 흔들려
+                # (보드 실측) 문자열 대조에 쓰면 jitter 마다 앵커가 무시된다.
+                assert "/proc/sys/kernel/random/boot_id" in command, cmd.get("name")
+                assert "NR==2 && $0==i" in command, cmd.get("name")
+                assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, cmd.get("name")
         assert checked >= 30, f"앵커 사용처가 너무 적다 ({checked})"
