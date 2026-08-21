@@ -331,6 +331,9 @@ class SetupManager:
         self._ready_ae_targets: list[dict] = []
         # AE 기대값과 처음 일치한 시각(monotonic) — AE_SETTLE_MATCH_GAP_SEC 판정용.
         self._ae_match_at: float | None = None
+        # teardown 복원 원본 — {conf_path: base64 문자열} (pim-check#65).
+        # 보드의 .bak 을 쓰지 않는 이유는 snapshot_config 주석 참조.
+        self._config_snapshots: dict[str, str] = {}
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -369,6 +372,53 @@ class SetupManager:
             f"mkdir -p {BACKUP_DIR} && cp {conf_path} {backup_path} && sync && echo OK"
         )
         return result == "OK"
+
+    def snapshot_config(self, conf_path: str) -> bool:
+        """설정 파일 전문을 **호스트 메모리**에 스냅샷한다 (teardown 복원 원본).
+
+        보드의 `BACKUP_DIR/*.bak` 을 복원 원본으로 쓸 수 없어서 필요하다. 그 슬롯은
+        pim-check 전용이 아니라 보드 FW `config_guard.sh` 의 known-good 자리이고,
+        guard 가 **부팅 시 valid 한 현재본을 그 자리로 복사**한다. 그래서
+        "설정 적용 → 재부팅" 을 거치면 .bak 이 이미 케이스 설정으로 덮여 있어
+        거기서 복원해봐야 no-op 이다 (pim-check#65, 보드 실측).
+
+        호스트가 들고 있으면 보드 경로 계약이 없어 guard 와 구조적으로 경합하지
+        않는다. `backup()` 의 .bak 쓰기는 그대로 둔다 — 그건 guard 가 디폴트
+        리셋을 막는 데 쓰는 **별개 용도**다.
+
+        전송은 base64 로 한다. 설정이 JSON 이라 따옴표를 포함하는데, 원문을 셸
+        인용으로 넘기면 이스케이프 사고가 나기 쉽다.
+        """
+        try:
+            out = self.ssh.run(f"base64 -w0 {conf_path} 2>/dev/null")
+        except Exception:
+            return False
+        if not out or not out.strip():
+            return False
+        self._config_snapshots[conf_path] = out.strip()
+        return True
+
+    def restore_from_snapshot(self, conf_path: str) -> bool:
+        """호스트 스냅샷에서 설정 파일을 되돌린다. 스냅샷이 없으면 False.
+
+        임시 파일에 풀고 `jq -e .` 로 JSON 유효성을 확인한 뒤에만 원자적으로
+        옮긴다. 깨진 설정을 제자리에 쓰면 다음 부팅에서 config_guard 가 디폴트
+        리셋을 트리거해 보드를 더 나쁜 상태로 만든다.
+        """
+        b64 = self._config_snapshots.get(conf_path)
+        if not b64:
+            return False
+        tmp = f"{conf_path}.pimtmp"
+        try:
+            out = self.ssh.run(
+                f"printf '%s' '{b64}' | base64 -d > {tmp} "
+                f"&& jq -e . {tmp} >/dev/null 2>&1 "
+                f"&& mv {tmp} {conf_path} && sync && echo OK "
+                f"|| {{ rm -f {tmp}; echo FAIL; }}"
+            )
+        except Exception:
+            return False
+        return bool(out) and out.strip().splitlines()[-1] == "OK"
 
     def apply_changes(self, changes: dict, conf_path: str = EDGECONF_PATH) -> None:
         """jq --arg를 사용하여 conf 파일에 변경사항을 안전하게 적용한다.
@@ -890,6 +940,7 @@ class SetupManager:
         self._dmesg_anchor_uptime = 0.0  # 재부팅 경로 기본값(링버퍼 초기화 전제)
         self._ready_ae_targets = list(ready_ae_targets or [])
         self._ae_match_at = None    # 이번 setup 의 AE 정착 타이머 초기화
+        self._config_snapshots = {}  # 이번 setup 의 복원 원본 (이전 케이스 잔존 제거)
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")
@@ -917,6 +968,10 @@ class SetupManager:
 
         if edge_changes and not edge_match:
             print(f"edgeconf differs — applying {len(edge_changes)} changes...")
+            # 복원 원본은 **변경 전에** 찍어야 한다. 스냅샷 실패는 '이번 케이스는
+            # 복원 불가'일 뿐 오늘 동작과 같으므로 경고만 하고 진행한다 —
+            # 케이스를 죽이는 편이 더 나쁘다.
+            self._snapshot_or_warn(EDGECONF_PATH)
             if not self.backup(EDGECONF_PATH):
                 print("ERROR: Failed to backup edgeconf — aborting setup")
                 self._local0_log("setup ABORT — edgeconf backup failed")
@@ -925,6 +980,7 @@ class SetupManager:
 
         if ord_changes and not ord_match:
             print(f"ord_vcm_conf differs — applying {len(ord_changes)} changes...")
+            self._snapshot_or_warn(ORD_VCM_PATH)
             if not self.backup(ORD_VCM_PATH):
                 print("ERROR: Failed to backup ord_vcm_conf — aborting setup")
                 self._local0_log("setup ABORT — ord_vcm backup failed")
@@ -943,6 +999,21 @@ class SetupManager:
             self._local0_log("setup INJECT — applying fault")
             self._exec_commands(inject, "INJECT")
         return True
+
+    def _snapshot_or_warn(self, conf_path: str) -> None:
+        """복원 원본 스냅샷. 실패해도 setup 을 중단하지 않고 경고만 남긴다."""
+        if self.snapshot_config(conf_path):
+            return
+        print(f"WARNING: Failed to snapshot {conf_path} — teardown restore unavailable")
+        self._local0_log(f"setup SNAPSHOT FAILED — {conf_path} (no teardown restore)")
+
+    def _restore_conf(self, conf_path: str) -> None:
+        """호스트 스냅샷으로 복원하고, 불가하면 보드 .bak 로 폴백한다."""
+        if self.restore_from_snapshot(conf_path):
+            self._local0_log(f"teardown RESTORE via host snapshot — {conf_path}")
+            return
+        self._local0_log(f"teardown RESTORE via board .bak (fallback) — {conf_path}")
+        self.restore(conf_path)
 
     def run_teardown(self, setup_config: dict) -> None:
         """fault recovery + edgeconf/ord_vcm_conf 복원 + 필요시 재부팅."""
@@ -968,10 +1039,13 @@ class SetupManager:
             f"teardown START — restore edge={bool(edge_changes)} ord={bool(ord_changes)}"
         )
 
+        # 호스트 스냅샷 우선 — 보드 .bak 은 재부팅 때 config_guard 가 케이스 설정으로
+        # 덮어써서 복원이 no-op 이 된다 (pim-check#65). 스냅샷이 없을 때만 .bak 로
+        # 폴백한다(스냅샷 실패·설정 미적용 경로 — 오늘과 동일한 동작).
         if edge_changes:
-            self.restore(EDGECONF_PATH)
+            self._restore_conf(EDGECONF_PATH)
         if ord_changes:
-            self.restore(ORD_VCM_PATH)
+            self._restore_conf(ORD_VCM_PATH)
 
         self._local0_log("teardown RESTORED — issuing reboot")
 
