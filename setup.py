@@ -572,12 +572,17 @@ class SetupManager:
         남는데**, 그 경우 앵커를 리셋 시각으로 올리면 n 이 0 이 되어 게이트가 조기
         개방되지 않는다.
         """
-        return (
-            "dmesg 2>/dev/null | awk -v a={anchor} '"
-            "/{marker}/ {{t++; if (match($0, /^\\[ *[0-9]+\\.[0-9]+\\]/)) "
-            "{{p++; ts=substr($0, RSTART+1, RLENGTH-2)+0; if (ts > a) n++}}}} "
-            "END {{printf \"t=%d p=%d n=%d\\n\", t, p, n}}'"
-        ).format(anchor=self._dmesg_anchor_uptime, marker=FSYNC_MARKER_RE)
+        # awk 프로그램은 중괄호를 리터럴로 쓰므로 .format()/f-string 의 치환 대상이
+        # 되면 안 된다. 특히 marker 는 정규식이라 나중에 수량자(`{1,3}`)가 들어오면
+        # .format() 이 KeyError 나 잘못된 치환으로 조용히 깨진다 — 연결로 끼운다.
+        awk_prog = (
+            "/" + FSYNC_MARKER_RE + "/ {t++; "
+            "if (match($0, /^\\[ *[0-9]+\\.[0-9]+\\]/)) "
+            "{p++; ts=substr($0, RSTART+1, RLENGTH-2)+0; if (ts > a) n++}} "
+            'END {printf "t=%d p=%d n=%d\\n", t, p, n}'
+        )
+        return (f"dmesg 2>/dev/null | awk -v a={self._dmesg_anchor_uptime} "
+                f"'{awk_prog}'")
 
     def _ready_dmesg_fsync(self, _clock=None) -> bool:
         """카메라 init readiness — 앵커 이후의 max9296_fsync fps 로그(구형/2.5+ 포맷

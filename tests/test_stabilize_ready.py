@@ -260,6 +260,25 @@ class TestStageCameraInitFsync:
         mgr._ready_dmesg_fsync(_clock=_FixedClock())
         assert "awk -v a=461.7" in mgr.ssh.run.call_args[0][0]
 
+    def test_probe_command_survives_marker_with_regex_braces(self):
+        """marker 에 정규식 수량자(`{1,3}`)가 들어와도 명령 조립이 깨지지 않아야 한다.
+
+        awk 프로그램은 중괄호를 리터럴로 쓴다. marker 를 .format() 으로 끼우면
+        수량자가 치환 필드로 해석돼 KeyError 나 잘못된 치환이 난다 — 연결로 끼운다.
+        """
+        import setup as setup_mod
+
+        original = setup_mod.FSYNC_MARKER_RE
+        try:
+            setup_mod.FSYNC_MARKER_RE = "max9296_fsync( [a-z-]{1,12})? fps :"
+            mgr = _mgr()
+            cmd = mgr._dmesg_fsync_probe_command()   # 예외 없이 조립돼야 한다
+            assert "[a-z-]{1,12}" in cmd             # 수량자가 원형 그대로
+            assert 't=%d p=%d n=%d' in cmd           # awk 리터럴 중괄호 보존
+            assert "{t++;" in cmd
+        finally:
+            setup_mod.FSYNC_MARKER_RE = original
+
     def test_anchor_delta_blocks_stale_pre_anchor_lines(self):
         """하드리셋 시나리오 — 링버퍼에 직전 부팅 fsync 가 남아도 게이트는 안 열린다.
 
