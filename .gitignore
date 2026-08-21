@@ -20,6 +20,9 @@ build/
 .claude/
 .serena/
 
+# Local env (보드 접속 비밀번호 등 — 커밋 금지)
+.env
+
 # Coverage artifacts
 .coverage
 
