@@ -110,12 +110,31 @@ config 경로 shell quoting(저장소 전반 컨벤션과 통일 유지), 엔진
 - readiness `[ready] camera_init` 이 매 케이스 통과 — setup.py 의 fsync ERE
   수정이 실플로우에서 검증됨.
 
-### 후속 확인 항목 (보드 관측 — 검사 버그 아님)
+### 2차 실행 (케이스 grep 수정 후) — 최종 verdict: 5/8 PASS
 
-- **4ch 케이스 비트레이트 이상**: 720p_4ch ch2 3205kbps(기대 4096±20%, 하한
-  -2.2%p 미달), fhd_4ch ch0 82kbps(기대 8192 — 거의 무기록). fhd_4ch 구간부터
-  전채널 소스 스톨 → 워치독 재부팅으로 이어진 정황. 재실행 재현 여부로
-  일시 스톨 vs FW 회귀(gstApp cacb78a·driver 2.5 4ch 부하) 판별 필요.
+| 케이스 | run 1 | run 2 | 판정 |
+|--------|-------|-------|------|
+| 720p_2ch | FAIL(구 grep) | **PASS** | 수정 유효 |
+| 720p_4ch | FAIL | FAIL: ch2 bitrate 2904/4096 | **FW 회귀 후보 (2/2 재현)** |
+| fhd_2ch_03 | FAIL(구 grep) | **PASS** | 수정 유효 |
+| fhd_3ch_012 | FAIL(구 grep) | **PASS** | 수정 유효 |
+| fhd_4ch | FAIL | FAIL: ch0 65kbps/8192 | **FW 회귀 후보 (2/2 재현, 무기록 수준)** |
+| process_restart_smoke | PASS | **PASS** | opt-out 정정 유효 (2/2) |
+| board_hw_check | FAIL(STALL) | FAIL: WiFi(wlp1s0) IP 미할당 | 유선 랩 env 아티팩트 (2026-06 기지, 백로그) |
+| config_integrity | NO_SSH | **PASS** | run 1 은 워치독 재부팅 겹침 |
+
+### 후속 확인 항목 (보드/FW 관측 — 검사 버그 아님)
+
+- **4ch 채널별 비트레이트 회귀 후보 (2/2 재현)**: 720p_4ch **ch2** 미추종
+  (3205→2904kbps, 기대 4096±20%), fhd_4ch **ch0** 사실상 무기록
+  (82→65kbps, 기대 8192). 6월 전수검증에서는 전 채널 8× 추종 정상 —
+  신규 FW(gstApp cacb78a·driver 2.5)의 4ch 부하 경로 회귀 의심.
+  gstApp/max9296 저장소 측 조사 필요.
+- **1회성 전채널 GSTREAMER_SOURCE_STALL** (run 1 board_hw_check 시점,
+  신규 cam_health 가 포착) → chk_cam_operate 워치독 재부팅으로 자기회복,
+  run 2 미재현. 위 비트레이트 이슈와 연관 가능성 기록.
+- **board_hw_check WiFi 체크**: 유선 랩 환경에서 상시 FAIL (2026-06 확정된
+  env 아티팩트) — 검사에 wired-mode 허용을 넣을지는 별도 백로그.
 
 ## 5. 검증 요약
 
