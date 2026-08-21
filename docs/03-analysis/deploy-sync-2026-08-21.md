@@ -188,8 +188,45 @@ apply 로직 모두 6월과 동일하므로, June-差는 **apply 가 불리는 �
 
 **보드 사용 기록 (다른 태스크 참조용):** 이 조사 과정에서 10:18Z 재부팅
 1회, 10:24Z 경 `pkill -9 gstApp` 1회(워치독 자동 respawn) 수행. 이후
-잔여 확인 2건(respawn 직후 센서 readback, 자발 재적용 트리거)은 보드
-가용 시 read-only 로 수행 가능.
+10:32Z 경 잔여 확인용 `pkill -9 gstApp` 1회 추가 (아래 A-확정).
+
+#### A-확정: enable 스레드 하드코딩 AE vs 캐시 apply 의 소모성 pending race
+
+잔여 확인(respawn 직후 센서 실측 + dmesg 타임라인)으로 기제가 완전히
+특정됐다.
+
+**respawn 직후 실측 (10:32Z)**: 센서 0x3060 = 16×→**1× 리셋**, ISP
+AE_CTRL = **0x0299(AUTO)** (gstApp 은 manual 을 명령), AE_GAIN 미러만
+0x2000 잔존, ch0 .part 20여 초 만에 33.7MB(정상 8Mbps).
+
+**기제 (max9296.c, dmesg 실측으로 확인):**
+- enable 스레드(~4721)는 스트림 개시 후 **하드코딩 AE 초기화**를 쓴다:
+  `0x5002=0x0290` → 100ms → **`0x0299(AUTO)`** → AWB(0x5100=0x115f) →
+  LSC(0x54a0=0x3fff). 직후 주석 그대로 "Override hardcoded AE/AWB init
+  with V4L2 cached controls" — `max9296_apply_cached_controls()` 호출.
+- 그러나 override 는 `if (!ctrl_cache.pending) return;`(2695) 가드 뒤에
+  있고 **pending 은 소모성**이다.
+- **콜드부트 (dmesg t=26~28s)**: 하드코딩 댄스가 먼저, apply 가 나중
+  (`[0x11] 0x290→0x290`) → 설정값(manual+gain 8192) 최종 승리 → 백색.
+- **respawn (t=460~464s)**: s_stream(1) 경로가 apply 를 먼저 실행해
+  pending 소모(manual 기록) → 3초 뒤 enable 스레드 하드코딩 댄스가
+  **AUTO 로 덮어씀** → override 는 pending=false 로 **no-op** → AUTO
+  최종 승리 → 정상 화상 (설정 소실).
+- 결론: **최종 AE 상태 = 하드코딩 AUTO vs 캐시 apply 의 "마지막 승자"**
+  이며, 소모성 pending 게이트 때문에 라이프사이클 순서에 따라 승자가
+  뒤집히는 race. ~30분 후 자발 재적용(10:16)도 같은 기제(모종의
+  이벤트가 pending 재설정 → apply 재실행)로 설명된다.
+
+**FW 측 수정 방향 (max9296):** enable 스레드의 override 를 pending 과
+무관하게 캐시에서 무조건 재적용하거나(권장), 하드코딩 AE 댄스를 설정
+인지형으로 바꾸거나, override 직전 pending 을 재설정. 어느 쪽이든
+"하드코딩 초기화 + 조건부 덮어쓰기" 구조 자체가 취약하다는 점을 함께
+검토할 것.
+
+**잔여 (선택):** 10:16 자발 재적용의 정확한 트리거 이벤트 — 구 boot 의
+journald kernel 수집 부재로 로그 확보 실패. 라이브 재관측(~30분 보드
+점유 + dmesg watch)으로만 특정 가능. 기제가 규명됐으므로 FW 수정
+검증 시 함께 관측하면 충분.
 
 **B. 720p_4ch ch2 2904~3205kbps@4096 (2/2, 세션간 안정) = h265 전환 미보정**
 
