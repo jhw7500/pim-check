@@ -123,18 +123,58 @@ config 경로 shell quoting(저장소 전반 컨벤션과 통일 유지), 엔진
 | board_hw_check | FAIL(STALL) | FAIL: WiFi(wlp1s0) IP 미할당 | 유선 랩 env 아티팩트 (2026-06 기지, 백로그) |
 | config_integrity | NO_SSH | **PASS** | run 1 은 워치독 재부팅 겹침 |
 
-### 후속 확인 항목 (보드/FW 관측 — 검사 버그 아님)
+### 회귀 후보 근본 원인 조사 (2026-08-21, 같은 세션에서 완결)
 
-- **4ch 채널별 비트레이트 회귀 후보 (2/2 재현)**: 720p_4ch **ch2** 미추종
-  (3205→2904kbps, 기대 4096±20%), fhd_4ch **ch0** 사실상 무기록
-  (82→65kbps, 기대 8192). 6월 전수검증에서는 전 채널 8× 추종 정상 —
-  신규 FW(gstApp cacb78a·driver 2.5)의 4ch 부하 경로 회귀 의심.
-  gstApp/max9296 저장소 측 조사 필요.
-- **1회성 전채널 GSTREAMER_SOURCE_STALL** (run 1 board_hw_check 시점,
-  신규 cam_health 가 포착) → chk_cam_operate 워치독 재부팅으로 자기회복,
-  run 2 미재현. 위 비트레이트 이슈와 연관 가능성 기록.
-- **board_hw_check WiFi 체크**: 유선 랩 환경에서 상시 FAIL (2026-06 확정된
-  env 아티팩트) — 검사에 wired-mode 허용을 넣을지는 별도 백로그.
+두 FAIL 은 서로 다른 두 메커니즘으로 판명 — 둘 다 4ch 부하 회귀가 아니었다.
+
+**A. fhd_4ch ch0 65~85kbps (콜드부트 2/2 재현) = ch0 과노출 백색 프레임**
+
+- 직접 원인 (프레임 레벨 실측): 콜드부트 gstApp 인스턴스의 ch0 영상이 전면
+  백색 포화 (signalstats YAVG **254.8**/255, 육안 확인 — 구조물 윤곽만 희미).
+  h265 가 플랫 프레임을 스킵 수준으로 인코딩 (I-frame 4.4KB, P ~400B, GOP 정상)
+  → 60초 세그먼트 ~500KB ≈ 65kbps. 인코더/파이프라인/전송 결함 아님.
+- 결정적 대조: process_restart_smoke 의 pkill 재기동 인스턴스는 **같은 부팅,
+  같은 설정 로그** (`ch0 ae_on:0, ae_gain:8192, exp_time:33000, bps:8192,8192`)
+  인데 정상 노출 (YAVG 196.6) → 이후 세션 7.5~7.9Mbps 완벽 추종.
+- 조건: ch0 은 이 케이스에서 유일한 수동노출 극단값 채널 (ae off + gain 8192
+  + exp 33ms — 레지스터 검증용 설정). 콜드부트 vs 웜 재기동에서 이 수동
+  노출의 실효 상태가 다르다. prepare 로그 차이: 콜드 `action=4 elapsed_ms=11552
+  state 0→2` (FW 로드) vs 웜 `action=2 elapsed_ms=0 state 4→4` (adopt).
+- 6월 동일 케이스(같은 gain 8192) bitrate PASS → 8월 FW 스택 변화로 도입
+  (후보: gstApp 3.0 의 dual-slot 채널 컨트롤 라우팅 신설(videoBin "csi0 CH0
+  slot"), driver 2.5 prepare 경로, ISP init 순서). **어느 쪽이 충실 적용인지
+  미확정** — gain 8192@33ms 가 원래 백색이어야 맞다면 결함은 오히려 "웜
+  재기동에서 수동 설정 미적용"이다. gain 스케일 정의와 적용 경로를
+  gstApp/max9296 측에서 확인 필요.
+- 재현 절차: fhd_4ch 콜드부트 → 첫 세션들 ch0 mp4 크기 확인 (~500KB/분이면
+  재현). 파일 증거: VD3001_20260821_094100~094400-ch0.mp4 (run 2),
+  090800~091100 (run 1).
+
+**B. 720p_4ch ch2 2904~3205kbps@4096 (2/2, 세션간 안정) = h265 전환 미보정**
+
+- 직접 원인: ch2 화상은 정상 (YAVG 126.3, 풀레인지 0~255) — 결함 아닌
+  **h265 VBR 이 정적 실험실 장면에서 목표 4096 을 못 채우는 언더슛**
+  (세션간 2816~2936 안정 수렴 = 장면 한계).
+- 결정적 대조군: 같은 케이스 ch3(목표 8192)은 edgeconf `profile: 9`(invalid)
+  → fallback 으로 **qp_min/qp_max 0,0 (무클램프)** 이 되어 8192 추종 성공.
+  클램프(qp 22~42) 있는 ch2 만 목표 미달.
+- 유래: `.VHL_CAM.enc: "h265"` 와 채널별 gop/profile/quant/qp_min/qp_max 가
+  2026-08-06 gstApp #27(H.264/H.265 스위칭·튜닝, 기본값 h264) 이후 보드
+  edgeconf 에 수동 설정됨 — **pim-check 스키마·케이스가 모르는 키라 케이스
+  전환 시 리셋되지 않는 config 드리프트**. 6월엔 스위칭 기능 자체가 없어
+  h264 고정이었고 bitrate 기대치도 h264 기준.
+- 성격: FW 회귀가 아니라 코덱 전환에 따른 검사 기대치 미보정 + 케이스의
+  인코더 키 미통제. 조치 후보(백로그): ① 케이스가 enc/qp 를 명시 설정
+  (h264 고정 또는 h265 기대치 재보정) ② schema.yaml 에 enc 축 추가
+  ③ bitrate 체크가 enc 값을 읽어 기대치 스케일 조정.
+
+**기타**
+
+- run 1 의 1회성 전채널 GSTREAMER_SOURCE_STALL (신규 cam_health 가 포착,
+  워치독 재부팅으로 자기회복, run 2 미재현): A 와 같은 콜드부트 창에서
+  발생 — 연관 가능성만 기록.
+- board_hw_check WiFi 체크: 유선 랩 환경 상시 FAIL (2026-06 확정 env
+  아티팩트) — wired-mode 허용 여부는 별도 백로그.
 
 ## 5. 검증 요약
 
