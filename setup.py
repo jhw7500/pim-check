@@ -83,6 +83,10 @@ except ValueError:
     AE_SETTLE_MATCH_GAP_SEC = 3.0
 # 정착 판정을 시작할 gstApp 경과시간 하한(초). 앵커가 boot 이 아니라 gstApp 기동인
 # 이유: 하드리셋 등으로 부팅이 단축돼도 정착 소요는 gstApp 기준으로 유지된다.
+# 이 값은 실측 정착점(gstApp+16~17s)과 **같은 값이라 그 자체로는 마진이 0** 이다 —
+# 마진은 하한이 아니라 '기대값 일치 2회 + AE_SETTLE_MATCH_GAP_SEC 간격' 판정이
+# 제공한다(실측 +4.4s). 마진을 늘리려고 이 하한을 키우지 말 것: 두 겹으로 쌓여
+# readiness 예산만 먹고, 정착이 빨라진 FW 에서는 불필요한 대기가 된다.
 try:
     AE_SETTLE_GSTAPP_ETIME_SEC = float(
         os.environ.get("PIM_AE_SETTLE_GSTAPP_ETIME_SEC", "16"))
@@ -168,6 +172,11 @@ def ae_settle_targets(profile: dict) -> list[dict]:
       - `chN.enable: true` 인 채널만 대상.
       - 읽기 주소는 그 채널이 속한 **버스의 활성 채널 수**로 정해진다
         (single 0x3c / dual 0x11·0x12) — `_isp_ch_addr` 참조.
+        전제: 케이스가 채널 `enable` 을 **전부 명시**한다(코퍼스 전 케이스의 관행이며
+        `TestAeSettleAddressMatchesCaseCorpus` 가 고정한다). 케이스가 enable 을
+        생략하고 보드 잔존값에 기대면 버스 카운트가 어긋나 주소가 틀릴 수 있는데,
+        그 경우 결과는 오탐 통과가 아니라 **읽기 불일치 → 게이트 타임아웃**
+        (fail-safe) 이다.
       - `ae_on` 이 명시돼 있으면 AE_CTRL 기대값.
       - `ae_on: false`(manual) 이고 `ae_gain` 이 정수로 명시돼 있으면 AE_GAIN 기대값.
         auto 채널의 gain 은 FW 재량이라 기대값이 없다.
