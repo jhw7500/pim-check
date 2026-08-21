@@ -22,7 +22,7 @@ setup:
     ".VHL_CAM.i2c2.ch0.vflip": false
     ".VHL_CAM.i2c2.ch0.hflip": true
     ".VHL_CAM.i2c2.ch0.ae_on": false
-    ".VHL_CAM.i2c2.ch0.ae_gain": 8192
+    ".VHL_CAM.i2c2.ch0.ae_gain": 512
     ".VHL_CAM.i2c2.ch0.awb": "auto"
     ".VHL_CAM.i2c2.ch0.bps":
       - 1024

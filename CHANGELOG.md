@@ -25,6 +25,12 @@
   (profiles/cases/*.yaml)도 동일한 구 리터럴 파손 — smoke 타겟 검증(1차)이 적발,
   `( [a-z-]+)?` ERE 로 일괄 교체. smoke 1차에서 신규 cam_health 가 실제 4채널
   GSTREAMER_SOURCE_STALL 을 포착(참양성)한 것도 실증됨.
+- **fix(cases) 백로그 스위프 (21파일)**: ① manual gain 8192→512 — 실효 시
+  센서 ≈16× 백색 포화로 bitrate 검증과 충돌 (근본 원인: max9296#26 의
+  라이프사이클 race, `docs/03-analysis/deploy-sync-2026-08-21.md` §4)
+  ② AE_GAIN(0x5006) 기대값 갱신 + smoke 3케이스에 readback 신설
+  ③ bitrate 체크 보유 19파일에 `enc:"h265"` + 채널별 qp/profile [0,0]
+  명시 고정 — 보드 edgeconf 인코더 드리프트로 인한 검증 비결정화 차단.
 - Phase 0 보류 항목(외부 producer 2종·aggregator·manifest sha)은 분석 문서에 기록.
 
 ## v2.1.0 (2026-05-27)

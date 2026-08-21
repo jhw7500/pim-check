@@ -21,6 +21,22 @@ setup:
     .VHL_CAM.fps: 15
     .VHL_CAM.recording_time: 1
     .VHL_CAM.muxer: mp4
+    # 인코더 상태 명시 고정 — enc/qp 드리프트로 bitrate 검증이
+    # 비결정화되는 것 차단 (2026-08-21 deploy-sync 분석. qp [0,0]=무클램프
+    # → rate control 이 목표 추종, ch3 실측 근거)
+    .VHL_CAM.enc: "h265"
+    .VHL_CAM.i2c2.ch0.qp_min: [0, 0]
+    .VHL_CAM.i2c2.ch0.qp_max: [0, 0]
+    .VHL_CAM.i2c2.ch0.profile: [0, 0]
+    .VHL_CAM.i2c2.ch1.qp_min: [0, 0]
+    .VHL_CAM.i2c2.ch1.qp_max: [0, 0]
+    .VHL_CAM.i2c2.ch1.profile: [0, 0]
+    .VHL_CAM.i2c1.ch2.qp_min: [0, 0]
+    .VHL_CAM.i2c1.ch2.qp_max: [0, 0]
+    .VHL_CAM.i2c1.ch2.profile: [0, 0]
+    .VHL_CAM.i2c1.ch3.qp_min: [0, 0]
+    .VHL_CAM.i2c1.ch3.qp_max: [0, 0]
+    .VHL_CAM.i2c1.ch3.profile: [0, 0]
     .VHL_CAM.capture.enable: false
     .VHL_CAM.i2c1.exp_time: 20000
     .VHL_CAM.i2c2.exp_time: 5000
@@ -31,7 +47,7 @@ setup:
     .VHL_CAM.i2c2.ch0.vflip: false
     .VHL_CAM.i2c2.ch0.hflip: true
     .VHL_CAM.i2c2.ch0.ae_on: false
-    .VHL_CAM.i2c2.ch0.ae_gain: 8192
+    .VHL_CAM.i2c2.ch0.ae_gain: 512
     .VHL_CAM.i2c2.ch0.bps:
       - 1024
       - 1024
@@ -88,9 +104,9 @@ checks:
     command: i2ctransfer -f -y 2 w2@0x11 0x51 0x00 r2 2>/dev/null | tr -d ' '
     expected: '0x110x5f'
     on_fail: ch0 AWB_CTRL 미반영
-  - name: ch0 AE_GAIN (gain=8192, manual mode)
+  - name: ch0 AE_GAIN (gain=512, manual mode)
     command: i2ctransfer -f -y 2 w2@0x11 0x50 0x06 r2 2>/dev/null | tr -d ' '
-    expected: '0x200x00'
+    expected: '0x020x00'
     on_fail: ch0 AE_GAIN 미반영
   - name: ch1 ROTATION (vflip=true, hflip=false)
     command: i2ctransfer -f -y 2 w2@0x12 0x10 0x0c r2 2>/dev/null | tr -d ' '
