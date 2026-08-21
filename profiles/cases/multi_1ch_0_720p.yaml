@@ -105,7 +105,7 @@ checks:
       K=$((BR / 1000)); [ $K -ge 819 ] && [ $K -le 1228 ] && echo OK || echo FAIL:${K}kbps
     expected: 'OK'
     on_fail: 'ch0 실측 bitrate 범위(819~1228kbps) 벗어남'
-  - name: ch0 파일 무결성 (codec=h264, 1280x720, .mp4)
+  - name: ch0 파일 무결성 (codec=hevc, 1280x720, .mp4)
     command: |-
       FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
@@ -114,7 +114,7 @@ checks:
       EXT="${F##*.}"
       [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
       P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
-      echo "$P" | grep -qE '^codec_name=h264$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
+      echo "$P" | grep -qE '^codec_name=hevc$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
       echo "$P" | grep -qE '^width=1280$' || (echo FAIL:width_$(echo "$P" | grep width) && exit 0)
       echo "$P" | grep -qE '^height=720$' || (echo FAIL:height_$(echo "$P" | grep height) && exit 0)
       echo OK
