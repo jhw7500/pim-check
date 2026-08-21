@@ -221,7 +221,8 @@ AE_CTRL = **0x0299(AUTO)** (gstApp 은 manual 을 명령), AE_GAIN 미러만
 무관하게 캐시에서 무조건 재적용하거나(권장), 하드코딩 AE 댄스를 설정
 인지형으로 바꾸거나, override 직전 pending 을 재설정. 어느 쪽이든
 "하드코딩 초기화 + 조건부 덮어쓰기" 구조 자체가 취약하다는 점을 함께
-검토할 것.
+검토할 것. → **이슈로 handoff 완료: jhw7500/max9296#26**
+(https://github.com/jhw7500/max9296/issues/26)
 
 **잔여 (선택):** 10:16 자발 재적용의 정확한 트리거 이벤트 — 구 boot 의
 journald kernel 수집 부재로 로그 확보 실패. 라이브 재관측(~30분 보드
