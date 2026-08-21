@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (2026-08-21)
+
+### 배포 조합 sync — max9296 2.5 · gstApp camera-health (`docs/03-analysis/deploy-sync-2026-08-21.md`)
+
+- **fix(setup)**: 카메라 readiness 의 dmesg fsync 마커를 ERE(`FSYNC_MARKER_RE`)로 교체.
+  드라이버 2.5 부터 로그가 `max9296_fsync <mode> fps :` 로 바뀌어 구 리터럴은 0 매칭
+  → 카메라 케이스 준비 게이트가 열리지 않던 파손 수정 (구/신 포맷 모두 매칭).
+- **feat(checks)**: `max9296_abi` 신설 — modinfo version(기본 2.5) + prepare 상태라인
+  (errno/worker_errno=0, state≠FAILED) + health_raw JSON(deserializer OK, enable 채널
+  link up, serializer OK). 카메라 on/off 무관 상시 유효.
+- **feat(checks)**: `cam_health` 신설 — gstApp 내장 camera-health v1 producer 스냅샷
+  (`/run/pim-camera/gstApp.json`) 신선도(stale_ms, boot_id 대조) + FAIL observation 0.
+- **base.yaml**: 두 체크 기본값·retry_policy 추가, `logs.error_patterns` 에
+  `MAX9296_PREPARE`(gstApp prepare 실패 LOG_CRIT) 추가.
+- **fault_gstapp_crash**: 회복 감시 유닛을 실존하는 `cam-operate.service` 로 정정
+  (2026-06 백로그 #2 전제 변경 — chk_cam_operate.sh 가 유닛으로 승격됨),
+  kill 구간 producer stale 오탐 방지로 `cam_health` 비활성화.
+- Phase 0 보류 항목(외부 producer 2종·aggregator·manifest sha)은 분석 문서에 기록.
+
 ## v2.1.0 (2026-05-27)
 
 ### Multi-target viewer 시리즈

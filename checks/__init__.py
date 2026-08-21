@@ -6,7 +6,9 @@ import os
 
 from checks.process import ProcessCheck
 from checks.cam_state import CamStateCheck
+from checks.cam_health import CamHealthCheck
 from checks.legacy import LegacyFileCheck
+from checks.max9296_abi import Max9296AbiCheck
 from checks.thermal import ThermalCheck
 from checks.jq_fork import JqForkCheck
 from checks.log import LogCheck
@@ -17,7 +19,9 @@ from checks.base_check import BaseCheck
 ALL_CHECKS = [
     ProcessCheck(),
     CamStateCheck(),
+    CamHealthCheck(),
     LegacyFileCheck(),
+    Max9296AbiCheck(),
     ThermalCheck(),
     JqForkCheck(),
     LogCheck(),
