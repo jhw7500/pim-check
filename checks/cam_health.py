@@ -134,16 +134,26 @@ class CamHealthCheck(BaseCheck):
             observations = []
         failed = []
         malformed = 0
+        unknown_statuses = []
         for o in observations:
             if not isinstance(o, dict):
                 malformed += 1
                 continue
-            if o.get("status") == "FAIL":
+            status = o.get("status")
+            # producer v1 계약의 상태 집합만 인정 — 미지/누락 status 를 조용히
+            # 통과시키면 스키마 드리프트가 검사를 무력화한다 (Codex P2 반영).
+            if status not in ("OK", "N/A", "STARTING", "FAIL"):
+                unknown_statuses.append(repr(status))
+                continue
+            if status == "FAIL":
                 scope = o.get("scope")
                 scope_id = scope.get("id") if isinstance(scope, dict) else "?"
                 failed.append(f"{o.get('block')}/{scope_id}:{o.get('code')}")
         if malformed:
             issues.append(f"{malformed} malformed observation entries")
+        if unknown_statuses:
+            issues.append(
+                f"unrecognized observation status: {', '.join(unknown_statuses)}")
         if failed:
             issues.append(f"FAIL observations: {', '.join(failed)}")
 

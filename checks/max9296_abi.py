@@ -150,8 +150,21 @@ class Max9296AbiCheck(BaseCheck):
             if not isinstance(channels, list):
                 issues.append(f"{prefix}: health_raw channels missing or not a list")
                 channels = []
-            enabled = [ch for ch in channels
-                       if isinstance(ch, dict) and ch.get("enabled")]
+            # 채널 레코드 모양을 명시 검증 — 비객체/enabled 비불리언을 조용히
+            # "disabled 취급"하면 링크 단언이 통째로 증발한다 (Codex P2 반영).
+            # 정상 0ch 구성은 명시적 enabled: false 로 여전히 통과한다.
+            enabled = []
+            malformed_ch = 0
+            for ch in channels:
+                if not isinstance(ch, dict) or not isinstance(
+                        ch.get("enabled"), bool):
+                    malformed_ch += 1
+                    continue
+                if ch["enabled"]:
+                    enabled.append(ch)
+            if malformed_ch:
+                issues.append(
+                    f"{prefix}: {malformed_ch} malformed channel entries")
 
             # deserializer 상태는 enable 채널이 있을 때만 단언 (0ch 구성 방어).
             if enabled:

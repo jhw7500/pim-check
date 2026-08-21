@@ -122,6 +122,21 @@ class TestCamHealthValidate(unittest.TestCase):
             _data(_snapshot(statuses=("STARTING", "N/A"))), CONFIG)
         self.assertTrue(passed, reason)
 
+    def test_unknown_status_is_fail(self):
+        """producer v1 상태 집합 밖(status 미지/누락)은 스키마 드리프트 — FAIL."""
+        passed, reason = self.check.validate(
+            _data(_snapshot(statuses=("OK", "BLOCKED"))), CONFIG)
+        self.assertFalse(passed)
+        self.assertIn("unrecognized observation status", reason)
+        self.assertIn("'BLOCKED'", reason)
+
+    def test_missing_status_is_fail(self):
+        snap = json.loads(_snapshot())
+        del snap["observations"][1]["status"]
+        passed, reason = self.check.validate(_data(json.dumps(snap)), CONFIG)
+        self.assertFalse(passed)
+        self.assertIn("unrecognized observation status", reason)
+
     def test_fail_on_invalid_json(self):
         passed, reason = self.check.validate(_data("{broken"), CONFIG)
         self.assertFalse(passed)

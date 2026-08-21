@@ -226,6 +226,17 @@ class TestMax9296AbiValidate(unittest.TestCase):
         data = check.collect(_ssh_ok(), cfg)
         self.assertEqual(set(data["nodes"].keys()), {"1"})
 
+    def test_malformed_channel_entry_is_fail(self):
+        """비객체/enabled 비불리언 채널 레코드는 disabled 취급이 아니라 FAIL."""
+        health = json.loads(HEALTH_OK)
+        health["channels"][0] = "garbage"
+        health["channels"][1]["enabled"] = "yes"  # 비불리언
+        data = self._data()
+        data["nodes"]["1"]["health_raw"] = json.dumps(health)
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertFalse(passed)
+        self.assertIn("2 malformed channel entries", reason)
+
     def test_zero_enabled_channels_skip_deserializer_assert(self):
         """전채널 off(0ch 구성)에서는 deserializer 상태를 단언하지 않는다."""
         health = json.loads(HEALTH_OK)
