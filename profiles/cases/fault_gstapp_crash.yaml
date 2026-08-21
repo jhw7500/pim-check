@@ -11,9 +11,12 @@ setup:
 
 checks:
   # gstApp 을 의도적으로 죽이는 케이스 — producer 스냅샷이 kill 구간에 stale 이
-  # 되는 건 주입 효과지 결함이 아니므로 cam_health 체크를 끈다.
+  # 되는 건 주입 효과지 결함이 아니므로 cam_health 체크를 끈다. respawn 중
+  # prepare 과도 상태(worker_errno 등)도 주입 효과라 max9296_abi 도 끈다.
   cam_health:
     path: null
+  max9296_abi:
+    expected_version: null
 
   custom_commands:
     - name: "gstApp respawned within 60s"

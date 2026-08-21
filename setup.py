@@ -40,7 +40,10 @@ RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 # (mode=single|dual|side)로 바뀌었다 — 구형 'max9296_fsync fps :' 와 신형을 모두
 # 매칭하는 ERE(grep -E) 패턴을 쓴다. 구형 고정 문자열이면 2.5 보드에서 0 매칭이라
 # 카메라 케이스 준비 게이트가 영원히 열리지 않는다 (2026-08-21 보드 실측).
-FSYNC_MARKER_RE = "max9296_fsync( (single|dual|side))? fps :"
+# mode 는 화이트리스트가 아니라 open set([a-z-]+) — 드라이버가 mode 단어를 추가할
+# 때마다 같은 파손이 재발하지 않도록. ' fps :' 요구가 무관 라인(스레드명 등) 매칭을
+# 막는다.
+FSYNC_MARKER_RE = "max9296_fsync( [a-z-]+)? fps :"
 # 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
 # 보드별 튜닝을 위해 환경변수 PIM_FSYNC_SETTLE_SEC 로 override 가능
 # (verify_retry 의 PIM_VERIFY_* 와 동일한 패턴).

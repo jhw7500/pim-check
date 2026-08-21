@@ -260,6 +260,8 @@ class TestStageCameraInitFsync:
             "[I2C:1][max9296.c:4619] max9296_fsync side fps : 15, low : 65666, high : 1000",
             "[I2C:2][max9296.c:4619] max9296_fsync dual fps : 30, low : 1, high : 2",
             "[I2C:2][max9296.c:4619] max9296_fsync single fps : 15, low : 1, high : 2",
+            # 미래의 새 mode 단어도 매칭해야 한다 (open set — 화이트리스트 재파손 방지).
+            "[I2C:1][max9296.c:4619] max9296_fsync quad-wide fps : 60, low : 1, high : 2",
         ]
         assert pattern.search(old_line)
         for line in new_lines:

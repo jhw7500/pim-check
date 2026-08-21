@@ -177,6 +177,67 @@ class TestMax9296AbiValidate(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("not valid JSON", reason)
 
+    # --- 리뷰 반영 회귀 테스트 (경계 조건에서 예외 유출/오판 금지) ---
+
+    def test_health_raw_json_array_is_fail_not_raise(self):
+        """top-level 이 dict 가 아니면 AttributeError 대신 FAIL."""
+        data = self._data()
+        data["nodes"]["1"]["health_raw"] = "[1, 2]"
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertFalse(passed)
+        self.assertIn("not a JSON object", reason)
+
+    def test_channels_not_list_is_fail_not_raise(self):
+        health = json.loads(HEALTH_OK)
+        health["channels"] = {"oops": 1}
+        data = self._data()
+        data["nodes"]["1"]["health_raw"] = json.dumps(health)
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertFalse(passed)
+        self.assertIn("channels missing or not a list", reason)
+
+    def test_errno_hex_zero_passes(self):
+        """커널이 표기를 0x0 로 바꿔도 정수 0 이면 통과 (int(x, 0) 비교)."""
+        line = PREPARE_IDLE.replace("errno=0 worker_errno=0",
+                                    "errno=0x0 worker_errno=0x0")
+        data = self._data()
+        data["nodes"]["1"]["prepare"] = line
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertTrue(passed, reason)
+
+    def test_errno_unparsable_is_fail(self):
+        line = PREPARE_IDLE.replace("errno=0 ", "errno=zz ")
+        data = self._data()
+        data["nodes"]["1"]["prepare"] = line
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertFalse(passed)
+        self.assertIn("unparsable", reason)
+
+    def test_multiline_prepare_uses_first_line_only(self):
+        """단일 라인 ABI — 뒷줄이 앞줄 값을 조용히 덮는 병합 금지."""
+        data = self._data()
+        data["nodes"]["1"]["prepare"] = PREPARE_IDLE + "\nworker_errno=-5"
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertTrue(passed, reason)
+
+    def test_scalar_adapters_config_is_tolerated(self):
+        check = Max9296AbiCheck()
+        cfg = {"max9296_abi": {"expected_version": "2.5", "adapters": 1}}
+        data = check.collect(_ssh_ok(), cfg)
+        self.assertEqual(set(data["nodes"].keys()), {"1"})
+
+    def test_zero_enabled_channels_skip_deserializer_assert(self):
+        """전채널 off(0ch 구성)에서는 deserializer 상태를 단언하지 않는다."""
+        health = json.loads(HEALTH_OK)
+        for ch in health["channels"]:
+            ch["enabled"] = False
+        health["deserializer"] = {"status": "FAIL", "errno": -6}
+        data = self._data()
+        data["nodes"]["1"]["health_raw"] = json.dumps(health)
+        data["nodes"]["2"]["health_raw"] = json.dumps(health)
+        passed, reason = self.check.validate(data, CONFIG)
+        self.assertTrue(passed, reason)
+
 
 if __name__ == "__main__":
     unittest.main()

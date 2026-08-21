@@ -61,7 +61,40 @@ retry_policy 로 전 플랜에 기본 적용된다. 케이스별 비활성화는
 custom_commands stale-read 등)는 보드-무관 검사 버그로 이번 sync 범위 밖.
 단 fault_gstapp_crash 는 유닛 신설로 전제가 바뀌어 이번에 정정했다 (위 #5).
 
-## 3. 검증
+## 3. 리뷰 반영 (같은 날, 독립 리뷰 패스)
 
-- 단위: `uv run pytest` 733 passed (baseline 708 + 신규 25) — fixture 는 보드 실측 출력.
-- 보드: 아래 "보드 검증" 절 참조 (검증 실행 결과는 커밋 로그에 기록).
+리뷰가 경계 조건 결함 5건(major)을 재현해 반영함:
+
+- **예외 유출 차단**: 두 신규 체크에서 JSON top-level/observations/channels 가
+  기대 모양이 아니면 AttributeError 대신 FAIL reason (엔진은 SSH 예외만 잡음 —
+  체크 예외는 케이스 전체 결과를 날린다).
+- **음수 age 상한**: mid-read 미래 skew 허용을 1s 로 제한 — 그 이상 미래는
+  boot_id 로 못 거른 이전 부팅 잔존으로 FAIL (죽은 producer PASS 차단).
+- **uptime 불능 표면화**: 기준 시계를 못 읽으면 "freshness not verified" FAIL
+  (신선도 검사의 조용한 증발 금지).
+- **kill 주입 케이스 opt-out 완결**: gstApp 을 pkill 하는 케이스는 전 195개 중
+  정확히 2개(fault_gstapp_crash, process_restart_smoke) — 둘 다 cam_health +
+  max9296_abi 비활성. fault_gstapp_zombie 는 의도적으로 켜 둠(zombie 시
+  producer 정지 → stale FAIL 이 참양성).
+- **부팅 직후 grace**: 파일 부재 + uptime < early_boot_grace_sec(180) 이면
+  NEED_PRODUCER_SNAPSHOT_AFTER_BOOT stabilization 신호로 분류
+  (verify_retry 단일 출처에 토큰 추가) — sticky merge 로 인한 재부팅 직후
+  flaky hard-fail 방지. 그 외 노출은 process 체크(gstApp required)가 먼저
+  실패하는 구간과 동일해 신규 위험 아님.
+- **fsync mode open set**: `( [a-z-]+)?` — 드라이버가 mode 단어를 추가해도
+  재파손되지 않음. **로그 패턴 앵커**: `\[MAX9296_PREPARE\]`.
+- **0ch 방어**: deserializer/link 단언은 enable 채널이 있을 때만 — 전채널 off
+  구성에서 드라이버의 저전력 거동은 미실측이라 구조 단언만 남김.
+  (후속 보드 확인 항목: 0ch edgeconf 적용 상태의 health_raw deserializer 상태)
+
+의도적으로 받지 않은 지적: base.yaml 의 expected_version 고정(배포 조합 단언이
+이 체크의 목적 — 다른 보드는 target/케이스 레이어에서 null override),
+config 경로 shell quoting(저장소 전반 컨벤션과 통일 유지), 엔진 스냅샷
+테스트의 체크 수 hard-pin(구성 회귀를 잡는 의도된 고정).
+
+## 4. 검증
+
+- 단위: `uv run pytest` 전건 통과 (baseline 708 → 신규 체크·회귀 테스트 추가) —
+  fixture 는 보드 실측 출력, 리뷰가 재현한 실패 모드 전부 회귀 테스트로 고정.
+- 보드: 192.168.214.4 라이브 스냅샷 10/10 PASS + 수정된 fsync 게이트 실측 통과
+  (검증 실행 결과는 커밋 로그에 기록).

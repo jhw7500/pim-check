@@ -12,11 +12,15 @@ checks/max9296_abi.py - max9296 드라이버 버전 + sysfs ABI(prepare/health_r
 건강한지를 단언한다:
   - prepare: 파싱 가능 + errno=0 + worker_errno=0(STREAMON 거부의 durable 진단) +
     state != FAILED. (IDLE/READY/CONSUMED 등은 카메라 on/off 에 따라 달라 단언 안 함)
-  - health_raw: JSON 파싱 + schema 1 + deserializer OK + enable 된 채널의 link up +
-    serializer OK.
+  - health_raw: JSON 파싱 + schema 1. deserializer OK / link up / serializer OK 는
+    enable 된 채널이 있을 때만 단언한다 — 전채널 off(0ch) 구성에서 드라이버가
+    deserializer 를 저전력으로 내릴 가능성을 배제 못 해 구조 단언만 남긴다.
 
 카메라 스트리밍 여부와 무관하게 항상 유효하다 — 드라이버는 비카메라 케이스에서도
 로드되어 있고, health_raw/prepare 는 idle 에서도 읽힌다 (보드 실측).
+gstApp 을 강제 kill 하는 주입 케이스(fault_gstapp_crash, process_restart_smoke)는
+kill/respawn 구간의 prepare 과도 상태가 주입 효과이므로 케이스 yaml 에서
+`max9296_abi: {expected_version: null}` 로 끈다.
 
 설정 (checks.max9296_abi):
   expected_version: "2.5"   # null/미설정이면 체크 전체 skip (케이스별 비활성화)
@@ -34,14 +38,28 @@ from checks.base_check import BaseCheck
 _PREPARE_REQUIRED_KEYS = ("state", "errno", "worker_errno")
 
 
-def _parse_prepare_line(line: str) -> dict[str, str]:
-    """'state=IDLE generation=0 ...' 형식을 dict 로. 형식 밖 토큰은 무시."""
+def _parse_prepare_line(text: str) -> dict[str, str]:
+    """'state=IDLE generation=0 ...' 형식을 dict 로.
+
+    첫 줄만 파싱한다 — 노드는 단일 라인 ABI 라서 여러 줄이 오면 형식 밖이며,
+    뒷줄이 앞줄 값을 조용히 덮는 병합을 막는다. 형식 밖 토큰은 무시.
+    """
+    lines = text.strip().splitlines()
+    first = lines[0] if lines else ""
     fields: dict[str, str] = {}
-    for token in line.strip().split():
+    for token in first.split():
         if "=" in token:
             key, _, value = token.partition("=")
             fields[key] = value
     return fields
+
+
+def _int_or_none(value: str):
+    """'0'/'-5'/'0x0' 등 정수 표기를 int 로. 불능이면 None."""
+    try:
+        return int(value, 0)
+    except (TypeError, ValueError):
+        return None
 
 
 class Max9296AbiCheck(BaseCheck):
@@ -53,6 +71,8 @@ class Max9296AbiCheck(BaseCheck):
             return {"skipped": True}
 
         adapters = cfg.get("adapters") or [1, 2]
+        if not isinstance(adapters, (list, tuple)):
+            adapters = [adapters]
         addr = cfg.get("i2c_addr", "0048")
 
         # modinfo 는 로드 여부와 무관하게 .ko 메타데이터를 읽는다 (배포 조합 단언).
@@ -99,13 +119,15 @@ class Max9296AbiCheck(BaseCheck):
                 else:
                     if fields["state"] == "FAILED":
                         issues.append(f"{prefix}: prepare state=FAILED")
-                    if fields["errno"] != "0":
-                        issues.append(f"{prefix}: prepare errno={fields['errno']}")
-                    if fields["worker_errno"] != "0":
-                        # STREAMON 거부의 durable 진단 — 0 이 아니면 최근 스트림
-                        # 기동이 드라이버 워커에서 거부된 것.
-                        issues.append(
-                            f"{prefix}: prepare worker_errno={fields['worker_errno']}")
+                    for key in ("errno", "worker_errno"):
+                        # 16진(0x..) 표기 변경에도 견디도록 정수로 비교.
+                        # worker_errno != 0 은 STREAMON 거부의 durable 진단.
+                        value = _int_or_none(fields[key])
+                        if value is None:
+                            issues.append(
+                                f"{prefix}: prepare {key}={fields[key]!r} unparsable")
+                        elif value != 0:
+                            issues.append(f"{prefix}: prepare {key}={fields[key]}")
 
             health_raw = node.get("health_raw")
             if not health_raw:
@@ -116,23 +138,40 @@ class Max9296AbiCheck(BaseCheck):
             except (ValueError, TypeError):
                 issues.append(f"{prefix}: health_raw is not valid JSON")
                 continue
+            # JSON 이긴 하나 객체가 아닌 값 — 체크는 예외를 던지지 않는다.
+            if not isinstance(health, dict):
+                issues.append(f"{prefix}: health_raw is not a JSON object")
+                continue
             if health.get("schema") != 1:
                 issues.append(
                     f"{prefix}: health_raw schema={health.get('schema')} (expected 1)")
-            des = health.get("deserializer") or {}
-            if des.get("status") != "OK":
-                issues.append(
-                    f"{prefix}: deserializer status={des.get('status')}")
-            for ch in health.get("channels") or []:
-                if not ch.get("enabled"):
-                    continue
+
+            channels = health.get("channels")
+            if not isinstance(channels, list):
+                issues.append(f"{prefix}: health_raw channels missing or not a list")
+                channels = []
+            enabled = [ch for ch in channels
+                       if isinstance(ch, dict) and ch.get("enabled")]
+
+            # deserializer 상태는 enable 채널이 있을 때만 단언 (0ch 구성 방어).
+            if enabled:
+                des = health.get("deserializer")
+                if not isinstance(des, dict) or des.get("status") != "OK":
+                    status = des.get("status") if isinstance(des, dict) else des
+                    issues.append(f"{prefix}: deserializer status={status}")
+
+            for ch in enabled:
                 ch_id = ch.get("channel")
-                link = ch.get("link") or {}
+                link = ch.get("link")
+                if not isinstance(link, dict):
+                    link = {}
                 if link.get("status") != "OK" or not link.get("up"):
                     issues.append(
                         f"{prefix}: ch{ch_id} link status={link.get('status')} "
                         f"up={link.get('up')}")
-                ser = ch.get("serializer") or {}
+                ser = ch.get("serializer")
+                if not isinstance(ser, dict):
+                    ser = {}
                 if ser.get("status") != "OK":
                     issues.append(
                         f"{prefix}: ch{ch_id} serializer status={ser.get('status')}")
