@@ -2,6 +2,37 @@
 
 ## Unreleased (2026-08-21)
 
+### AE 정착 readiness 게이트 (pim-check#61)
+
+- **feat(setup)**: 리부트 후 안정화 readiness 에 `ae_settle` 단계 신설 —
+  `ssh → processes → camera_init(fsync) → **ae_settle** → recording`.
+  카메라 init 이후에도 AP1302 AE 레지스터는 전이값(AE_CTRL `0x029c`,
+  AE_GAIN `0x0100`)을 거쳐 최종값에 도달한다. 콜드 기동 실측(2026-08-21,
+  유선 192.168.214.4): 정착 = uptime 28.2s = **gstApp 기동 +16~17s**.
+  기존에도 통과하긴 했으나 그 마진(+20~35s)은 체크 실행 순서와 readiness 통과
+  시각에 의존하는 우연적 배치였다 — 명시 게이트로 고정한다.
+  하드리셋 도입(pim-package-jhw#46)으로 부팅이 단축되면 붕괴하는 마진이라
+  그 활용의 선결 과제였다.
+- **판정 기준**: 케이스 기대값과 **일치하는** 읽기가 3초 이상 간격으로 2회
+  (`PIM_AE_SETTLE_GAP_SEC`). '연속 2회 안정'이 아닌 이유는 전이값 `0x0100` 이
+  3초 이상 유지돼 안정 기준만으로는 조기 통과하기 때문. 하한 앵커는 gstApp
+  경과 16초(`PIM_AE_SETTLE_GSTAPP_ETIME_SEC`) — boot 이 아니라 gstApp 기준이라
+  부팅 단축과 무관하다.
+- **기대값 출처**: `setup.edgeconf_changes` 단일 소스(`ae_settle_targets()`).
+  케이스가 **명시한** 값만 단언한다 — 미명시 키는 보드 잔존값(config 드리프트)이라
+  기대값을 만들 수 없다. `enable: true` 채널의 `ae_on` → AE_CTRL(0x5002),
+  `ae_on: false` + 정수 `ae_gain` → AE_GAIN(0x5006). auto 채널 gain 은 FW 재량이라
+  단언하지 않는다. 타겟이 없으면 단계 자체가 붙지 않고,
+  `camera_init_required: false` opt-out 은 AE 게이트에도 함께 적용된다.
+- **fix(setup)**: ISP readback 주소를 **버스의 활성 채널 수**로 분기 —
+  버스당 1채널이면 `0x3c`, 2채널이면 짝수 `0x11` / 홀수 `0x12`
+  (드라이버 `dual ? AP1302_CH{0,1}_I2C_ADDR : AP1302_I2C_ADDR`).
+  버스 단위 분기라 총 2채널이라도 버스당 1채널인 구성(`fhd_2ch_03` 형태)은
+  양쪽 다 `0x3c` 다. 주소를 고정하면 dual 에서 두 채널이 같은 값을 읽어 오탐하고
+  single 에서는 무응답으로 게이트가 열리지 않는다. 프로파일 코퍼스 readback
+  249건 전건 일치로 확인했고, 케이스 yaml 의 실제 주소와 상시 대조하는 속성
+  테스트로 고정했다.
+
 ### 배포 조합 sync — max9296 2.5 · gstApp camera-health (`docs/03-analysis/deploy-sync-2026-08-21.md`)
 
 - **fix(setup)**: 카메라 readiness 의 dmesg fsync 마커를 ERE(`FSYNC_MARKER_RE`)로 교체.
