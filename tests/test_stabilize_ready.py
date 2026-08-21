@@ -15,7 +15,13 @@ from setup import (
     READINESS_POLL_INTERVAL,
     FSYNC_MARKER_RE,
     FSYNC_SETTLE_SEC,
+    AE_SETTLE_MATCH_GAP_SEC,
+    AE_SETTLE_GSTAPP_ETIME_SEC,
+    ISP_SINGLE_ADDR,
+    ISP_DUAL_CH_ADDRS,
+    ae_settle_targets,
     profile_is_camera,
+    readiness_kwargs,
 )
 
 
@@ -372,3 +378,443 @@ class TestReadinessKwargs:
         kw = readiness_kwargs({})
         assert kw["ready_processes"] == []
         assert kw["ready_fsync"] is False
+
+
+class TestAeSettleTargets:
+    """AE 정착 기대값 산출 — 케이스 edgeconf_changes 단일 출처 (pim-check#61).
+
+    보드 실측(2026-08-21): 콜드 기동 후 AE 레지스터가 최종값에 도달하기까지
+    gstApp 기동 +16s(=boot+28s). 그 전엔 전이값(AE_CTRL 0x029c, AE_GAIN 0x0100)이
+    읽혀 readback 체크가 오탐한다. 기대값을 케이스에서 유도해 '기대값과 일치하는
+    읽기가 3초 이상 간격으로 2회' 관측될 때 정착으로 본다.
+    """
+
+    def test_manual_channel_yields_ae_ctrl_and_ae_gain(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": 512,
+        }}}
+        targets = ae_settle_targets(prof)
+        # 버스에 채널이 하나뿐 → single 주소 0x3c
+        assert [(t["bus"], t["addr"], t["reg"], t["expected"]) for t in targets] == [
+            (2, "0x3c", "0x50 0x02", "0x020x90"),   # AE_CTRL manual
+            (2, "0x3c", "0x50 0x06", "0x020x00"),   # AE_GAIN 512
+        ]
+
+    def test_auto_channel_yields_ae_ctrl_only(self):
+        """auto 채널은 gain 이 FW 재량이라 기대값이 없다 — AE_CTRL 만 단언."""
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch1.enable": True,
+            ".VHL_CAM.i2c2.ch1.ae_on": True,
+            ".VHL_CAM.i2c2.ch1.ae_gain": 256,
+        }}}
+        targets = ae_settle_targets(prof)
+        assert [(t["reg"], t["expected"]) for t in targets] == [
+            ("0x50 0x02", "0x020x99")]
+
+    def test_bus_is_derived_from_key_not_channel_number(self):
+        """i2c1 → ch2/ch3, i2c2 → ch0/ch1. 버스는 키에서 읽는다(하드코딩 금지)."""
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c1.ch3.enable": True,
+            ".VHL_CAM.i2c1.ch3.ae_on": False,
+            ".VHL_CAM.i2c1.ch3.ae_gain": 8192,
+        }}}
+        targets = ae_settle_targets(prof)
+        assert all(t["bus"] == 1 for t in targets)
+        assert all(t["addr"] == ISP_SINGLE_ADDR for t in targets)  # bus1 단독 채널
+        assert targets[1]["expected"] == "0x200x00"   # 8192 = 0x2000
+
+    def test_two_channels_on_same_bus_get_distinct_addresses(self):
+        """같은 버스의 두 채널은 서로 다른 i2c 주소로 읽어야 한다.
+
+        회귀 방지 (2026-08-21 보드 실측 적발): 주소를 0x3c 로 고정하면 bus2 의
+        ch0/ch1 이 같은 값을 읽어, 한쪽 기대값으로 다른 쪽을 통과시키는 오탐이 난다.
+        실측 대조 — bus2 @0x11=ch0(manual 0x0290/gain 0x0200),
+        @0x12=ch1(auto 0x0299/gain 0x0100) 로 edgeconf 와 정확히 일치.
+        """
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": 512,
+            ".VHL_CAM.i2c2.ch1.enable": True,
+            ".VHL_CAM.i2c2.ch1.ae_on": True,
+        }}}
+        targets = ae_settle_targets(prof)
+        by_label = {t["label"]: t for t in targets}
+        assert by_label["ch0 AE_CTRL"]["addr"] == ISP_DUAL_CH_ADDRS[0]
+        assert by_label["ch1 AE_CTRL"]["addr"] == ISP_DUAL_CH_ADDRS[1]
+        # 같은 버스지만 주소가 달라야 두 채널이 구분된다.
+        assert by_label["ch0 AE_CTRL"]["bus"] == by_label["ch1 AE_CTRL"]["bus"] == 2
+        assert len({t["addr"] for t in targets}) == 2
+
+    def test_dual_addr_mapping_is_by_channel_parity_on_each_bus(self):
+        """버스마다 2채널(dual)이면 짝수→0x11, 홀수→0x12 (보드 실측 4ch)."""
+        edge = {}
+        for bus, chs in ((2, (0, 1)), (1, (2, 3))):
+            for ch in chs:
+                edge[f".VHL_CAM.i2c{bus}.ch{ch}.enable"] = True
+                edge[f".VHL_CAM.i2c{bus}.ch{ch}.ae_on"] = True
+        targets = ae_settle_targets({"setup": {"edgeconf_changes": edge}})
+        got = {t["label"]: (t["bus"], t["addr"]) for t in targets}
+        assert got == {
+            "ch0 AE_CTRL": (2, ISP_DUAL_CH_ADDRS[0]),
+            "ch1 AE_CTRL": (2, ISP_DUAL_CH_ADDRS[1]),
+            "ch2 AE_CTRL": (1, ISP_DUAL_CH_ADDRS[0]),
+            "ch3 AE_CTRL": (1, ISP_DUAL_CH_ADDRS[1]),
+        }
+
+    def test_single_channel_on_bus_uses_broadcast_address(self):
+        """버스에 채널이 하나면 0x3c — 드라이버가 `dual ? CH_ADDR : 0x3c` 로 분기한다.
+
+        코퍼스 근거: 프로파일 readback 249건에서 버스당 1채널은 전부 0x3c(129건).
+        """
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch1.enable": True,
+            ".VHL_CAM.i2c2.ch1.ae_on": True,
+        }}}
+        assert [t["addr"] for t in ae_settle_targets(prof)] == [ISP_SINGLE_ADDR]
+
+    def test_address_branch_is_per_bus_not_per_case(self):
+        """총 2채널이라도 **버스당 1채널**이면 양쪽 다 0x3c.
+
+        판별 케이스: ch0(bus2) + ch3(bus1) — 코퍼스의 fhd_2ch_03 형태.
+        케이스 단위로 dual 을 판정하면 0x11/0x12 로 잘못 읽는다.
+        """
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": True,
+            ".VHL_CAM.i2c1.ch3.enable": True,
+            ".VHL_CAM.i2c1.ch3.ae_on": True,
+        }}}
+        targets = ae_settle_targets(prof)
+        assert [(t["label"], t["bus"], t["addr"]) for t in targets] == [
+            ("ch0 AE_CTRL", 2, ISP_SINGLE_ADDR),
+            ("ch3 AE_CTRL", 1, ISP_SINGLE_ADDR),
+        ]
+
+    def test_disabled_channel_does_not_count_toward_bus_dual(self):
+        """비활성 채널은 dual 판정에 세지 않는다 — 켠 채널만 ISP 가 붙는다."""
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": 512,
+            ".VHL_CAM.i2c2.ch1.enable": False,
+            ".VHL_CAM.i2c2.ch1.ae_on": True,
+        }}}
+        assert {t["addr"] for t in ae_settle_targets(prof)} == {ISP_SINGLE_ADDR}
+
+    def test_disabled_channel_is_ignored(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": False,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": 512,
+        }}}
+        assert ae_settle_targets(prof) == []
+
+    def test_channel_without_explicit_ae_on_yields_no_target(self):
+        """케이스가 명시하지 않은 값은 보드 잔존값(드리프트) — 단언하지 않는다."""
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.vflip": True,
+        }}}
+        assert ae_settle_targets(prof) == []
+
+    def test_manual_channel_without_gain_yields_ae_ctrl_only(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+        }}}
+        targets = ae_settle_targets(prof)
+        assert [t["reg"] for t in targets] == ["0x50 0x02"]
+
+    def test_multiple_channels_are_ordered_deterministically(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c1.ch2.enable": True,
+            ".VHL_CAM.i2c1.ch2.ae_on": True,
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": 512,
+        }}}
+        labels = [t["label"] for t in ae_settle_targets(prof)]
+        assert labels == ["ch0 AE_CTRL", "ch0 AE_GAIN", "ch2 AE_CTRL"]
+
+    def test_non_int_gain_is_skipped_not_crashing(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": "512",
+        }}}
+        assert [t["reg"] for t in ae_settle_targets(prof)] == ["0x50 0x02"]
+
+    def test_empty_and_malformed_profiles(self):
+        assert ae_settle_targets({}) == []
+        assert ae_settle_targets(None) == []
+        assert ae_settle_targets({"setup": None}) == []
+        assert ae_settle_targets({"setup": {"edgeconf_changes": None}}) == []
+
+
+class TestStageAeSettle:
+    """AE 정착 readiness 단계 — 기대값 일치 읽기 2회(간격 >= 3s) + gstApp 경과 하한."""
+
+    _T = [
+        {"label": "ch0 AE_CTRL", "bus": 2, "addr": "0x11",
+         "reg": "0x50 0x02", "expected": "0x020x90"},
+        {"label": "ch0 AE_GAIN", "bus": 2, "addr": "0x11",
+         "reg": "0x50 0x06", "expected": "0x020x00"},
+    ]
+
+    def _mgr_with_targets(self, out):
+        mgr = _mgr()
+        mgr._ready_ae_targets = list(self._T)
+        mgr.ssh.run.return_value = out
+        return mgr
+
+    def test_no_targets_means_stage_passes(self):
+        """AE 를 단언하지 않는 케이스는 게이트로 붙잡지 않는다."""
+        mgr = _mgr()
+        mgr._ready_ae_targets = []
+        assert mgr._ready_ae_settle(_clock=_FixedClock()) is True
+        mgr.ssh.run.assert_not_called()
+
+    def test_matching_values_need_two_reads_at_least_gap_apart(self):
+        mgr = self._mgr_with_targets("e=100\nv=0x020x90\nv=0x020x00")
+        clk = _FixedClock(start=1000.0)
+        # 1회차 일치 — 아직 정착 아님
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        # 간격 미달 → 여전히 아님
+        clk.v = 1000.0 + AE_SETTLE_MATCH_GAP_SEC - 0.5
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        # 간격 충족 → 정착
+        clk.v = 1000.0 + AE_SETTLE_MATCH_GAP_SEC
+        assert mgr._ready_ae_settle(_clock=clk) is True
+
+    def test_transient_value_never_passes(self):
+        """전이값(AE_GAIN 0x0100)은 3초 이상 유지돼도 통과하면 안 된다 —
+        '안정 2회'가 아니라 '기대값 일치 2회'가 판정 기준인 이유."""
+        mgr = self._mgr_with_targets("e=100\nv=0x020x90\nv=0x010x00")
+        clk = _FixedClock(start=0.0)
+        for t in (0.0, 5.0, 10.0, 30.0):
+            clk.v = t
+            assert mgr._ready_ae_settle(_clock=clk) is False
+
+    def test_mismatch_resets_match_timer(self):
+        mgr = _mgr()
+        mgr._ready_ae_targets = list(self._T)
+        seq = iter([
+            "e=100\nv=0x020x90\nv=0x020x00",   # 일치 → 타이머 시작
+            "e=100\nv=0x020x90\nv=0x010x00",   # 전이값으로 후퇴 → 리셋
+            "e=100\nv=0x020x90\nv=0x020x00",   # 재일치 → 타이머 재시작
+        ])
+        mgr.ssh.run.side_effect = lambda *a, **k: next(seq)
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        assert mgr._ae_match_at == 0.0
+        clk.v = 100.0
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        assert mgr._ae_match_at is None
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        assert mgr._ae_match_at == 100.0
+
+    def test_gstapp_etime_floor_blocks_even_when_values_match(self):
+        """AE 하한 앵커는 boot 가 아니라 gstApp 기동 기준 — 부팅 단축(하드리셋)과 무관."""
+        below = AE_SETTLE_GSTAPP_ETIME_SEC - 1
+        mgr = self._mgr_with_targets(f"e={below}\nv=0x020x90\nv=0x020x00")
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        clk.v = 100.0
+        assert mgr._ready_ae_settle(_clock=clk) is False
+        assert mgr._ae_match_at is None
+
+    def test_gstapp_etime_at_floor_is_accepted(self):
+        mgr = self._mgr_with_targets(
+            f"e={AE_SETTLE_GSTAPP_ETIME_SEC}\nv=0x020x90\nv=0x020x00")
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_ae_settle(_clock=clk) is False   # 1회차
+        clk.v = AE_SETTLE_MATCH_GAP_SEC
+        assert mgr._ready_ae_settle(_clock=clk) is True
+
+    def test_gstapp_absent_is_not_ready(self):
+        """gstApp 미기동이면 'e=' (빈 값) — 보드 실측 출력 형태."""
+        mgr = self._mgr_with_targets("e=\nv=0x020x90\nv=0x020x00")
+        assert mgr._ready_ae_settle(_clock=_FixedClock()) is False
+
+    def test_missing_value_line_is_not_ready(self):
+        """i2c 읽기 실패는 'v=' 빈 줄로 온다(보드 실측) — 줄 수는 유지된다."""
+        mgr = self._mgr_with_targets("e=100\nv=0x020x90\nv=")
+        assert mgr._ready_ae_settle(_clock=_FixedClock()) is False
+
+    def test_truncated_output_is_not_ready(self):
+        """줄 수가 타겟 수와 다르면 정렬을 신뢰할 수 없다 — 통과시키지 않는다."""
+        mgr = self._mgr_with_targets("e=100\nv=0x020x90")
+        assert mgr._ready_ae_settle(_clock=_FixedClock()) is False
+
+    def test_none_output_is_not_ready(self):
+        mgr = self._mgr_with_targets(None)
+        assert mgr._ready_ae_settle(_clock=_FixedClock()) is False
+
+    def test_ssh_error_is_not_ready_and_resets(self):
+        mgr = _mgr()
+        mgr._ready_ae_targets = list(self._T)
+        mgr._ae_match_at = 5.0
+        mgr.ssh.run.side_effect = RuntimeError("boom")
+        assert mgr._ready_ae_settle() is False
+        assert mgr._ae_match_at is None
+
+    def test_probe_command_shape(self):
+        mgr = self._mgr_with_targets("e=100\nv=0x020x90\nv=0x020x00")
+        mgr._ready_ae_settle(_clock=_FixedClock())
+        cmd = mgr.ssh.run.call_args[0][0]
+        # gstApp 경과초 + 타겟별 i2c 읽기가 한 번의 왕복으로 묶인다.
+        assert "ps -o etimes= -C gstApp" in cmd
+        assert "i2ctransfer -f -y 2 w2@0x11 0x50 0x02 r2" in cmd
+        assert "i2ctransfer -f -y 2 w2@0x11 0x50 0x06 r2" in cmd
+        # 센티널 prefix — 읽기 실패로 값이 비어도 줄이 사라지지 않아 정렬이 유지된다.
+        assert cmd.count("printf 'v=%s") == 2
+        assert "printf 'e=%s" in cmd
+
+    def test_probe_reads_each_channel_at_its_own_address(self):
+        """같은 버스 2채널 — 명령이 0x11/0x12 를 각각 써야 한다 (오탐 회귀 방지)."""
+        mgr = _mgr()
+        mgr._ready_ae_targets = [
+            {"label": "ch0 AE_CTRL", "bus": 2, "addr": "0x11",
+             "reg": "0x50 0x02", "expected": "0x020x90"},
+            {"label": "ch1 AE_CTRL", "bus": 2, "addr": "0x12",
+             "reg": "0x50 0x02", "expected": "0x020x99"},
+        ]
+        mgr.ssh.run.return_value = "e=100\nv=0x020x90\nv=0x020x99"
+        assert mgr._ready_ae_settle(_clock=_FixedClock()) is False   # 1회차
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert "w2@0x11 0x50 0x02" in cmd
+        assert "w2@0x12 0x50 0x02" in cmd
+
+    def test_stage_order_between_camera_init_and_recording(self):
+        mgr = _mgr()
+        mgr._ready_processes_list = ["gstApp"]
+        mgr._ready_fsync = True
+        mgr._ready_ae_targets = list(self._T)
+        mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
+        assert [n for n, _ in mgr._stabilize_stages()] == [
+            "ssh", "processes", "camera_init", "ae_settle", "recording"]
+
+    def test_stage_absent_when_no_targets(self):
+        mgr = _mgr()
+        mgr._ready_fsync = True
+        mgr._ready_recording_paths = ["/dev/shm"]
+        assert [n for n, _ in mgr._stabilize_stages()] == [
+            "ssh", "camera_init", "recording"]
+
+    def test_earlier_stage_timeout_short_circuits_ae_settle(self):
+        """앞 단계(camera_init)가 예산을 다 쓰면 ae_settle 은 **평가되지 않는다**.
+
+        wait_until_ready 는 단계 타임아웃에서 즉시 False 를 반환하고, _stabilize 는
+        경고 후 진행한다(기존 semantics — monitor 가 최종 검증). 즉 AE 게이트는
+        fsync 가 뜨지 않는 상황을 구제하지 않는다: 그 경우 카메라 자체가 init 되지
+        않은 것이라 케이스는 어차피 실패한다. 예산 공유 구조를 명시적으로 고정한다.
+        """
+        mgr = _mgr()
+        evaluated = []
+        stages = [
+            ("camera_init", lambda: (evaluated.append("camera_init"), False)[1]),
+            ("ae_settle", lambda: (evaluated.append("ae_settle"), True)[1]),
+        ]
+        ok = mgr.wait_until_ready(
+            stages, poll_interval=10, debounce=2, timeout=30,
+            _sleep=lambda s: None, _clock=_Clock(step=10.0),
+        )
+        assert ok is False
+        assert "ae_settle" not in evaluated
+
+    def test_run_setup_stores_targets_and_resets_timer(self):
+        mgr = _mgr()
+        mgr._ae_match_at = 42.0
+        mgr.run_setup({}, ready_ae_targets=list(self._T))
+        assert mgr._ready_ae_targets == self._T
+        assert mgr._ae_match_at is None
+
+
+class TestReadinessKwargsAeSettle:
+    def test_camera_profile_yields_targets(self):
+        prof = {"setup": {"edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+            ".VHL_CAM.i2c2.ch0.ae_gain": 512,
+        }}}
+        kw = readiness_kwargs(prof)
+        assert [t["label"] for t in kw["ready_ae_targets"]] == [
+            "ch0 AE_CTRL", "ch0 AE_GAIN"]
+
+    def test_camera_init_opt_out_also_disables_ae_settle(self):
+        """camera_init_required: false 는 카메라 게이트 전체 opt-out 이다."""
+        prof = {"setup": {"camera_init_required": False, "edgeconf_changes": {
+            ".VHL_CAM.i2c2.ch0.enable": True,
+            ".VHL_CAM.i2c2.ch0.ae_on": False,
+        }}}
+        assert readiness_kwargs(prof)["ready_ae_targets"] == []
+
+    def test_non_camera_profile_yields_no_targets(self):
+        kw = readiness_kwargs({"setup": {"edgeconf_changes": {".NETWORK.wifi.ssid": "x"}}})
+        assert kw["ready_ae_targets"] == []
+
+
+class TestAeSettleAddressMatchesCaseCorpus:
+    """AE 정착이 읽는 주소가 케이스 자신의 readback 주소와 일치해야 한다.
+
+    케이스 custom_commands 의 `i2ctransfer ... w2@ADDR` 는 보드에서 검증된 정본이다.
+    readiness 게이트가 다른 주소를 읽으면 (a) dual 에서 이웃 채널 값으로 오탐 통과,
+    (b) single 에서 무응답으로 게이트 미개방 이 된다. 코퍼스 전체를 대조해 두면
+    새 케이스가 다른 규칙으로 들어와도 여기서 잡힌다.
+    """
+
+    @staticmethod
+    def _case_addrs(path):
+        """케이스 yaml 에서 (ch, bus) → readback 주소 집합을 뽑는다."""
+        name_re = re.compile(r"-\s*name:\s*ch(\d)\s+(?:AE_CTRL|AE_GAIN|ROTATION|AWB_CTRL)")
+        cmd_re = re.compile(r"command:\s*i2ctransfer -f -y (\d) w2@(0x[0-9a-f]{2})")
+        lines = path.read_text().splitlines()
+        found = {}
+        for i, line in enumerate(lines):
+            nm = name_re.search(line)
+            if not nm:
+                continue
+            for nxt in lines[i + 1:i + 3]:
+                cm = cmd_re.search(nxt)
+                if cm:
+                    found.setdefault((int(nm.group(1)), int(cm.group(1))), set()).add(
+                        cm.group(2))
+                    break
+        return found
+
+    def test_every_case_readback_address_matches_derived_target(self):
+        import pathlib
+
+        import yaml
+
+        root = pathlib.Path(__file__).resolve().parent.parent / "profiles"
+        checked = 0
+        mismatches = []
+        for path in sorted(root.rglob("*.yaml")):
+            try:
+                prof = yaml.safe_load(path.read_text()) or {}
+            except Exception:
+                continue
+            if not isinstance(prof, dict):
+                continue
+            targets = ae_settle_targets(prof)
+            if not targets:
+                continue
+            case_addrs = self._case_addrs(path)
+            for t in targets:
+                ch = int(t["label"].split()[0][2:])
+                expected_addrs = case_addrs.get((ch, t["bus"]))
+                if not expected_addrs:
+                    continue  # 케이스가 그 채널 레지스터를 읽지 않으면 대조 대상 아님
+                checked += 1
+                if t["addr"] not in expected_addrs:
+                    mismatches.append(
+                        f"{path.name} ch{ch} bus{t['bus']}: "
+                        f"derived {t['addr']} vs case {sorted(expected_addrs)}")
+        # 코퍼스가 비면 이 테스트가 조용히 무의미해진다 — 대조 건수를 하한으로 고정.
+        # 2026-08-21 기준 실측 96건(케이스가 ae_on 을 명시한 채널만 대조 대상).
+        assert checked >= 80, f"대조 건수가 너무 적다 ({checked}) — 코퍼스 탐색 경로 확인"
+        assert not mismatches, "\n".join(mismatches[:10])

@@ -52,6 +52,43 @@ try:
 except ValueError:
     FSYNC_SETTLE_SEC = 2.0
 
+# 안정화 AE 정착(settle) readiness — pim-check#61.
+# 카메라 init(fsync) 이후에도 AP1302 의 AE 레지스터는 전이값을 거쳐 최종값에
+# 도달한다. 콜드 기동 실측(2026-08-21): 정착 시점 = gstApp 기동 +16s(=boot+28s),
+# 그 전 구간은 AE_CTRL 0x029c / AE_GAIN 0x0100 같은 전이값이 읽힌다. custom_commands
+# 의 readback 단언이 이 창에 걸리면 오탐한다. 현행 마진(+20~35s)은 체크 실행 순서와
+# readiness 통과 시각에 의존하는 우연적 배치라 명시 게이트로 고정한다.
+# 판정: '케이스가 기대하는 값과 일치하는 읽기'가 AE_SETTLE_MATCH_GAP_SEC 이상
+# 간격으로 2회. '연속 2회 안정'이 아니라 '기대값 일치 2회'인 이유는 전이값
+# 0x0100 이 3초 이상 유지돼 안정 기준만으로는 조기 통과하기 때문이다.
+#
+# AP1302 i2c 주소는 **버스(디시리얼라이저)의 활성 채널 수**에 따라 갈린다.
+# 드라이버(max9296.c)가 `dual ? AP1302_CH{0,1}_I2C_ADDR : AP1302_I2C_ADDR` 로
+# 분기하기 때문이다 — 버스에 채널이 하나면 그 ISP 의 정식 주소는 0x3c 이고, 둘이면
+# 채널별 별칭 0x11/0x12 를 쓴다. 버스 단위 분기라 "총 2채널이지만 버스당 1채널"인
+# 구성(예: ch0+ch3)은 양쪽 다 0x3c 다.
+# 근거: 프로파일 코퍼스 readback 249건 전건 일치(버스당 1채널 → 0x3c 129건,
+# 2채널 → 0x11/0x12 120건) + 보드 실측(2026-08-21, 4ch dual 에서 0x11/0x12 가
+# 네 채널 모두 edgeconf 와 일치, 같은 시점 0x3c 는 어느 채널과도 불일치).
+# 주소를 고정하면 dual 에서 두 채널이 같은 값을 읽어 오탐하고, single 에서는
+# 응답이 없어 게이트가 열리지 않는다.
+ISP_SINGLE_ADDR = "0x3c"
+ISP_DUAL_CH_ADDRS = ("0x11", "0x12")
+AE_CTRL_REG = "0x50 0x02"      # AP1302 AE_CTRL — auto 0x0299 / manual 0x0290
+AE_GAIN_REG = "0x50 0x06"      # AP1302 AE_GAIN — manual gain 2B big-endian
+# 기대값 일치 읽기 2회 사이의 최소 간격(초).
+try:
+    AE_SETTLE_MATCH_GAP_SEC = float(os.environ.get("PIM_AE_SETTLE_GAP_SEC", "3"))
+except ValueError:
+    AE_SETTLE_MATCH_GAP_SEC = 3.0
+# 정착 판정을 시작할 gstApp 경과시간 하한(초). 앵커가 boot 이 아니라 gstApp 기동인
+# 이유: 하드리셋 등으로 부팅이 단축돼도 정착 소요는 gstApp 기준으로 유지된다.
+try:
+    AE_SETTLE_GSTAPP_ETIME_SEC = float(
+        os.environ.get("PIM_AE_SETTLE_GSTAPP_ETIME_SEC", "16"))
+except ValueError:
+    AE_SETTLE_GSTAPP_ETIME_SEC = 16.0
+
 # Setup 단계 SSH retry — 정책은 verify_retry 중앙 모듈에서 가져와
 # verify_retry 환경변수(PIM_VERIFY_MAX_ATTEMPTS / PIM_VERIFY_RETRY_WAIT)
 # 한 곳에서 setup/verify 양쪽 retry 정책을 조정한다.
@@ -96,6 +133,91 @@ def profile_is_camera(profile: dict) -> bool:
     return any(v is True and _CAM_CH_ENABLE_RE.search(k) for k, v in edge.items())
 
 
+# 카메라 채널 AE 키 — 예: ".VHL_CAM.i2c2.ch0.ae_on", ".VHL_CAM.i2c1.ch3.ae_gain".
+# 버스 번호는 키에서 읽는다(i2c2 → ch0/ch1, i2c1 → ch2/ch3 매핑을 하드코딩하지 않음).
+_CAM_CH_AE_RE = re.compile(r"^\.VHL_CAM\.i2c(\d+)\.ch(\d+)\.(enable|ae_on|ae_gain)$")
+
+
+def _isp_ch_addr(ch: int, bus_ch_count: int) -> str:
+    """채널 번호 + 그 버스의 활성 채널 수 → AP1302 i2c 주소.
+
+    버스에 채널이 하나면 0x3c(single), 둘이면 짝수 채널 0x11 / 홀수 채널 0x12(dual).
+    """
+    if bus_ch_count < 2:
+        return ISP_SINGLE_ADDR
+    return ISP_DUAL_CH_ADDRS[ch % 2]
+
+
+def _ae_gain_hex(val: int) -> str:
+    """ae_gain(2B) → i2ctransfer 출력 형식 문자열 (예: 512 → '0x020x00')."""
+    return f"0x{(val >> 8) & 0xFF:02x}0x{val & 0xFF:02x}"
+
+
+def _ae_ctrl_hex(ae_on: bool) -> str:
+    """ae_on → AE_CTRL 최종값. auto 0x0299 / manual 0x0290 (보드 실측)."""
+    return "0x020x99" if ae_on else "0x020x90"
+
+
+def ae_settle_targets(profile: dict) -> list[dict]:
+    """AE 정착 readiness 에서 일치를 확인할 레지스터 기대값 목록을 산출한다.
+
+    출처는 케이스의 `setup.edgeconf_changes` 단일 소스 — 케이스가 **명시한** 값만
+    단언한다. 명시하지 않은 채널/키는 보드 잔존값(config 드리프트)이라 기대값을
+    만들 수 없다.
+
+      - `chN.enable: true` 인 채널만 대상.
+      - 읽기 주소는 그 채널이 속한 **버스의 활성 채널 수**로 정해진다
+        (single 0x3c / dual 0x11·0x12) — `_isp_ch_addr` 참조.
+      - `ae_on` 이 명시돼 있으면 AE_CTRL 기대값.
+      - `ae_on: false`(manual) 이고 `ae_gain` 이 정수로 명시돼 있으면 AE_GAIN 기대값.
+        auto 채널의 gain 은 FW 재량이라 기대값이 없다.
+
+    Returns:
+        [{"label", "bus", "addr", "reg", "expected"}, ...] — 채널 번호 오름차순,
+        채널 안에서는 AE_CTRL → AE_GAIN 순(결정적 순서).
+    """
+    setup = (profile or {}).get("setup") or {}
+    if not isinstance(setup, dict):
+        return []
+    edge = setup.get("edgeconf_changes") or {}
+    if not isinstance(edge, dict):
+        return []
+
+    channels: dict[int, dict] = {}
+    for key, value in edge.items():
+        m = _CAM_CH_AE_RE.match(key) if isinstance(key, str) else None
+        if not m:
+            continue
+        bus, ch, field = int(m.group(1)), int(m.group(2)), m.group(3)
+        entry = channels.setdefault(ch, {"bus": bus})
+        entry[field] = value
+
+    # 버스별 활성 채널 수 — 읽기 주소가 single/dual 로 갈리므로 먼저 센다.
+    bus_ch_count: dict[int, int] = {}
+    for entry in channels.values():
+        if entry.get("enable") is True:
+            bus_ch_count[entry["bus"]] = bus_ch_count.get(entry["bus"], 0) + 1
+
+    targets: list[dict] = []
+    for ch in sorted(channels):
+        entry = channels[ch]
+        if entry.get("enable") is not True:
+            continue
+        ae_on = entry.get("ae_on")
+        if not isinstance(ae_on, bool):
+            continue
+        bus = entry["bus"]
+        addr = _isp_ch_addr(ch, bus_ch_count.get(bus, 0))
+        targets.append({"label": f"ch{ch} AE_CTRL", "bus": bus, "addr": addr,
+                        "reg": AE_CTRL_REG, "expected": _ae_ctrl_hex(ae_on)})
+        gain = entry.get("ae_gain")
+        # bool 은 int 의 서브클래스 — gain 자리에 True/False 가 오면 기대값이 아니다.
+        if ae_on is False and isinstance(gain, int) and not isinstance(gain, bool):
+            targets.append({"label": f"ch{ch} AE_GAIN", "bus": bus, "addr": addr,
+                            "reg": AE_GAIN_REG, "expected": _ae_gain_hex(gain)})
+    return targets
+
+
 def readiness_kwargs(profile: dict) -> dict:
     """reboot 후 안정화 readiness 단계 주입 인자를 profile 에서 산출한다
     (plan / run_case 공용 — 중복 제거).
@@ -104,8 +226,11 @@ def readiness_kwargs(profile: dict) -> dict:
       - ready_processes: checks.processes.required (코어 프로세스 생존 단계)
       - ready_recording_paths: RECORDING_DIRS (영상파일 생성 단계 고정 인프라 경로)
       - ready_fsync: 카메라 케이스만 True (카메라 init(fsync) 게이트)
+      - ready_ae_targets: 카메라 케이스의 AE 정착 기대값 목록 (pim-check#61).
+        빈 목록이면 단계 자체가 붙지 않는다.
     """
     checks = (profile or {}).get("checks") or {}
+    is_camera = profile_is_camera(profile)
     procs = []
     if isinstance(checks, dict):
         procs = ((checks.get("processes") or {}).get("required") or [])
@@ -115,7 +240,10 @@ def readiness_kwargs(profile: dict) -> dict:
         # 비카메라 케이스는 녹화 파일이 안 생겨 stabilize_sec 까지 대기 후 진행(경고)하나,
         # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_fsync 로 분리.
         "ready_recording_paths": RECORDING_DIRS,
-        "ready_fsync": profile_is_camera(profile),
+        "ready_fsync": is_camera,
+        # AE 정착 게이트는 카메라 게이트와 같은 opt-in/out 을 따른다
+        # (camera_init_required: false 면 AE 정착도 끈다 — 게이트 일관성).
+        "ready_ae_targets": ae_settle_targets(profile) if is_camera else [],
     }
 
 
@@ -138,6 +266,11 @@ class SetupManager:
         self._ready_fsync: bool = False
         # fsync 로그 최초 관측 시각(monotonic) — FSYNC_SETTLE_SEC 경과 판정용.
         self._fsync_seen_at: float | None = None
+        # 안정화 AE 정착 readiness 의 기대값 목록 (pim-check#61).
+        # run_setup(ready_ae_targets=...) 로 주입 (기본 빈 목록 → 단계 skip).
+        self._ready_ae_targets: list[dict] = []
+        # AE 기대값과 처음 일치한 시각(monotonic) — AE_SETTLE_MATCH_GAP_SEC 판정용.
+        self._ae_match_at: float | None = None
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -396,6 +529,74 @@ class SetupManager:
             self._fsync_seen_at = now
         return (now - self._fsync_seen_at) >= FSYNC_SETTLE_SEC
 
+    def _ae_probe_command(self) -> str:
+        """gstApp 경과초 + 타겟 레지스터 값을 한 번의 SSH 왕복으로 읽는 명령.
+
+        각 값은 `e=`/`v=` 센티널 prefix 로 한 줄씩 출력한다. i2c 읽기가 실패하면
+        빈 값(`v=`)이 되는데, prefix 가 없으면 그 줄이 통째로 사라져 뒤 타겟의 값이
+        앞 타겟의 값으로 밀려 **오탐 통과**가 난다 (보드 실측으로 확인한 출력 형태).
+        """
+        parts = [
+            "printf 'e=%s\\n' \"$(ps -o etimes= -C gstApp 2>/dev/null "
+            "| head -1 | tr -d ' \\n')\""
+        ]
+        for t in self._ready_ae_targets:
+            parts.append(
+                "printf 'v=%s\\n' \"$(i2ctransfer -f -y {bus} w2@{addr} {reg} r2 "
+                "2>/dev/null | tr -d ' \\n')\"".format(
+                    bus=t["bus"], addr=t["addr"], reg=t["reg"])
+            )
+        return "; ".join(parts)
+
+    def _ready_ae_settle(self, _clock=None) -> bool:
+        """AE 정착 readiness — 케이스 기대값과 일치하는 읽기 2회(간격 >= gap).
+
+        타겟이 없으면(케이스가 AE 를 단언하지 않으면) 통과시킨다 — 단언하지 않는
+        케이스를 게이트로 붙잡을 이유가 없다.
+
+        gstApp 경과시간이 하한 미만이면 값이 우연히 일치하더라도 정착으로 보지
+        않는다(전이 구간에서 기대값을 스쳐 지나가는 경우 차단). 불일치·읽기 실패·
+        SSH 예외는 모두 타이머를 리셋해, 재초기화 후 다시 처음부터 세도록 한다.
+        """
+        if not self._ready_ae_targets:
+            return True
+        clock = _clock or time.monotonic
+        try:
+            out = self.ssh.run(self._ae_probe_command())
+        except Exception:
+            self._ae_match_at = None
+            return False
+
+        lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+        etimes = [ln[2:] for ln in lines if ln.startswith("e=")]
+        values = [ln[2:] for ln in lines if ln.startswith("v=")]
+        # 줄 수가 타겟 수와 다르면 정렬을 신뢰할 수 없다 — 통과시키지 않는다.
+        if len(etimes) != 1 or len(values) != len(self._ready_ae_targets):
+            self._ae_match_at = None
+            return False
+        try:
+            elapsed = float(etimes[0])
+        except ValueError:
+            self._ae_match_at = None
+            return False
+        if elapsed < AE_SETTLE_GSTAPP_ETIME_SEC:
+            self._ae_match_at = None
+            return False
+
+        matched = all(
+            got == t["expected"]
+            for got, t in zip(values, self._ready_ae_targets)
+        )
+        if not matched:
+            self._ae_match_at = None
+            return False
+
+        now = clock()
+        if self._ae_match_at is None:
+            self._ae_match_at = now
+            return False
+        return (now - self._ae_match_at) >= AE_SETTLE_MATCH_GAP_SEC
+
     def _stabilize_stages(self) -> list:
         """안정화 단계 목록 (1차→2차→3차 순서). 증분으로 확장.
 
@@ -409,6 +610,10 @@ class SetupManager:
         # ISP 레지스터도 그 시점 이후에야 유효하다.
         if self._ready_fsync:
             stages.append(("camera_init", self._ready_dmesg_fsync))
+        # AE 정착은 카메라 init 다음 — AP1302 레지스터는 init 후에도 전이값을 거친다
+        # (pim-check#61). 기대값을 단언하는 케이스에만 붙는다.
+        if self._ready_ae_targets:
+            stages.append(("ae_settle", self._ready_ae_settle))
         rec_paths = list(self._ready_recording_paths)
         if rec_paths:
             stages.append(("recording", lambda: self._ready_recording(rec_paths)))
@@ -529,7 +734,8 @@ class SetupManager:
             self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
 
     def run_setup(self, setup_config: dict, ready_processes=None,
-                  ready_recording_paths=None, ready_fsync: bool = False) -> bool:
+                  ready_recording_paths=None, ready_fsync: bool = False,
+                  ready_ae_targets=None) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
         지원 키:
@@ -541,6 +747,8 @@ class SetupManager:
         Args:
             ready_processes: 리부트 후 안정화 2차에서 생존을 확인할 코어 프로세스 목록
                 (profile 의 checks.processes.required). None 이면 2차 단계 skip.
+            ready_ae_targets: AE 정착 readiness 기대값 목록 (setup.ae_settle_targets).
+                None/빈 목록이면 AE 정착 단계 skip.
 
         Returns:
             True: 변경 또는 inject가 적용됨 (teardown 필요)
@@ -551,6 +759,8 @@ class SetupManager:
         self._ready_recording_paths = list(ready_recording_paths or [])
         self._ready_fsync = bool(ready_fsync)
         self._fsync_seen_at = None  # 이번 setup 의 settle 타이머 초기화
+        self._ready_ae_targets = list(ready_ae_targets or [])
+        self._ae_match_at = None    # 이번 setup 의 AE 정착 타이머 초기화
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")
