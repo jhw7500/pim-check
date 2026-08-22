@@ -613,6 +613,14 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # 빈 채로 시작해 복원이 항상 .bak 폴백으로 떨어진다 (pim-check#67).
     last_setup_mgr = None
     last_mgr_ssh = None
+    # 캠페인 복원 (pim-check#68) — 케이스마다 teardown 하지 않으므로, 마지막 케이스의
+    # 매니저가 든 스냅샷은 "마지막 케이스 직전" 상태다. 파일별 **최초** 스냅샷을
+    # 따로 모아 두고 끝에서 그것으로 되돌린다. 복원 **대상**도 캠페인 기준이어야
+    # 한다 — 중간 케이스가 ord_vcm 을 바꾸고 마지막이 edgeconf 만 바꾸면 ord_vcm 이
+    # 되돌려지지 않는다(ord_vcm_changes 를 쓰는 케이스가 6건 있다).
+    campaign_snapshots: dict[str, str] = {}
+    campaign_edge_changes: dict = {}
+    campaign_ord_changes: dict = {}
 
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
@@ -676,6 +684,15 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 if _mgr_holder:
                     last_setup_mgr = _mgr_holder[0]
                     last_mgr_ssh = ssh
+                    # 파일별 **최초** 스냅샷만 남긴다 — 첫 케이스가 그 파일을
+                    # 건드리지 않았을 수도 있으므로 "첫 케이스"가 아니라
+                    # "그 파일을 처음 건드린 케이스" 기준이다.
+                    for _path, _snap in getattr(
+                            last_setup_mgr, "_config_snapshots", {}).items():
+                        campaign_snapshots.setdefault(_path, _snap)
+                _case_setup = runtime.get("setup") or {}
+                campaign_edge_changes.update(_case_setup.get("edgeconf_changes") or {})
+                campaign_ord_changes.update(_case_setup.get("ord_vcm_changes") or {})
                 retries_used = attempt
                 if passed:
                     break
@@ -720,10 +737,19 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     _teardown_mgr = last_setup_mgr
                 else:
                     _teardown_mgr = setup_factory(last_ssh)
+                # 캠페인 시작 전 상태로 되돌린다 — 매니저가 든 것은 마지막 케이스
+                # 직전 상태다. 대상도 캠페인 동안 건드린 파일 전체로 넓힌다.
+                if campaign_snapshots:
+                    _teardown_mgr.adopt_snapshots(campaign_snapshots)
                 # `setup:` 이 없는 케이스는 last_setup_cfg 가 None 이다 — 가드를
                 # 넓힌 이상 인자도 방어해야 한다(안 그러면 그 경로가 `.get()` 에서
                 # 죽고 아래 except 가 삼켜 조용히 복구가 빠진다).
-                _teardown_mgr.run_teardown(last_setup_cfg or {}, last_teardown_cfg)
+                _campaign_cfg = dict(last_setup_cfg or {})
+                if campaign_edge_changes:
+                    _campaign_cfg["edgeconf_changes"] = campaign_edge_changes
+                if campaign_ord_changes:
+                    _campaign_cfg["ord_vcm_changes"] = campaign_ord_changes
+                _teardown_mgr.run_teardown(_campaign_cfg, last_teardown_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
