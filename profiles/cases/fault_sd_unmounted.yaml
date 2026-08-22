@@ -26,9 +26,13 @@ checks:
 
     # umount 주입 뒤 커널이 반응했는지 — **감지되어야** 하므로 expected_min: 1.
     # 축은 **inject 시각**(모노토닉) — 세션/부팅 앵커면 부팅 잡음이 통과시킨다.
+    # /proc/uptime 은 CLOCK_BOOTTIME(서스펜드 포함), printk 타임스탬프는
+    # local_clock()(서스펜드 제외)이다. 이 보드는 서스펜드하지 않아 두 축을
+    # 같다고 본다 — 실측 차이 0.079s, `PM: suspend` 로그 0건. 서스펜드를
+    # 쓰게 되면 앵커가 앞서가 과소 계수(거짓 FAIL)가 되니 재검토할 것.
     # (기존 expected_min: 0 은 아예 항상 참이었다. #73)
-    - name: "dmesg/journal records SD I/O 에러 or remount attempt"
-      command: "A=$(cat /tmp/pim_inject_anchor 2>/dev/null || echo 999999); awk -v a=\"$A\" 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (t>a+0 && tolower($0) ~ /mmcblk|sd_cam|i\\/o error|remount/) n++ } END { print n+0 }' /var/log/cantops/kern.log"
+    - name: "커널 로그에 SD I/O 에러 or remount 기록 (주입 이후)"
+      command: "[ -r /tmp/pim_inject_anchor ] || { echo 0; exit 0; }; A=$(cat /tmp/pim_inject_anchor); awk -v a=\"$A\" 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (t>a+0 && tolower($0) ~ /mmcblk|sd_cam|i\\/o error|remount/) n++ } END { print n+0 }' /var/log/cantops/kern.log"
       expected_min: 1
       on_fail: "SD unmount 후 kernel 응답 없음 (감지 안 됨)"
 
@@ -44,6 +48,9 @@ checks:
 
 teardown:
   recovery_command:
+    # NOTE: recovery_command 는 teardown: 아래라 **현재 실행되지 않는다**(#75).
+    # 아래 정리는 #75 수정 후에야 동작한다. 그때까지 앵커는 주입이 매번
+    # 덮어쓰고 재부팅 시 /tmp 가 비워지는 것에 의존한다.
     - "rm -f /tmp/pim_inject_anchor"
     - "mountpoint -q /mnt/sd_cam || mount /dev/mmcblk1p1 /mnt/sd_cam 2>&1"
     - "sleep 2"
