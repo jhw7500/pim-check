@@ -34,10 +34,20 @@ checks:
       expected: "RW"
       on_fail: "CAM SD 카드 미마운트 또는 Read-Only"
 
-    - name: "dmesg 하드웨어 에러"
-      command: "journalctl -k --since '10 min ago' --no-pager 2>/dev/null | grep -ic 'error\\|fail\\|fault' || true"
+    # 주의: 한 결함이 여러 줄로 찍힐 수 있다 — 예) MCP4018 쓰기 실패는
+
+    #   `max9296.c:1197`(원인)과 `:2679`(종료 로그) 두 줄이다. 카운트는 줄 수다.
+
+    # 주의: 스코프가 세션 앵커라, 앵커보다 **먼저** 난 오류(카메라 init ~26s)는
+
+    #   앵커 기록 시점에 따라 잡히기도 놓치기도 한다 — 실행마다 결과가 갈릴 수
+
+    #   있다(#73 후속). 앵커가 없으면 부팅 시각 폴백이라 잡힌다.
+
+    - name: "커널 로그 하드웨어 에러 (세션 이후)"
+      command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); grep -aiE 'error|fail|fault' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt' | grep -avE 'samsung-hdmi-phy|imx8-pcie-phy|i\\.MX clk|imx-sdma|spi-nor|fsl-asoc-card|fsl-easrc|audio-xcvr|fsl-aud2htx|imx-xcvr|imx-micfil|imx-cdnhdmi|wm8960|imx_sec_dsim_drv|lrdmwl_pcie' | wc -l"
       expected: "0"
-      on_fail: "최근 10분 내 커널 하드웨어 에러 로그 발견"
+      on_fail: "커널 로그에 하드웨어 에러 (BSP 부팅 잡음 제외, 세션 앵커 이후). 한 결함이 여러 줄일 수 있음"
 
     - name: "vsftpd 프로세스"
       command: "pgrep -x vsftpd > /dev/null && echo RUNNING || echo STOPPED"

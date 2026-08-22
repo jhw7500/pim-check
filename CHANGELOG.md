@@ -2,6 +2,45 @@
 
 ## Unreleased (2026-08-21)
 
+### 커널 로그 체크 소스 이관 — 구조적 거짓 PASS 해소 (pim-check#73, #71)
+
+- **fix(cases)**: `journalctl -k` 를 읽던 fault 체크 **11건**을 rsyslog 의
+  `/var/log/cantops/kern.log` 로 이관. 이들은 **구조적으로 실패할 수 없었다** —
+  소스가 사실상 비어 있고(보드 실측: `journalctl -k` **31줄** vs kern.log
+  **56,140줄**) `expected: "0"` 이라, 결함 발생 여부와 무관하게 PASS 했다.
+- **증명적으로 무효였던 3건** (kern.log 매칭 vs journalctl 매칭):
+  `fault_cam_disconnect` **540 vs 0** · `fault_i2c_bus_error` **540 vs 0** ·
+  `board_error_detect` **3978 vs 0**. 특히 `fault_cam_disconnect` 는 카메라 단절을
+  **절대 검출하지 못했다** — fault 케이스가 그 fault 를 못 잡으면 존재 이유가 없다.
+- **왜 kern.log 인가**: rsyslog 가 `kern.notice`(severity 0–5)를 이 파일로 보내고,
+  max9296 의 fps/오류 출력이 `printk(KERN_NOTICE)`·`KERN_ERR` 라 **설계상 보장**된다
+  (측정이 아니라 소스로 확인). 링버퍼가 아니라 파일이라 `SYSLOG_ACTION_CLEAR`·wrap
+  양쪽에 면역이고, 로테이션도 있다. 왕복 0.07~0.6s.
+- **스코핑 축을 명시**했다. kern.log 는 재부팅을 넘어 살아남으므로(4월치까지 보존)
+  필터가 **유일한** 부팅 스코핑이다:
+  - 관찰형 체크 9건 → **세션 앵커**(`/tmp/pim_check_anchor`, `uptime -s` 폴백).
+    케이스들이 `local0.log` 에 이미 쓰는 `substr($0,1,19) > bt` 패턴과 동일.
+  - `fault_rtc_fail` → **monotonic**(`[   25.557314]` 필드, 부팅 경계 = 값 감소).
+    이 체크의 **가설이 "RTC 통신 실패"** 라 시스템 시계를 신뢰할 수 없다 — wall-clock
+    필터는 자신이 검출하려는 결함에 의해 망가진다. **이로써 #71 도 해소된다**
+    (기존엔 시간창이 아예 없어 영속 저널 전체를 훑었다).
+  - `fault_sd_unmounted` → 세션 앵커(주입 케이스지만 inject-time 앵커 기계가 없어
+    부팅 스코프로 폴백).
+- **fix(cases)**: `board_error_detect` 의 패턴에 BSP 부팅 잡음 제외를 추가.
+  `error|fail|fault` 는 정상 부팅 로그에도 매칭돼(28건) 이관 즉시 상시 FAIL 이 된다.
+  pim-check 소관 밖 주변장치(오디오·HDMI·PCIe·WiFi·SPI)의 probe 실패를 제외하면
+  **2건**만 남는데, 그 2건이 **실제 카메라 i2c 오류**다(아래 참조). 과거 진짜 오류
+  540건은 제외 필터를 그대로 통과함을 확인했다.
+- **fix(cases)**: `fault_sd_unmounted` 의 `expected_min: 0` → **1**. `on_fail` 이
+  "감지 안 됨" 인데 임계가 0 이라 **아무것도 감지 못해도 통과**했다(소스와 무관한
+  별개 결함).
+- **보드 검증**: 이관한 11건을 실제로 실행해 10건 PASS / `board_error_detect` 만
+  FAIL(2). 그 FAIL 이 **정답**이다 — 이 보드에 지금 카메라 i2c 오류 2건이 있다:
+  `[I2C:2][max9296.c:1197] ch0 MCP4018(0x2f) write fail` ·
+  `[I2C:2][max9296.c:2679] ch0 dual applied fail (ret=-6)`.
+  **두 카메라 전용 체크는 이걸 놓친다** — 패턴이 `error` 만 보고 `fail` 을 안 본다.
+  패턴 정제는 #73 의 후속 항목으로 남긴다.
+
 ### teardown 복원을 호스트 스냅샷으로 (pim-check#65)
 
 - **fix(setup)**: teardown 의 config 복원이 **조용히 no-op** 이던 것을 고친다.
