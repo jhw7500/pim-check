@@ -27,6 +27,9 @@ checks:
       - failed
     expected_state: healthy
     max_streak: 0
+    # BG_Check 감시자 생존 신호({dir}/timestamp touch) 허용 나이(초).
+    # 판정은 checks/cam_state.py — NO_FILE/BAD_VALUE/NEVER_TOUCHED/FUTURE/STALE.
+    heartbeat_max_age_sec: 30
 
   # gstApp 내장 camera-health v1 producer (2026-08 배포 조합) 스냅샷.
   # path: null 로 케이스별 비활성화 (gstApp 을 의도적으로 죽이는 fault 케이스 등).

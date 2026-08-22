@@ -2,6 +2,28 @@
 
 ## Unreleased (2026-08-22)
 
+### heartbeat 판정을 YAML 셸 16중복에서 checks/cam_state.py 로 (pim-check#93)
+
+- **refactor(checks)**: `BG_Check watcher alive (cam_state touch <30s)` 셸 체크가
+  16개 `multi_*.yaml` 에 복제돼 있던 것을 `CamStateCheck` 로 이관했다. AGENTS.md
+  의 "체크 로직은 `checks/` 의 BaseCheck 서브클래스" 규약 위반이 원 지적
+  (#84 PR #90 Codex P1). 이미 두 번(최초 도입, 시계 역행·오버플로 가드) 16곳
+  일괄 치환을 반복한 동기화 부담도 함께 제거된다.
+- **커버리지 순증**: cam_state 체크가 도는 **모든** 프로파일(generated/fault 포함)
+  이 감시자 생존 검증을 자동으로 받는다 — 기존에는 multi 16개에만 있었다.
+- **임계값 설정화**: `checks.cam_state.heartbeat_max_age_sec` (base.yaml, 기본 30)
+  로 노출 — 명령 문자열 하드코딩이 아니라 프로파일 설정이 됐다. 설정 오타는
+  크래시나 침묵 통과가 아니라 체크 FAIL 로 표면화된다.
+- **판정·의미 보존**: NO_FILE / BAD_VALUE(비수치·자릿수>11) / NEVER_TOUCHED(0) /
+  FUTURE(시계 역행) / STALE=\<N\>s 진단 구분과 "감시자 프로세스 생존 신호이지
+  카메라 정상이 아니다"(카메라는 state·ch{N}_error 담당) 라는 신호 의미를 그대로
+  옮겼다. timestamp 값과 보드 now(`date +%s`)를 **한 SSH 왕복**으로 읽어 호스트
+  시계와 섞이지 않고, 수집 명령은 어떤 파일 상태에서도 exit 0 + 출력을 지킨다.
+  관측 불가(수집 실패·형식 붕괴)는 NO_DATA 로 fail-closed.
+- **가드 교체**: 기존 테스트가 YAML **형태**(16개 파일에 블록 존재)를 단언하던
+  것을 판정표 단위 테스트 + "어떤 프로파일 셸도 timestamp 를 읽지 않는다" 는
+  중앙화 가드로 바꿨다. 생성 명령은 지금도 실제 셸에서 돌려 exit 계약을 검증한다.
+
 ### plan 의 복구를 케이스 단위로 — 앞 fault 를 복구하지 않고 다음을 주입하던 것 (pim-check#95)
 
 - **fix(plan)**: `recovery_command` 를 **케이스(시도)마다** 실행한다. 기존에는 플랜

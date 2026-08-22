@@ -36,6 +36,8 @@ class TestCamStateCheckCollect(unittest.TestCase):
                 return "false"
             if "ch1_error" in cmd:
                 return "false"
+            if "timestamp" in cmd:
+                return "F;1755850000;1755850001"
             return None
 
         ssh.run.side_effect = side_effect
@@ -46,6 +48,7 @@ class TestCamStateCheckCollect(unittest.TestCase):
         self.assertEqual(data["streaks"]["streak"], 0)
         self.assertIn("ch0_error", data["channels"])
         self.assertIn("ch1_error", data["channels"])
+        self.assertEqual(data["heartbeat"]["output"], "F;1755850000;1755850001")
 
     def test_collect_state_not_found(self):
         """state 파일이 없으면 error 반환"""
@@ -72,6 +75,7 @@ class TestCamStateCheckValidate(unittest.TestCase):
             "states": {"state": "healthy"},
             "streaks": {"streak": 0},
             "channels": {"ch0_error": "false"},
+            "heartbeat": {"output": "F;1755850000;1755850001"},
         }
         passed, reason = self.check.validate(data, self.config)
         self.assertTrue(passed)
@@ -82,6 +86,7 @@ class TestCamStateCheckValidate(unittest.TestCase):
             "states": {"state": "failed"},
             "streaks": {"streak": 0},
             "channels": {},
+            "heartbeat": {"output": "F;1755850000;1755850001"},
         }
         passed, reason = self.check.validate(data, self.config)
         self.assertFalse(passed)
@@ -92,6 +97,7 @@ class TestCamStateCheckValidate(unittest.TestCase):
             "states": {"state": "healthy"},
             "streaks": {"streak": 3},
             "channels": {},
+            "heartbeat": {"output": "F;1755850000;1755850001"},
         }
         passed, reason = self.check.validate(data, self.config)
         self.assertFalse(passed)
@@ -102,6 +108,7 @@ class TestCamStateCheckValidate(unittest.TestCase):
             "states": {"state": "UNKNOWN_GARBAGE"},
             "streaks": {},
             "channels": {},
+            "heartbeat": {"output": "F;1755850000;1755850001"},
         }
         passed, reason = self.check.validate(data, self.config)
         self.assertFalse(passed)
