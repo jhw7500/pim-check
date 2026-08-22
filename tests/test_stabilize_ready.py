@@ -248,7 +248,11 @@ class TestStageCameraInitFsync:
         mgr.ssh.run.return_value = "t=0 p=0 n=0"
         mgr._ready_dmesg_fsync(_clock=_FixedClock())
         cmd = mgr.ssh.run.call_args[0][0]
-        assert "dmesg" in cmd
+        # 소스는 kern.log 다 — 링버퍼(dmesg)는 CLEAR·wrap 으로 비므로 쓰지 않는다
+        # (pim-check#69). 값의 정확성은 tests/test_fsync_probe_source.py 가 awk 를
+        # 실제로 돌려서 확인한다.
+        assert "/var/log/cantops/kern.log" in cmd
+        assert "dmesg" not in cmd
         assert FSYNC_MARKER_RE in cmd
         # awk 단일 패스 — 총건수/타임스탬프파싱/앵커이후 세 숫자를 항상 출력한다.
         # (grep -c 는 0건일 때 exit 1 이라 ssh.run 이 None 을 반환 — 그 규약에

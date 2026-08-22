@@ -2,6 +2,32 @@
 
 ## Unreleased (2026-08-22)
 
+### fsync 검사 소스를 kern.log 로 — 링버퍼 의존 마지막 22건 해소 (pim-check#69)
+
+- **fix(cases)**: `dmesg` 를 읽던 **fsync 체크 21건**과 `dmesg --level=` **1건**을
+  `/var/log/cantops/kern.log` 로 이관했다. #74 가 fault 체크 11건을 옮겼고, 이번에
+  남은 22건을 마저 옮겨 **케이스에서 링버퍼 의존이 사라졌다**.
+- **fix(setup)**: readiness 게이트(`camera_init`)의 probe 도 같은 소스로 옮겼다.
+  게이트가 `dmesg` 로 통과한 직후 체크가 `FAIL:NO_DMESG` 로 떨어지는 조합이 실제로
+  관측됐는데(같은 소스가 그 사이에 비었다), 이제 게이트와 체크가 같은 파일을 본다.
+- **⚠ 이관이 만드는 새 위험을 함께 처리했다** — `dmesg` 는 부팅마다 비워져 "앵커 0 =
+  이번 부팅"이 공짜로 성립했지만 `kern.log` 는 재부팅을 넘어 산다(4월치까지 `.gz`).
+  그대로 옮기면 **과거 부팅 마커까지 세어 게이트가 즉시 열린다.** 부팅 경계를
+  **monotonic 감소 지점**으로 잡아 마지막 부팅 구간만 센다.
+- **feat(setup)**: 앵커 파서가 타임스탬프를 하나도 못 읽으면(`p=0`) 총건수 폴백이
+  **조용히** 발동하던 것을 1회 경고로 드러낸다 — (d). 폴백이 걸리면 #66 의 앵커
+  델타가 통째로 무효화되는데 로그가 정상 경로와 똑같아 보였다.
+- **feat(cases)**: `FAIL:NO_DMESG` 를 **`FAIL:NO_SOURCE`(소스 자체가 없음)** 와
+  **`FAIL:NO_MARKER`(소스는 있는데 이번 세션 마커가 없음)** 로 갈랐다 — (c). 예전에는
+  둘이 같은 실패로 보여, 보드에서 커널 로그가 통째로 사라진 사고를 케이스 결함으로
+  오인할 뻔했다.
+- **가드** — 형태 목록을 늘리는 대신 **실행으로 확인한다**:
+  `tests/test_kernel_log_source.py` 에 21건을 실제 셸에서 돌리는 5종 시나리오(소스
+  없음 / 마커 없음 / 일치 / 불일치 / **과거 부팅 줄**)를 추가했고,
+  `tests/test_fsync_probe_source.py` 는 probe 의 awk 를 임시 kern.log 에 대고 돌려
+  t/p/n 을 직접 검산한다. 뮤테이션 2종(부팅 경계 제거·진단 분기 제거)으로 확인.
+- `KERN_LOG_PATH` 상수를 `setup.py` 에 두어 테스트가 경로를 치환해 실행할 수 있다.
+
 ### teardown 이 setup 의 readiness 기대를 승계하던 것 (pim-check#70)
 
 - **fix(setup)**: `run_teardown` 진입 시 readiness 기대값(`_ready_fsync`,

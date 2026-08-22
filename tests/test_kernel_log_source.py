@@ -109,6 +109,10 @@ class TestExitConvention:
         - `awk … <파일>` — **불충족**: 파일을 못 열면 awk 가 fatal 로 죽어
           **END 에 도달하지 못한다**(exit 2 + 무출력 → `ssh.run` 이 None).
           보드 실측으로 재현했다. 로테이션 순간·부팅 초기·마운트 실패에서 발현한다.
+        - `<분기> && echo A || echo B` — 두 분기 모두 출력하고 `echo` 는 exit 0.
+          값을 **추출**하는 fsync 체크가 이 형태다(카운트가 아니라 fps 값을 비교).
+          이 형태가 규약을 만족한다는 근거는 형태 목록이 아니라
+          `TestFsyncCommandsActuallyHonorTheContract` 가 **실행으로** 댄다.
         """
         bad = []
         for fname, name, cmd, _ in _kernel_log_commands():
@@ -117,7 +121,9 @@ class TestExitConvention:
             # awk 의 입력이 파이프여야 파일 열기 실패로 죽지 않는다.
             awk_reaches_end = ("END { print n+0 }" in cmd
                                and re.search(r"\|\s*awk\b", cmd) is not None)
-            if not (ends_wc or awk_reaches_end):
+            ends_echo_branches = re.search(
+                r"&&\s*echo\s+\S+\s*\|\|\s*echo\s+\S+$", cmd.strip()) is not None
+            if not (ends_wc or awk_reaches_end or ends_echo_branches):
                 bad.append(f"{fname}: {name}")
         assert not bad, "exit 규약을 충족하지 않는 명령:\n" + "\n".join(bad)
 
@@ -144,6 +150,140 @@ class TestExitConvention:
                 offenders.append(f"{fname}: {name}")
         assert not offenders, (
             "awk 가 파일을 직접 읽는다(파이프로 바꿀 것):\n" + "\n".join(offenders))
+
+
+def _all_custom_commands():
+    """모든 케이스의 custom_commands 를 (파일명, 체크명, 명령, spec) 으로 산출."""
+    out = []
+    for path in sorted(CASES_DIR.glob("*.yaml")):
+        prof = yaml.safe_load(path.read_text()) or {}
+        if not isinstance(prof, dict):
+            continue
+        for chk in ((prof.get("checks") or {}).get("custom_commands") or []):
+            out.append((path.name, chk.get("name"), chk.get("command", ""), chk))
+    return out
+
+
+def _fsync_commands():
+    return [row for row in _all_custom_commands() if "max9296_fsync" in row[2]]
+
+
+class TestNoCaseReadsTheRingBuffer:
+    """`dmesg` 는 소스가 될 수 없다 — CLEAR 와 wrap 두 기제로 비워진다 (pim-check#69).
+
+    ① `SYSLOG_ACTION_CLEAR`(`dmesg -C`)는 읽기 시작점만 옮긴다 — 보드 실측
+       `dmesg -S` 5줄 vs `/dev/kmsg` 5,349줄.
+    ② IMU 드라이버 폭주(`FIFO full data lost!` 2,182 레코드)로 인한 **진짜 wrap** —
+       `/dev/kmsg` 의 가장 이른 레코드가 monotonic 37.98s 라 ~25s 의 fsync 마커가
+       물리적으로 밀려났다.
+
+    어느 쪽이든 링버퍼 기반 소스는 신뢰할 수 없다. `kern.log` 는 파일이라 둘 다 견딘다.
+    """
+
+    def test_no_custom_command_uses_dmesg(self):
+        offenders = [f"{f}: {n}" for f, n, cmd, _ in _all_custom_commands()
+                     if re.search(r"\bdmesg\b", cmd)]
+        assert not offenders, (
+            "dmesg 를 읽는 체크(kern.log 로 옮길 것):\n" + "\n".join(offenders))
+
+    def test_fsync_checks_exist_and_read_kern_log(self):
+        rows = _fsync_commands()
+        # 코퍼스가 비면 위 가드가 조용히 무의미해진다 — 2026-08 기준 21건.
+        assert len(rows) >= 20, f"fsync 체크가 너무 적다 ({len(rows)})"
+        for fname, name, cmd, _ in rows:
+            assert KERN_LOG in cmd, f"{fname}: {name}"
+
+
+class TestFsyncDiagnosticsAreDistinguishable:
+    """"소스가 없다" 와 "마커가 없다" 는 다른 사건이다 (pim-check#69 (c)).
+
+    예전에는 둘 다 `FAIL:NO_DMESG` 한 가지로 보고돼, 보드에서 커널 로그가 통째로
+    사라진 사고를 **케이스 결함으로 오인할 뻔했다.** 소스 교체와 무관하게 값이 있다.
+    """
+
+    def test_every_fsync_check_separates_source_from_marker(self):
+        for fname, name, cmd, _ in _fsync_commands():
+            assert "FAIL:NO_SOURCE" in cmd, f"{fname}: {name} — 소스 부재 진단 없음"
+            assert "FAIL:NO_MARKER" in cmd, f"{fname}: {name} — 마커 부재 진단 없음"
+
+    def test_old_undifferentiated_diagnosis_is_gone(self):
+        offenders = [f"{f}: {n}" for f, n, cmd, _ in _all_custom_commands()
+                     if "NO_DMESG" in cmd]
+        assert not offenders, (
+            "NO_DMESG 는 두 사건을 뭉뚱그린다:\n" + "\n".join(offenders))
+
+
+class TestFsyncCommandsActuallyHonorTheContract:
+    """fsync 체크 21건을 **실제 셸에서 돌려** exit 규약을 확인한다.
+
+    형태 목록에 항목을 하나 더 추가하는 것으로 끝내면, 그 형태가 정말 규약을
+    만족하는지는 아무도 확인하지 않은 채로 남는다 — 이 저장소에서 형태 기반 단언이
+    위반을 통과시킨 전례가 여러 건 있다. 세 경우(소스 없음 / 마커 없음 / 마커 있음)를
+    직접 만들어 **exit 0 이고 출력이 비지 않는지** 본다.
+    """
+
+    def _run(self, cmd: str, source: str | None):
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            if source is None:
+                path = str(pathlib.Path(d) / "absent.log")
+            else:
+                path = str(pathlib.Path(d) / "kern.log")
+                pathlib.Path(path).write_text(source)
+            # 앵커 파일도 이 임시 디렉터리로 돌려 호스트 상태에 의존하지 않게 한다.
+            run_cmd = (cmd.replace(KERN_LOG, path)
+                          .replace("/tmp/pim_check_anchor", str(pathlib.Path(d) / "anchor")))
+            return subprocess.run(["sh", "-c", run_cmd], capture_output=True, text=True)
+
+    # 앵커가 없으면 `uptime -s`(부팅 시각)로 폴백하므로, 마커 줄은 그보다 뒤여야 한다.
+    _MARKER = ("2099-01-01 00:00:00.219 kernel[notice][   25.557314] "
+               "[I2C:1][max9296.c:4612] max9296_fsync side fps : {fps}, low : 32333\n")
+
+    def _fsync_rows(self):
+        rows = [r for r in _kernel_log_commands() if "max9296_fsync" in r[2]]
+        assert len(rows) >= 20, f"fsync 체크가 너무 적다 ({len(rows)})"
+        return rows
+
+    def test_missing_source_exits_zero_with_output(self):
+        for fname, name, cmd, _ in self._fsync_rows():
+            r = self._run(cmd, None)
+            assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
+            assert r.stdout.strip(), f"{fname}: {name} — 무출력 (ssh.run 이 None 을 받는다)"
+            assert "NO_SOURCE" in r.stdout, f"{fname}: {name} — {r.stdout!r}"
+
+    def test_source_without_marker_exits_zero_with_output(self):
+        for fname, name, cmd, _ in self._fsync_rows():
+            r = self._run(cmd, "2099-01-01 00:00:00.000 kernel[notice][ 1.0] nothing here\n")
+            assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
+            assert "NO_MARKER" in r.stdout, f"{fname}: {name} — {r.stdout!r}"
+
+    def test_matching_marker_reports_ok(self):
+        for fname, name, cmd, _ in self._fsync_rows():
+            expected = re.search(r'\[ "\$F" = "(\d+)" \]', cmd)
+            assert expected, f"{fname}: {name} — 기대 fps 를 못 찾았다"
+            r = self._run(cmd, self._MARKER.format(fps=expected.group(1)))
+            assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
+            assert r.stdout.strip() == "OK", f"{fname}: {name} — {r.stdout!r}"
+
+    def test_mismatching_marker_reports_the_value(self):
+        """실패도 진단이 돼야 한다 — 몇이 나왔는지 없이 FAIL 만 보면 추적이 막힌다."""
+        for fname, name, cmd, _ in self._fsync_rows():
+            expected = int(re.search(r'\[ "\$F" = "(\d+)" \]', cmd).group(1))
+            r = self._run(cmd, self._MARKER.format(fps=expected + 1))
+            assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
+            assert r.stdout.strip() == f"FAIL:got={expected + 1}", (
+                f"{fname}: {name} — {r.stdout!r}")
+
+    def test_previous_boot_marker_does_not_satisfy_the_check(self):
+        """kern.log 는 재부팅을 넘어 산다 — 과거 부팅 값으로 통과하면 안 된다."""
+        fname, name, cmd, _ = self._fsync_rows()[0]
+        expected = re.search(r'\[ "\$F" = "(\d+)" \]', cmd).group(1)
+        stale = ("1999-01-01 00:00:00.000 kernel[notice][   25.557314] "
+                 f"[I2C:1][max9296.c:4612] max9296_fsync side fps : {expected}\n")
+        r = self._run(cmd, stale)
+        assert r.returncode == 0
+        assert "NO_MARKER" in r.stdout, f"{fname}: {name} — 과거 부팅 줄로 통과했다: {r.stdout!r}"
 
 
 class TestExpectationsAreNotVacuous:
