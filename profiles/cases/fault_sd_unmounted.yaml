@@ -32,7 +32,7 @@ checks:
     # 쓰게 되면 앵커가 앞서가 과소 계수(거짓 FAIL)가 되니 재검토할 것.
     # (기존 expected_min: 0 은 아예 항상 참이었다. #73)
     - name: "커널 로그에 SD I/O 에러 or remount 기록 (주입 이후)"
-      command: "[ -r /tmp/pim_inject_anchor ] || { echo 0; exit 0; }; A=$(cat /tmp/pim_inject_anchor); awk -v a=\"$A\" 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (t>a+0 && tolower($0) ~ /mmcblk|sd_cam|i\\/o error|remount/) n++ } END { print n+0 }' /var/log/cantops/kern.log"
+      command: "[ -r /tmp/pim_inject_anchor ] || { echo 0; exit 0; }; A=$(cat /tmp/pim_inject_anchor); cat /var/log/cantops/kern.log 2>/dev/null | awk -v a=\"$A\" 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (t>a+0 && tolower($0) ~ /mmcblk|sd_cam|i\\/o error|remount/) n++ } END { print n+0 }'"
       expected_min: 1
       on_fail: "SD unmount 후 kernel 응답 없음 (감지 안 됨)"
 

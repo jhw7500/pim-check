@@ -102,13 +102,48 @@ class TestExitConvention:
     """
 
     def test_every_command_always_exits_zero_with_output(self):
+        """충족 형태를 **닫힌 목록**으로 두고, 각각이 왜 성질을 만족하는지 근거를 단다.
+
+        - `… | wc -l` — `wc` 가 항상 exit 0 · 항상 출력
+        - `<파이프> | awk … END{print}` — **입력이 비어도** END 에 도달
+        - `awk … <파일>` — **불충족**: 파일을 못 열면 awk 가 fatal 로 죽어
+          **END 에 도달하지 못한다**(exit 2 + 무출력 → `ssh.run` 이 None).
+          보드 실측으로 재현했다. 로테이션 순간·부팅 초기·마운트 실패에서 발현한다.
+        """
         bad = []
         for fname, name, cmd, _ in _kernel_log_commands():
             ends_wc = cmd.rstrip().endswith("| wc -l")
-            has_awk_end = "END { print n+0 }" in cmd
-            if not (ends_wc or has_awk_end):
+            # "END 블록이 문자열에 있다" 가 아니라 "END 에 도달한다" 를 봐야 한다 —
+            # awk 의 입력이 파이프여야 파일 열기 실패로 죽지 않는다.
+            awk_reaches_end = ("END { print n+0 }" in cmd
+                               and re.search(r"\|\s*awk\b", cmd) is not None)
+            if not (ends_wc or awk_reaches_end):
                 bad.append(f"{fname}: {name}")
         assert not bad, "exit 규약을 충족하지 않는 명령:\n" + "\n".join(bad)
+
+    def test_awk_never_reads_the_file_directly(self):
+        """`awk … <파일>` 금지 — 파일 열기 실패 시 END 미도달로 규약이 깨진다.
+
+        실증(보드·로컬 동일):
+            awk 'END{print n+0}' /nonexistent  → exit 2, 무출력
+            cat /nonexistent 2>/dev/null | awk 'END{print n+0}' → "0", exit 0
+        """
+        offenders = []
+        for fname, name, cmd, _ in _kernel_log_commands():
+            if "awk" not in cmd:
+                continue
+            # 파일이 `awk` **뒤에** 나오면 awk 의 인자다(= 위반).
+            # 파이프/grep 형태는 파일이 awk 앞에 있으므로 걸리지 않는다.
+            # (정규식으로 범위를 좁히려다 두 번 틀렸다 — awk 정규식 안의 `|` 에
+            #  걸려 못 잡거나, 반대로 grep 인자까지 잡았다. 위치 비교가 정확하다.)
+            # **마지막** awk 기준 — 9건은 앵커를 읽는 awk 가 앞에 하나 더 있는데,
+            # 그건 `$( )` 안이라 실패해도 흡수되고 최종 출력을 내는 것은 마지막 awk 다.
+            # (첫 awk 기준으로 잡으면 그 앵커 리더 때문에 전부 오탐한다 — 실제로 그랬다.)
+            idx = cmd.rfind("awk")
+            if idx >= 0 and KERN_LOG in cmd[idx:]:
+                offenders.append(f"{fname}: {name}")
+        assert not offenders, (
+            "awk 가 파일을 직접 읽는다(파이프로 바꿀 것):\n" + "\n".join(offenders))
 
 
 class TestExpectationsAreNotVacuous:

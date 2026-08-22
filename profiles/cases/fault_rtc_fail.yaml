@@ -16,7 +16,7 @@ checks:
       on_fail: "hwclock cannot read RTC — I2C bus communication failure"
 
     - name: "No RTC errors in dmesg"
-      command: "awk 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (tolower($0) ~ /rtc.*error|rtc.*fail|rtc.*timeout/) n++ } END { print n+0 }' /var/log/cantops/kern.log"
+      command: "cat /var/log/cantops/kern.log 2>/dev/null | awk 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (tolower($0) ~ /rtc.*error|rtc.*fail|rtc.*timeout/) n++ } END { print n+0 }'"
       expected: "0"
       on_fail: "RTC errors found in kernel log"
 
