@@ -148,6 +148,57 @@ class TestCampaignWideRestore(unittest.TestCase):
             "마지막 케이스에 setup 이 없다는 이유로 캠페인 복원이 건너뛰어졌다")
         self.assertEqual(dict(restored)[EDGECONF_PATH], '{"state": "STATE0-EDGE"}')
 
+    def test_no_snapshot_means_no_restore_and_no_reboot(self):
+        """복원할 원본이 없으면 복원도 재부팅도 하지 않는다.
+
+        모든 케이스가 setup-skip 이면(설정이 이미 일치) `changes` 는 누적되지만
+        스냅샷은 찍히지 않는다. 그 상태로 복원을 돌리면 보드 `.bak` 폴백으로 떨어져
+        **바꾸지도 않은 설정을 되돌리고**, `reboot_after` 까지 붙어 재부팅 한 번을
+        낭비한다. `.bak` 은 config_guard 가 부팅마다 갱신하는 자리라 무엇으로
+        되돌아갈지도 보장이 없다.
+
+        #75 리뷰에서 4경로에 적용한 것과 같은 논리다 — 복원과 복구를 가르고,
+        복원은 되돌릴 원본이 있을 때만 한다.
+        """
+        self._case("case_skip", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n"
+                                "  reboot_after: true\n")
+
+        created: list = []
+        bak_restores: list[str] = []
+
+        def setup_factory(ssh):
+            mgr = SetupManager(ssh)
+            mgr.check_current = MagicMock(return_value=True)   # 이미 일치 → setup-skip
+            mgr.backup = MagicMock(return_value=True)
+            mgr.reboot_and_wait = MagicMock()
+            mgr.restore = MagicMock(side_effect=lambda p: bak_restores.append(p))
+            created.append(mgr)
+            return mgr
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            ssh.run.side_effect = lambda cmd, *a, **kw: "OK"
+            return ssh
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "d", "passed": True, "reason": "OK", "data": {}, "duration_ms": 1},
+            ]
+            return engine
+
+        execute_plan(self._plan({"regression": ["case_skip"]}), self.tmpdir,
+                     ssh_factory=ssh_factory, setup_factory=setup_factory,
+                     engine_factory=engine_factory)
+
+        teardown_mgr = created[-1]
+        self.assertEqual(teardown_mgr._config_snapshots, {}, "전제: 스냅샷이 없어야 한다")
+        self.assertEqual(bak_restores, [],
+                         "스냅샷이 없는데 보드 .bak 으로 되돌렸다")
+        self.assertFalse(teardown_mgr.reboot_and_wait.called,
+                         "되돌릴 것이 없는데 재부팅했다")
+
     def test_campaign_reboot_is_decided_by_the_campaign_not_the_last_case(self):
         """마지막 케이스가 fault 케이스면 `reboot_after` 가 없다 — 그렇다고 복원이
         파일만 되돌리고 재부팅을 건너뛰면 보드는 앞 케이스 설정으로 계속 돈다.

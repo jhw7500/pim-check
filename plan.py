@@ -751,16 +751,26 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 넓힌 이상 인자도 방어해야 한다(안 그러면 그 경로가 `.get()` 에서
                 # 죽고 아래 except 가 삼켜 조용히 복구가 빠진다).
                 _campaign_cfg = dict(last_setup_cfg or {})
-                if campaign_edge_changes:
-                    _campaign_cfg["edgeconf_changes"] = campaign_edge_changes
-                if campaign_ord_changes:
-                    _campaign_cfg["ord_vcm_changes"] = campaign_ord_changes
-                # `reboot_after` 도 캠페인 단위 결정이다. 마지막 케이스 것을 그대로
-                # 쓰면, 마지막이 fault 케이스일 때(setup 에 inject_command 만 있고
-                # reboot_after 가 없다) 복원이 **파일만 되돌리고 재부팅을 건너뛴다** —
-                # 보드는 앞 케이스 설정으로 계속 돌아 파일과 구동 상태가 어긋난다.
-                if campaign_edge_changes or campaign_ord_changes:
-                    _campaign_cfg["reboot_after"] = True
+                if campaign_snapshots:
+                    if campaign_edge_changes:
+                        _campaign_cfg["edgeconf_changes"] = campaign_edge_changes
+                    if campaign_ord_changes:
+                        _campaign_cfg["ord_vcm_changes"] = campaign_ord_changes
+                    # `reboot_after` 도 캠페인 단위 결정이다. 마지막 케이스 것을 그대로
+                    # 쓰면, 마지막이 fault 케이스일 때(setup 에 inject_command 만 있고
+                    # reboot_after 가 없다) 복원이 **파일만 되돌리고 재부팅을 건너뛴다** —
+                    # 보드는 앞 케이스 설정으로 계속 돌아 파일과 구동 상태가 어긋난다.
+                    if campaign_edge_changes or campaign_ord_changes:
+                        _campaign_cfg["reboot_after"] = True
+                else:
+                    # 되돌릴 원본이 없다 — 전 케이스가 setup-skip 이면 changes 는
+                    # 누적돼도 스냅샷은 안 찍힌다. 그대로 복원을 돌리면 보드 `.bak`
+                    # 폴백으로 떨어져 **바꾸지도 않은 설정을 되돌리고**(그 `.bak` 은
+                    # config_guard 가 부팅마다 갱신하는 자리다) 재부팅까지 낭비한다.
+                    # #75 리뷰에서 4경로에 적용한 것과 같은 논리 — 복원은 되돌릴
+                    # 원본이 있을 때만, 복구(recovery_command)는 정의되면 항상.
+                    _campaign_cfg.pop("edgeconf_changes", None)
+                    _campaign_cfg.pop("ord_vcm_changes", None)
                 # 캠페인 기준선이 무엇이었는지 남긴다 — 스냅샷이 한 번이라도 실패하면
                 # 그 파일은 **다음 케이스의(=이미 변경된) 상태**가 기준선이 되는데,
                 # 복원 로그만으로는 그 사실이 드러나지 않는다.
