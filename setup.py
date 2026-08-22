@@ -2,6 +2,7 @@ from __future__ import annotations
 """
 setup.py - SetupManager: edgeconf 설정 변경 및 복원 엔진
 """
+import base64
 import json
 import os
 import re
@@ -389,19 +390,29 @@ class SetupManager:
         전송은 base64 로 한다. 설정이 JSON 이라 따옴표를 포함하는데, 원문을 셸
         인용으로 넘기면 이스케이프 사고가 나기 쉽다.
 
-        저장 전에 **base64 문자집합을 검증**한다. 출력에 경고 등 잡음이 섞인 채로
+        저장 전에 **실제로 디코드해서** 검증한다. 잡음이 섞이거나 절단된 출력이
         저장되면 복원 때 `base64 -d` 가 실패하고, 그러면 조용히 `.bak` 폴백으로
-        떨어진다 — 이 기능이 없애려던 바로 그 경로다. 잡음이면 차라리 여기서
-        실패로 처리해 경고를 남기는 편이 낫다.
-        공백/개행은 제거하고 본다 — `-w0` 을 지원하지 않는 보드에서 76열로 접혀
-        나오는 출력도 그대로 받아들이기 위해서다.
+        떨어진다 — 이 기능이 없애려던 바로 그 경로다. 문자집합만 보는 검사는
+        길이가 4 의 배수가 아닌 절단 출력을 통과시키므로 부족하다. 바이트가 이미
+        호스트에 있으니 프록시 대신 실물로 확인하는 편이 싸고 정확하다.
+        JSON 파싱까지 하는 것은 복원측의 `jq -e .` 와 대칭을 맞추기 위해서다
+        (두 대상 파일 모두 JSON).
+
+        공백/개행은 제거하고 본다. 다만 이 관용이 실제로 먹는 범위는 좁다 —
+        `-w` 옵션을 **모르는** 구현은 옵션 오류로 exit≠0 이고 `ssh.run` 이 None 을
+        돌려주므로(ssh.py) 여기까지 오지 않는다. `-w` 를 무시하고 접어서 출력하는
+        구현에서만 의미가 있다.
         """
         try:
             out = self.ssh.run(f"base64 -w0 {conf_path} 2>/dev/null")
         except Exception:
             return False
         compact = re.sub(r"\s+", "", out or "")
-        if not compact or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", compact):
+        if not compact:
+            return False
+        try:
+            json.loads(base64.b64decode(compact, validate=True))
+        except Exception:
             return False
         self._config_snapshots[conf_path] = compact
         return True
@@ -1016,11 +1027,25 @@ class SetupManager:
         self._local0_log(f"setup SNAPSHOT FAILED — {conf_path} (no teardown restore)")
 
     def _restore_conf(self, conf_path: str) -> None:
-        """호스트 스냅샷으로 복원하고, 불가하면 보드 .bak 로 폴백한다."""
+        """호스트 스냅샷으로 복원하고, 불가하면 보드 .bak 로 폴백한다.
+
+        폴백에는 성격이 다른 두 경우가 섞인다. **스냅샷이 애초에 없는 것**은 정상이다
+        (setup-skip 등 — 되돌릴 변경 자체가 없다). 반면 **스냅샷은 있는데 보드 복원이
+        실패한 것**은 이상 징후이고, 폴백은 이 PR 이 없애려던 no-op 경로라 조용히
+        끝난다. 둘을 같은 모양으로 남기면 후자가 정상 로그에 묻히므로 갈라서 찍는다.
+        """
+        had_snapshot = conf_path in self._config_snapshots
         if self.restore_from_snapshot(conf_path):
             self._local0_log(f"teardown RESTORE via host snapshot — {conf_path}")
             return
-        self._local0_log(f"teardown RESTORE via board .bak (fallback) — {conf_path}")
+        if had_snapshot:
+            print(f"WARNING: snapshot restore failed for {conf_path} — "
+                  f"falling back to board .bak (likely a no-op)")
+            self._local0_log(
+                f"teardown RESTORE FAILED from snapshot — {conf_path} (.bak fallback)")
+        else:
+            self._local0_log(
+                f"teardown RESTORE via board .bak (no snapshot) — {conf_path}")
         self.restore(conf_path)
 
     def run_teardown(self, setup_config: dict) -> None:

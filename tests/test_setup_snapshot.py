@@ -49,12 +49,39 @@ class TestSnapshotConfig:
             assert mgr.snapshot_config(EDGECONF_PATH) is False, out
             assert EDGECONF_PATH not in mgr._config_snapshots
 
+    def test_truncated_base64_is_rejected(self):
+        """절단 출력 — 문자집합만 보면 통과하지만 디코드는 실패한다.
+
+        길이가 4 의 배수가 아니면 base64 -d 가 복원 때 죽고 조용히 .bak 폴백으로
+        떨어진다. 호스트에 바이트가 이미 있으니 실물로 확인하는 편이 싸다.
+        """
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "eyJhIjogMX0"      # '=' 패딩 잘림
+        assert mgr.snapshot_config(EDGECONF_PATH) is False
+        assert EDGECONF_PATH not in mgr._config_snapshots
+
+    def test_valid_base64_of_non_json_is_rejected(self):
+        """디코드는 되지만 JSON 이 아닌 내용 — 복원측 `jq -e .` 와 대칭으로 막는다."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "aGVsbG8gd29ybGQ="   # 'hello world'
+        assert mgr.snapshot_config(EDGECONF_PATH) is False
+
     def test_wrapped_base64_is_accepted_and_compacted(self):
         """-w0 미지원 보드는 76열로 접어 출력한다 — 개행을 제거하고 받아들인다."""
         mgr = _mgr()
         mgr.ssh.run.return_value = "eyJhIjog\nMX0=\n"
         assert mgr.snapshot_config(EDGECONF_PATH) is True
         assert mgr._config_snapshots[EDGECONF_PATH] == "eyJhIjogMX0="
+
+    def test_wrapping_tolerance_does_not_apply_when_option_unsupported(self):
+        """`-w` 를 모르는 구현은 exit≠0 → ssh.run 이 None → 여기까지 오지 않는다.
+
+        폴딩 관용이 먹는 범위는 '`-w` 를 무시하고 접어서 출력하는' 구현뿐이라는
+        것을 명시 고정한다(주석이 사실과 어긋나지 않도록).
+        """
+        mgr = _mgr()
+        mgr.ssh.run.return_value = None
+        assert mgr.snapshot_config(EDGECONF_PATH) is False
 
     def test_ssh_error_is_failure_not_raise(self):
         mgr = _mgr()
@@ -63,11 +90,12 @@ class TestSnapshotConfig:
 
     def test_snapshots_are_per_path(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "AAA"
+        mgr.ssh.run.return_value = "eyJhIjogMX0="      # {"a": 1}
         mgr.snapshot_config(EDGECONF_PATH)
-        mgr.ssh.run.return_value = "BBB"
+        mgr.ssh.run.return_value = "eyJiIjogMn0="      # {"b": 2}
         mgr.snapshot_config(ORD_VCM_PATH)
-        assert mgr._config_snapshots == {EDGECONF_PATH: "AAA", ORD_VCM_PATH: "BBB"}
+        assert mgr._config_snapshots == {
+            EDGECONF_PATH: "eyJhIjogMX0=", ORD_VCM_PATH: "eyJiIjogMn0="}
 
 
 class TestRestoreFromSnapshot:
@@ -102,6 +130,41 @@ class TestRestoreFromSnapshot:
         mgr._config_snapshots[EDGECONF_PATH] = "eyJhIjogMX0="
         mgr.ssh.run.side_effect = RuntimeError("boom")
         assert mgr.restore_from_snapshot(EDGECONF_PATH) is False
+
+
+class TestRestoreConfFallbackVisibility:
+    """폴백의 두 경우를 구분해 남기는지 — 이상 징후가 정상 로그에 묻히면 안 된다."""
+
+    def _mgr_with_log(self):
+        mgr = _mgr()
+        mgr._local0_log = MagicMock()
+        mgr.restore = MagicMock()
+        return mgr
+
+    def test_missing_snapshot_is_logged_as_normal_fallback(self, capsys):
+        mgr = self._mgr_with_log()
+        mgr._restore_conf(EDGECONF_PATH)      # 스냅샷 없음 = 정상(setup-skip 등)
+        assert "WARNING" not in capsys.readouterr().out
+        assert "no snapshot" in mgr._local0_log.call_args[0][0]
+        mgr.restore.assert_called_once_with(EDGECONF_PATH)
+
+    def test_failed_restore_with_snapshot_warns(self, capsys):
+        mgr = self._mgr_with_log()
+        mgr._config_snapshots[EDGECONF_PATH] = "eyJhIjogMX0="
+        mgr.restore_from_snapshot = MagicMock(return_value=False)   # 보드 복원 실패
+        mgr._restore_conf(EDGECONF_PATH)
+        assert "WARNING" in capsys.readouterr().out
+        assert "RESTORE FAILED" in mgr._local0_log.call_args[0][0]
+        mgr.restore.assert_called_once_with(EDGECONF_PATH)
+
+    def test_success_path_logs_snapshot_and_skips_bak(self, capsys):
+        mgr = self._mgr_with_log()
+        mgr._config_snapshots[EDGECONF_PATH] = "eyJhIjogMX0="
+        mgr.restore_from_snapshot = MagicMock(return_value=True)
+        mgr._restore_conf(EDGECONF_PATH)
+        assert "WARNING" not in capsys.readouterr().out
+        assert "via host snapshot" in mgr._local0_log.call_args[0][0]
+        mgr.restore.assert_not_called()
 
 
 class TestRunSetupTakesSnapshot:
