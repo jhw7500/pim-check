@@ -16,8 +16,21 @@
 정상 상태에서 4채널 전부 `0`).
 
 그래서 채널별 36건을 걷어내고, 보드가 실제로 갱신하는 heartbeat 를 본다 —
-`cam_state_touch()`(:160)가 `/tmp/cam_state/timestamp` 를 `date +%s` 로 쓴다
-(실측: 현재보다 3초 전). 채널 상태는 이미 `ch{N} cam_state error count` 가 담당한다.
+`cam_state_touch()`(:160)가 `/tmp/cam_state/timestamp` 를 `date +%s` 로 쓴다.
+
+**이 신호가 무엇인지 정확히**: `BG_Check_for_pim.sh` 의 **1초 루프**(:273-274)가
+정상(:386-387 `cam_reset_streak` → `healthy` → touch) · 에러(:381 `cam_inc_streak`
+→ touch) · grace/쿨다운(:362-363) **모든 분기에서** touch 한다. 즉 상태와 무관하게
+매초 갱신되는 **감시자 프로세스 생존 신호**이지 "카메라가 정상이다" 가 아니다
+(실측 delta 1s 는 관측이 아니라 이 설계의 결과다). 카메라 정상 여부는
+`state`(healthy)와 `ch{N} cam_state error count` 가 본다 — 체크 이름을
+`BG_Check watcher alive` 로 둔 이유다.
+
+**잔여 공백(의도적)**: 채널별 **생존** 신호는 이제도 없다. `ch{N}_error=false` 는
+"에러가 기록되지 않았다" 이지 "최근에 확인됐다" 가 아니라, BG_Check 는 살아 있는데
+특정 채널만 갱신이 멈춘 상황은 잡히지 않는다. 이 구멍은 #91(FW)·#85-4 자리다.
+36건이 그 커버리지를 주고 있던 것은 아니다 — `last_ok` 는 에러 때만 움직이므로
+채널별 freshness 를 **잰 적이 없다**. 즉 이 교체는 손실이 아니라 순증이다.
 """
 from __future__ import annotations
 

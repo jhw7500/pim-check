@@ -110,10 +110,10 @@ checks:
       [ -z "$E" ] || [ "$E" = "0" ] || [ "$E" = "false" ] && echo OK || echo FAIL:err=$E
     expected: 'OK'
     on_fail: 'ch1 에러 카운트 발생'
-  - name: "cam_state heartbeat freshness (<30s)"
+  - name: "BG_Check watcher alive (cam_state touch <30s)"
     command: "T=/tmp/cam_state/timestamp; [ -r \"$T\" ] || { echo FAIL:NO_FILE; exit 0; }; L=$(cat \"$T\" 2>/dev/null | tr -d ' \\n'); case \"$L\" in ''|*[!0-9]*) echo FAIL:BAD_VALUE; exit 0;; esac; [ \"$L\" -eq 0 ] && { echo FAIL:NEVER_TOUCHED; exit 0; }; D=$(( $(date +%s) - L )); [ \"$D\" -lt 30 ] && echo OK || echo FAIL:STALE=${D}s"
     expected: 'OK'
-    on_fail: "cam_state 가 30s 이상 갱신되지 않음 — 보드가 상태를 쓰지 않는다"
+    on_fail: "BG_Check_for_pim 이 30s 이상 cam_state 를 갱신하지 않음 — 감시자 프로세스 정지. 카메라 정상 여부는 ch{N} error 체크가 본다"
   - name: ch2 cam_state error count
     command: |-
       F=/tmp/cam_state/channels/ch2_error

@@ -17,6 +17,15 @@
 - 대신 보드가 실제로 갱신하는 신호를 본다 — `cam_state_touch()` 가 쓰는
   `/tmp/cam_state/timestamp`(보드 실측 delta **1s**). 채널별 상태는 이미 정상 동작하는
   `ch{N} cam_state error count` 가 담당하므로 중복되지 않는다.
+- **이 신호가 무엇인지**: `BG_Check_for_pim.sh` 의 1초 루프가 정상·에러·grace **모든
+  분기에서** touch 한다. 즉 상태와 무관한 **감시자 프로세스 생존 신호**이지 "카메라가
+  정상이다" 가 아니다(실측 delta 1s 는 관측이 아니라 이 설계의 결과). 그래서 체크
+  이름을 `BG_Check watcher alive (cam_state touch <30s)` 로 두어 오독을 막았다.
+  카메라 정상 여부는 `state`(healthy)와 `ch{N} cam_state error count` 가 본다.
+- **잔여 공백(의도적)**: 채널별 *생존* 신호는 이제도 없다 — `ch{N}_error=false` 는
+  "에러가 기록되지 않았다" 이지 "최근에 확인됐다" 가 아니다. 다만 `last_ok` 36건이
+  그 커버리지를 주고 있던 것도 아니므로(에러 때만 움직였다) 이 교체는 손실이 아니라
+  순증이다. 구멍 자체는 #91(FW)·#85 자리다.
 - 새 체크는 `0`(초기값·미갱신), 비수치, 빈 파일, 파일 부재를 각각 다른 진단으로
   가른다(`FAIL:NEVER_TOUCHED` / `BAD_VALUE` / `NO_FILE` / `STALE=<N>s`). exit 0 +
   항상 출력 규약 준수.
