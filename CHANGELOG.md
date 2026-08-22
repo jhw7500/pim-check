@@ -25,8 +25,6 @@
 - 가드 4건: 케이스 순서(앞 복구가 다음 주입보다 먼저) · 실패한 시도도 복구 ·
   마지막 케이스 복구 1회 · 케이스별 복구가 재부팅을 유발하지 않음.
 
-## Unreleased (2026-08-22)
-
 ### cam_state 살아있음 판정을 heartbeat 로 — last_ok 는 이름과 실체가 반대였다 (pim-check#84)
 
 - **fix(cases)**: `ch{N} cam_state last_ok freshness (<30s)` 체크 **36건(16파일)** 을
@@ -63,8 +61,6 @@
   항상 출력 규약 준수.
 - 가드(`tests/test_cam_state_heartbeat.py`): `last_ok` 잔존 0 · 파일당 heartbeat 정확히
   1건 · 명령을 **실제 셸에서** 6가지 입력으로 돌려 판정 확인. 보드에서도 OK 실증.
-
-## Unreleased (2026-08-22)
 
 ### plan 이 캠페인 시작 전 상태로 복원한다 (pim-check#68)
 
