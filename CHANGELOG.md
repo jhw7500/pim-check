@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased (2026-08-22)
+## Unreleased (2026-08-23)
+
+### stream 경로도 inject-only fault 케이스를 실행한다 (pim-check#77)
+
+- **fix(stream)**: `StreamRunner._run` 이 `edgeconf_changes` 가 있을 때만
+  `run_setup` 을 불러, inject-only 케이스(`fault_sd_unmounted`·`fault_gstapp_crash`)
+  를 stream 으로 돌리면 **fault 가 주입되지 않은 채** "결함 없는 보드" 를 검사해
+  무의미하게 PASS 했다. 실행 결정을 다른 4개 경로(cli/web/parallel/plan)처럼
+  `run_setup` 에 위임한다 — run_setup 은 inject-only/ord-only 모드와 "이미 일치"
+  skip 을 정식 지원한다.
+- 같은 계열 부수 해소: edge 는 일치하는데 ord 만 다른 케이스가 stream 자체
+  사전 체크(edgeconf 만 봄)에 걸러지던 것도 위임으로 함께 풀린다.
+- phase 메시지 UX 유지 — 적용 전 "Applying N changes + reboot..." 예고, 일치 시
+  "Config matches, skip reboot", inject/ord 전용 메시지 1건 추가. "Setup complete"
+  는 실제로 적용됐을 때(run_setup 이 True)만 낸다.
+- 가드: 위임 단언 3건(`tests/test_stream.py::TestSetupDelegationToRunSetup`) 추가,
+  `tests/test_teardown_recovery.py` 의 stream 경로 테스트를 형제 경로와 같은
+  inject-only 프로파일로 되돌림(#77 검증 방법 그대로 — 우회 제거).
 
 ### heartbeat 판정을 YAML 셸 16중복에서 checks/cam_state.py 로 (pim-check#93)
 

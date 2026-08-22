@@ -156,22 +156,18 @@ class TestEveryExecutionPathForwardsTeardown(unittest.TestCase):
         self.assertTrue(_teardown_saw_recovery(mgr))
 
     def test_stream_path(self):
-        """stream 경로는 edgeconf 변경이 있는 케이스로만 teardown 에 도달한다.
+        """#77 해소 후 stream 도 형제 경로들과 같은 inject-only 프로파일을 쓴다.
 
-        stream 은 `edgeconf_changes` 가 있을 때만 `run_setup` 을 부르기 때문에
-        inject-only fault 케이스는 주입도 복구도 하지 않는다 — **이 경로만의 별개
-        결함**이고 #75 범위 밖이라 여기서는 고치지 않는다(별도 이슈). 그래서 이
-        가드는 teardown 에 도달하는 조합으로 "그 경로가 teardown 섹션을 전달하는가"
-        만 못박는다.
+        (과거에는 stream 의 `if changes:` 가드 때문에 edgeconf 변경을 넣는 우회가
+        필요했다 — 주입 실행 자체의 가드는 tests/test_stream.py 의
+        TestSetupDelegationToRunSetup 이 진다.)
         """
         from stream import StreamRunner
         mgr = _mock_setup_mgr()
-        mgr.check_current.return_value = False   # 설정이 다르다 → run_setup 진입
-        profile = dict(_PROFILE, setup={"edgeconf_changes": {".VHL_CAM.fps": 30}})
         with patch("stream.SshClient", return_value=_mock_ssh()), \
              patch("stream.Engine") as MockEngine, \
              patch("stream.SetupManager", return_value=mgr), \
-             patch("stream.load_profile", return_value=profile):
+             patch("stream.load_profile", return_value=dict(_PROFILE)):
             MockEngine.return_value.run_snapshot.return_value = [
                 {"name": "cpu", "passed": True, "reason": "OK"},
             ]

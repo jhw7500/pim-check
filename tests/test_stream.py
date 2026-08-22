@@ -103,5 +103,82 @@ class TestStreamRunner(unittest.TestCase):
         self.assertIn("duration_ms", check_result["data"])
 
 
+class TestSetupDelegationToRunSetup(unittest.TestCase):
+    """#77 — 실행 결정은 다른 4개 경로처럼 run_setup 이 한다.
+
+    stream 이 자체 `if changes:` 가드로 케이스를 거르면 inject-only/ord-only
+    케이스는 주입 없이 "결함 없는 보드" 를 검사해 무의미하게 PASS 한다.
+    edgeconf 변경 유무는 phase 메시지 분기에만 쓴다.
+    """
+
+    def _run(self, profile, mgr):
+        with patch("stream.load_profile", return_value=profile), \
+             patch("stream.SshClient") as mock_ssh_cls, \
+             patch("stream.Engine") as mock_engine_cls, \
+             patch("stream.SetupManager", return_value=mgr):
+            mock_ssh = MagicMock()
+            mock_ssh.check_connectivity.return_value = True
+            mock_ssh.preflight_check.return_value = []
+            mock_ssh_cls.return_value = mock_ssh
+            mock_engine_cls.return_value.checks = []
+            runner = StreamRunner("case", "192.168.0.5")
+            runner._run()
+        events = []
+        while not runner.events.empty():
+            events.append(runner.events.get())
+        return events
+
+    @staticmethod
+    def _phase_messages(events):
+        return [e["data"].get("message", "") for e in events if e["event"] == "phase"]
+
+    def test_inject_only_setup_reaches_run_setup(self):
+        """edgeconf 변경 없이 inject 만 있어도 주입이 실행된다."""
+        setup = {"inject_command": "umount -l /mnt/sd_cam"}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup,
+                   "teardown": {"recovery_command": "mount -a"}}
+        mgr = MagicMock()
+        mgr.run_setup.return_value = True
+        events = self._run(profile, mgr)
+        mgr.run_setup.assert_called_once_with(setup)
+        setup_phases = [e for e in events
+                        if e["event"] == "phase" and e["data"].get("phase") == "setup"]
+        self.assertTrue(setup_phases, "inject-only 인데 setup phase 메시지가 없다")
+        # 주입됐으면(True) teardown 이 setup_config 를 받아 복원 판정을 한다
+        mgr.run_teardown.assert_called_once()
+
+    def test_matching_config_still_delegates_to_run_setup(self):
+        """edge 가 일치해도 skip 판정은 run_setup 이 한다 — ord/inject 동반 케이스가
+        stream 사전 체크에 걸러지면 안 된다. 기존 메시지(skip reboot)는 유지된다."""
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30}}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup}
+        mgr = MagicMock()
+        mgr.check_current.return_value = True
+        mgr.run_setup.return_value = False
+        events = self._run(profile, mgr)
+        mgr.run_setup.assert_called_once_with(setup)
+        msgs = self._phase_messages(events)
+        self.assertIn("Config matches, skip reboot", msgs)
+        self.assertNotIn("Setup complete", msgs)
+
+    def test_differing_config_announces_apply_before_setup(self):
+        """변경 적용 경로의 기존 UX 보존 — 리부트 전 'Applying...' 예고가 먼저 온다."""
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30}}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup}
+        mgr = MagicMock()
+        mgr.check_current.return_value = False
+        mgr.run_setup.return_value = True
+        events = self._run(profile, mgr)
+        mgr.run_setup.assert_called_once_with(setup)
+        msgs = self._phase_messages(events)
+        self.assertIn("Applying 1 changes + reboot...", msgs)
+        self.assertIn("Setup complete", msgs)
+        self.assertLess(msgs.index("Applying 1 changes + reboot..."),
+                        msgs.index("Setup complete"))
+
+
 if __name__ == "__main__":
     unittest.main()

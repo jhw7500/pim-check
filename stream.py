@@ -75,7 +75,10 @@ class StreamRunner:
         if missing:
             self._emit("warning", {"message": f"Missing tools: {', '.join(missing)}"})
 
-        # Setup
+        # Setup — 실행 결정은 다른 4개 경로(cli/web/parallel/plan)처럼 run_setup 에
+        # 위임한다 (#77). run_setup 이 inject-only/ord-only 모드와 "이미 일치" skip 을
+        # 정식 지원하므로, edgeconf 변경 유무는 phase 메시지 분기에만 쓴다 —
+        # 여기서 케이스를 거르면 inject-only fault 케이스가 주입 없이 PASS 한다.
         setup_config = profile.get("setup")
         setup_mgr = SetupManager(ssh)
         setup_changed = False
@@ -87,13 +90,16 @@ class StreamRunner:
                     self._emit("phase", {"phase": "setup", "message": "Config matches, skip reboot", "ok": True})
                 else:
                     self._emit("phase", {"phase": "setup", "message": f"Applying {len(changes)} changes + reboot..."})
-                    try:
-                        setup_changed = setup_mgr.run_setup(setup_config)
-                        self._emit("phase", {"phase": "setup", "message": "Setup complete", "ok": True})
-                    except TimeoutError as e:
-                        self._emit("error", {"message": f"Setup failed: {e}"})
-                        self._emit("done", {"status": "ERROR"})
-                        return
+            else:
+                self._emit("phase", {"phase": "setup", "message": "No edgeconf changes — applying setup (inject/ord)..."})
+            try:
+                setup_changed = setup_mgr.run_setup(setup_config)
+                if setup_changed:
+                    self._emit("phase", {"phase": "setup", "message": "Setup complete", "ok": True})
+            except TimeoutError as e:
+                self._emit("error", {"message": f"Setup failed: {e}"})
+                self._emit("done", {"status": "ERROR"})
+                return
 
         # 체크 실행
         self._emit("phase", {"phase": "checks", "message": "Running checks..."})
