@@ -143,3 +143,52 @@ class TestHeartbeatCommandBehaviour:
         r = self._run(self._one(), "")
         assert r.returncode == 0
         assert r.stdout.strip() != "OK"
+
+
+class TestClockAndOverflowGuards:
+    """리뷰(Codex P2)가 잡은 두 구멍 — 실측으로 재현하고 못박는다.
+
+    ① **시계 역행**: `D = now - L` 이 음수면 `D < 30` 을 만족해 **정지한 writer 가
+       계속 healthy 로 보인다.** heartbeat 가 1초 주기라 NTP 계단 이동의 노출 창은
+       짧지만, **writer 가 죽은 상태에서 시계가 뒤로 가면 자가 치유가 없다.**
+    ② **셸 정수 오버플로**: 숫자로만 이루어졌지만 셸 정수 범위를 넘는 값은
+       `case` 가드를 통과하고 `[ "$L" -eq 0 ]` 에서 dash 가 `Illegal number` 로
+       죽는다 → exit≠0 + 무출력 → `ssh.run` 이 `None`. 이 저장소가 지켜온
+       "항상 exit 0 + 항상 출력" 규약 위반이다.
+    """
+
+    def _run(self, content: str):
+        import subprocess
+        import tempfile
+        rows = _heartbeat_checks()
+        assert rows, "heartbeat 체크가 없다"
+        cmd = rows[0][2]
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "timestamp"
+            p.write_text(content)
+            return subprocess.run(
+                ["sh", "-c", cmd.replace(STATE_TS, str(p))],
+                capture_output=True, text=True)
+
+    def test_future_timestamp_is_not_healthy(self):
+        """미래 시각 = 시계가 뒤로 갔거나 값이 틀렸다 — 어느 쪽도 '신선' 이 아니다."""
+        import time
+        r = self._run(str(int(time.time()) + 3600))
+        assert r.returncode == 0
+        assert r.stdout.strip() != "OK", (
+            "미래 timestamp 를 통과시켰다 — 정지한 writer 가 healthy 로 보인다")
+
+    def test_overflowing_digits_do_not_break_the_exit_contract(self):
+        """자릿수가 넘치는 숫자에도 exit 0 + 출력이어야 한다 (ssh.run 이 None 을 받지 않도록)."""
+        r = self._run("9" * 25)
+        assert r.returncode == 0, (
+            f"exit {r.returncode} — ssh.run 이 None 을 받는다: {r.stderr.strip()[:80]}")
+        assert r.stdout.strip(), "무출력"
+        assert r.stdout.strip() != "OK"
+
+    def test_normal_range_still_passes(self):
+        """가드를 붙이면서 정상 경로를 깨뜨리면 안 된다."""
+        import time
+        r = self._run(str(int(time.time())))
+        assert r.returncode == 0
+        assert r.stdout.strip() == "OK", r.stdout
