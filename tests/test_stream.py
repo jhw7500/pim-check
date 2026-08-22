@@ -179,6 +179,84 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
         self.assertLess(msgs.index("Applying 1 changes + reboot..."),
                         msgs.index("Setup complete"))
 
+    def test_skip_announcement_considers_ord_state(self):
+        """#99 Codex P2 — edge 일치 + ord 상이면 'skip reboot' 예고가 거짓이 된다.
+
+        run_setup 은 ord 를 적용하며 재부팅하므로, 예고도 run_setup 과 같은 기준
+        (edge+ord 모두 일치)으로 판단해야 한다."""
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30},
+                 "ord_vcm_changes": {".ord.focus": 1}}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup}
+        mgr = MagicMock()
+        mgr.check_current.side_effect = [True, False]   # edge 일치, ord 상이
+        mgr.run_setup.return_value = True
+        events = self._run(profile, mgr)
+        msgs = self._phase_messages(events)
+        self.assertNotIn("Config matches, skip reboot", msgs)
+        self.assertIn("Applying 2 changes + reboot...", msgs)
+
+    def test_skip_announcement_when_edge_and_ord_both_match(self):
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30},
+                 "ord_vcm_changes": {".ord.focus": 1}}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup}
+        mgr = MagicMock()
+        mgr.check_current.side_effect = [True, True]
+        mgr.run_setup.return_value = False
+        events = self._run(profile, mgr)
+        mgr.run_setup.assert_called_once_with(setup)   # 예고와 무관하게 위임은 유지
+        msgs = self._phase_messages(events)
+        self.assertIn("Config matches, skip reboot", msgs)
+
+    def test_ssh_error_during_setup_recovers_and_closes_stream(self):
+        """#99 Codex P1 — Ssh 예외는 TimeoutError 계열이 아니라서 러너 스레드가
+        죽고, fault 가 보드에 남은 채 스트림이 done 없이 매달렸다.
+        복구를 시도하고 done(ERROR) 로 닫아야 한다."""
+        from ssh import SshConnectionError
+        setup = {"inject_command": "umount -l /mnt/sd_cam"}
+        teardown = {"recovery_command": "mount -a"}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup, "teardown": teardown}
+        mgr = MagicMock()
+        mgr.run_setup.side_effect = SshConnectionError("connection lost")
+        events = self._run(profile, mgr)
+        mgr.run_teardown.assert_called_once_with(setup, teardown)
+        done = [e for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1, "done 이벤트가 없다 — 스트림이 매달린다")
+        self.assertEqual(done[0]["data"]["status"], "ERROR")
+
+    def test_setup_timeout_also_recovers_before_closing(self):
+        """기존 TimeoutError 경로도 부분 적용을 남길 수 있다 — 복구 후 닫는다."""
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30}}
+        teardown = {"recovery_command": "mount -a"}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup, "teardown": teardown}
+        mgr = MagicMock()
+        mgr.check_current.return_value = False
+        mgr.run_setup.side_effect = TimeoutError("reboot timeout")
+        events = self._run(profile, mgr)
+        mgr.run_teardown.assert_called_once_with(setup, teardown)
+        done = [e for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["data"]["status"], "ERROR")
+
+    def test_recovery_failure_still_closes_stream(self):
+        """복구까지 실패해도(보드 다운 등) 스트림은 반드시 닫힌다."""
+        from ssh import SshTimeoutError
+        setup = {"inject_command": "true"}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup, "teardown": {"recovery_command": "mount -a"}}
+        mgr = MagicMock()
+        mgr.run_setup.side_effect = SshTimeoutError("board down")
+        mgr.run_teardown.side_effect = SshTimeoutError("still down")
+        events = self._run(profile, mgr)
+        types = [e["event"] for e in events]
+        self.assertIn("warning", types)
+        done = [e for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["data"]["status"], "ERROR")
+
 
 if __name__ == "__main__":
     unittest.main()

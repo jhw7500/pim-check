@@ -18,6 +18,13 @@
 - 가드: 위임 단언 3건(`tests/test_stream.py::TestSetupDelegationToRunSetup`) 추가,
   `tests/test_teardown_recovery.py` 의 stream 경로 테스트를 형제 경로와 같은
   inject-only 프로파일로 되돌림(#77 검증 방법 그대로 — 우회 제거).
+- 자동 리뷰 반영(#99): ① setup 중 Ssh 예외(`SshTimeoutError`/`SshConnectionError`
+  — `TimeoutError` 계열이 아님)가 나면 러너 스레드가 죽어 부분 주입 fault 가
+  보드에 남고 done 없이 스트림이 매달리던 것 — 잡아서 복구를 시도한 뒤
+  done(ERROR) 로 반드시 닫는다(Codex P1, 가드 3건). ② "Config matches, skip
+  reboot" 예고가 edgeconf 만 보고 나가 ord 상이 결합 프로파일(720p_2ch 등)에서
+  예고 직후 재부팅하던 것 — 예고 기준을 run_setup 과 같게 edge+ord 모두로
+  맞춘다(Codex P2, 가드 2건).
 
 ### heartbeat 판정을 YAML 셸 16중복에서 checks/cam_state.py 로 (pim-check#93)
 

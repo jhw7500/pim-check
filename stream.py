@@ -14,8 +14,8 @@ from datetime import datetime
 
 from config import load_profile
 from engine import Engine
-from setup import SetupManager
-from ssh import SshClient
+from setup import ORD_VCM_PATH, SetupManager
+from ssh import SshClient, SshConnectionError, SshTimeoutError
 from history import append_result, save_dashboard
 
 PROFILES_DIR = ""  # web.py에서 설정
@@ -84,20 +84,36 @@ class StreamRunner:
         setup_changed = False
         if setup_config:
             changes = setup_config.get("edgeconf_changes", {})
-            if changes:
+            ord_changes = setup_config.get("ord_vcm_changes", {})
+            if changes or ord_changes:
                 self._emit("phase", {"phase": "setup", "message": "Checking config..."})
-                if setup_mgr.check_current(changes):
+                # skip 예고는 run_setup 과 같은 기준(edge+ord 모두 일치)으로 —
+                # edge 만 보면 ord 가 다른 결합 프로파일에서 "skip" 직후 재부팅한다.
+                edge_match = (not changes) or setup_mgr.check_current(changes)
+                ord_match = (not ord_changes) or setup_mgr.check_current(ord_changes, ORD_VCM_PATH)
+                if edge_match and ord_match:
                     self._emit("phase", {"phase": "setup", "message": "Config matches, skip reboot", "ok": True})
                 else:
-                    self._emit("phase", {"phase": "setup", "message": f"Applying {len(changes)} changes + reboot..."})
+                    total = len(changes) + len(ord_changes)
+                    self._emit("phase", {"phase": "setup", "message": f"Applying {total} changes + reboot..."})
             else:
-                self._emit("phase", {"phase": "setup", "message": "No edgeconf changes — applying setup (inject/ord)..."})
+                self._emit("phase", {"phase": "setup", "message": "No config changes — applying setup (inject)..."})
             try:
                 setup_changed = setup_mgr.run_setup(setup_config)
                 if setup_changed:
                     self._emit("phase", {"phase": "setup", "message": "Setup complete", "ok": True})
-            except TimeoutError as e:
+            except (TimeoutError, SshTimeoutError, SshConnectionError) as e:
+                # Ssh* 예외는 TimeoutError 계열이 아니다 — 안 잡으면 러너 스레드가
+                # 죽어 부분 적용/주입된 fault 가 보드에 남고, done 없이 스트림이
+                # 매달린다. 복구를 시도하고 반드시 닫는다. 스냅샷은 변경 전에
+                # 찍히므로 이 경로의 복원은 케이스 전 상태로 간다.
                 self._emit("error", {"message": f"Setup failed: {e}"})
+                self._emit("phase", {"phase": "teardown", "message": "Recovering after setup failure..."})
+                try:
+                    setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
+                    self._emit("phase", {"phase": "teardown", "message": "Teardown complete", "ok": True})
+                except (TimeoutError, SshTimeoutError, SshConnectionError):
+                    self._emit("warning", {"message": "Teardown failed"})
                 self._emit("done", {"status": "ERROR"})
                 return
 
