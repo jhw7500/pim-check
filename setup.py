@@ -1058,6 +1058,17 @@ class SetupManager:
         20초를 버리고 경고만 찍혔다.
 
         `_config_snapshots` 는 **건드리지 않는다** — teardown 복원의 원본이다.
+
+        `_dmesg_anchor_uptime` 도 남긴다. 이 값은 `_ready_dmesg_fsync` 만 쓰는데
+        `_ready_fsync=False` 로 비운 이상 `camera_init` 단계가 붙지 않아 소비자가
+        없다. 비워도 무해하지만 "readiness 기대값" 이 아니라 **앵커 좌표**라 성격이
+        다르므로 이 메서드의 대상이 아니다.
+
+        부수 효과 하나: `_ready_fsync=False` 라 teardown 재부팅에서는 `session_anchor`
+        단계도 빠져 앵커를 다시 쓰지 않는다. 오늘은 무해하다 — 다음 실행이 setup-skip
+        이면 케이스가 `uptime -s` 로 폴백하는데 지금은 앵커 == 부팅 시각이라 값이 같다.
+        **하드리셋(앵커 = 리셋 시각 ≠ 부팅 시각)이 들어오면 달라지므로** 그때 이
+        단계를 teardown 에도 남길지 재검토해야 한다.
         """
         self._ready_processes_list = []
         self._ready_recording_paths = []
