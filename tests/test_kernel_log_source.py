@@ -230,15 +230,24 @@ class TestTimestampFormatCoupling:
     TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 
     def test_anchor_writer_records_wall_clock_first_line(self):
-        """`_write_session_anchor` 1행이 `uptime -s`(19자 wall-clock)여야 한다."""
-        import setup as setup_mod
+        """`_write_session_anchor` 1행이 `uptime -s`(19자 wall-clock)여야 한다.
 
-        src = pathlib.Path(setup_mod.__file__).read_text()
-        i = src.index("def _write_session_anchor")
-        body = src[i:i + 2500]
-        # docstring 에도 "uptime -s" 가 나오므로 **셸 치환 형태**를 봐야 한다.
-        # (처음엔 docstring 까지 세어 뮤테이션이 통과했다.)
-        assert '$(uptime -s)' in body, (
+        **메서드가 실제로 만드는 명령을 캡처해서** 본다. 소스 텍스트를 grep 하면
+        docstring·주석이 오염원이 된다 — 누가 앵커를 monotonic 으로 바꾸면서
+        "이전에는 `$(uptime -s)` 를 썼다" 를 주석에 적기만 해도 통과한다.
+        (이 테스트를 쓰면서 실제로 그 누출을 겪었고, 문자열을 좁히는 방식으로는
+        한 칸 물러날 뿐이라 **텍스트 검사에서 동작 검사로 범주를 바꿨다.**)
+        런타임 문자열에는 주석이 없고, 리포맷에도 견디며, 소스 오프셋 매직값도 없다.
+        """
+        from unittest.mock import MagicMock
+
+        from setup import SetupManager
+
+        mgr = SetupManager(MagicMock())
+        mgr.ssh.run.return_value = "2026-08-22 02:08:22\n0f1e2d3c"
+        mgr._write_session_anchor()
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert "$(uptime -s)" in cmd, (
             "앵커 1행이 더 이상 wall-clock($(uptime -s))이 아니다 — "
             "substr($0,1,19) 비교를 쓰는 체크 9건과 케이스 38곳이 "
             "에러 없이 조용히 오스코핑된다")
