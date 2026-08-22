@@ -23,6 +23,22 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+# `teardown:` 섹션에서 실제로 읽히는 키. 여기 없는 키는 조용히 무시되므로 경고한다 —
+# recovery_command 를 teardown 에 두면 안 읽히던 버그(pim-check#75)가 정확히 그
+# "엉뚱한 섹션에 뒀는데 아무도 말해주지 않는" 형태였다.
+TEARDOWN_KEYS = frozenset({"recovery_command"})
+
+
+def _warn_unknown_teardown_keys(profile: dict, case: str | None) -> None:
+    teardown = profile.get("teardown")
+    if not isinstance(teardown, dict):
+        return
+    unknown = sorted(set(teardown) - TEARDOWN_KEYS)
+    if unknown:
+        print(f"WARNING: {case or 'base'}: teardown 아래 {unknown} 는 읽히지 않는다 "
+              f"(지원: {sorted(TEARDOWN_KEYS)}) — setup: 섹션으로 옮길 것")
+
+
 def load_profile(profiles_dir: str, case: str | None = None) -> dict:
     """base.yaml을 로드하고, case가 지정되면 cases/{case}.yaml을 딥 머지하여 반환한다.
 
@@ -53,4 +69,5 @@ def load_profile(profiles_dir: str, case: str | None = None) -> dict:
             case_data = yaml.safe_load(f) or {}
         profile = deep_merge(profile, case_data)
 
+    _warn_unknown_teardown_keys(profile, case)
     return profile

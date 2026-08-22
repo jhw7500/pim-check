@@ -135,7 +135,7 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
         finally:
             if setup_config and setup_changed:
                 try:
-                    setup_mgr.run_teardown(setup_config)
+                    setup_mgr.run_teardown(setup_config, profile.get("teardown"))
                 except TimeoutError:
                     pass
     finally:

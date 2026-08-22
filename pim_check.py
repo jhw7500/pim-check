@@ -550,7 +550,7 @@ def run_case(case_name, host, user, password, duration, save_json=False,
         # Teardown: setup이 실제로 변경한 경우에만 복원
         if setup_config and setup_changed:
             try:
-                setup_mgr.run_teardown(setup_config)
+                setup_mgr.run_teardown(setup_config, profile.get("teardown"))
             except TimeoutError as e:
                 print(f"WARNING: Teardown failed - {e}")
 

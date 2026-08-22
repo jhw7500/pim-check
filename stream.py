@@ -155,7 +155,7 @@ class StreamRunner:
         if setup_config and setup_changed:
             self._emit("phase", {"phase": "teardown", "message": "Restoring config..."})
             try:
-                setup_mgr.run_teardown(setup_config)
+                setup_mgr.run_teardown(setup_config, profile.get("teardown"))
                 self._emit("phase", {"phase": "teardown", "message": "Teardown complete", "ok": True})
             except TimeoutError:
                 self._emit("warning", {"message": "Teardown failed"})

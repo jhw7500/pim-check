@@ -605,6 +605,9 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # chk_cam_operate.sh의 stall escalation(→ reboot loop)을 방지.
     last_ssh = None
     last_setup_cfg = None
+    # teardown: 섹션(recovery_command)도 같이 들고 간다 — setup 섹션만 넘기면 fault
+    # 주입 케이스의 복구가 통째로 누락된다 (pim-check#75).
+    last_teardown_cfg = None
     # 마지막 case 의 SetupManager 와 그 짝 ssh — finally teardown 이 **같은 인스턴스**를
     # 재사용하기 위해 추적한다. 새로 만들면 teardown 복원 원본(_config_snapshots)이
     # 빈 채로 시작해 복원이 항상 .bak 폴백으로 떨어진다 (pim-check#67).
@@ -662,6 +665,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 마지막 활성 ssh + setup_cfg 추적 (finally teardown용)
                 last_ssh = ssh
                 last_setup_cfg = runtime.get("setup")
+                last_teardown_cfg = runtime.get("teardown")
                 _mgr_holder: list = []
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
@@ -714,7 +718,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     _teardown_mgr = last_setup_mgr
                 else:
                     _teardown_mgr = setup_factory(last_ssh)
-                _teardown_mgr.run_teardown(last_setup_cfg)
+                _teardown_mgr.run_teardown(last_setup_cfg, last_teardown_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.

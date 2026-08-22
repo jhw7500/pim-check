@@ -125,7 +125,7 @@ def run_on_target(
     finally:
         if setup_config and setup_changed:
             try:
-                setup_mgr.run_teardown(setup_config)
+                setup_mgr.run_teardown(setup_config, profile.get("teardown"))
             except TimeoutError:
                 pass
 

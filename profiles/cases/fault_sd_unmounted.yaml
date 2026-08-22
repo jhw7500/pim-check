@@ -48,9 +48,9 @@ checks:
 
 teardown:
   recovery_command:
-    # NOTE: recovery_command 는 teardown: 아래라 **현재 실행되지 않는다**(#75).
-    # 아래 정리는 #75 수정 후에야 동작한다. 그때까지 앵커는 주입이 매번
-    # 덮어쓰고 재부팅 시 /tmp 가 비워지는 것에 의존한다.
+    # teardown: 섹션이 recovery_command 의 정본 자리다 (#75 에서 실행되도록 고침).
+    # 앵커 정리는 여기서 하되, 주입이 매번 덮어쓰고 재부팅 시 /tmp 가 비워지는
+    # 이중 안전망은 그대로 남는다.
     - "rm -f /tmp/pim_inject_anchor"
     - "mountpoint -q /mnt/sd_cam || mount /dev/mmcblk1p1 /mnt/sd_cam 2>&1"
     - "sleep 2"
