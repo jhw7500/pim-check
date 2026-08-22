@@ -121,3 +121,54 @@ class TestExpectationsAreNotVacuous:
         vacuous = [f"{f}: {n}" for f, n, _, spec in _kernel_log_commands()
                    if spec.get("expected_min") == 0]
         assert not vacuous, "expected_min: 0 (항상 참):\n" + "\n".join(vacuous)
+
+
+class TestBspExclusionDoesNotSwallowRealErrors:
+    """`board_error_detect` 의 BSP 제외 필터가 **진짜 오류를 삼키지 않아야** 한다.
+
+    하드코딩 목록의 진짜 위험은 유지보수성이 아니라 **침식**이다 — 다음 사람이
+    시끄러운 드라이버를 하나씩 덧붙이다 보면 필터가 조용히 넓어져 실제 오류까지
+    가린다. 보드에서 1회 확인한 것(진짜 오류 540건이 제외를 통과)을 여기서 영구
+    가드로 박는다.
+    """
+
+    # 보드 실측 라인 (2026-08-22)
+    REAL_ERRORS = [
+        "2026-08-22 02:08:56.5 kernel[err][   26.503147] [I2C:2][max9296.c:1197] "
+        "ch0 MCP4018(0x2f) write fail: wiper=0x10",
+        "2026-08-22 02:08:56.5 kernel[err][   26.503514] [I2C:2][max9296.c:2679] "
+        "ch0 dual applied fail (ret=-6)",
+        "2026-08-19 08:23:33.090 kernel[err][10414.611286] [I2C:2][max9296.c:1001] "
+        "ch0 Error i2c write reg : [0x40] reg=0x3f1(2 byte), val=0x85(1 byte)",
+    ]
+    BSP_NOISE = [
+        "2026-08-22 02:08:22.1 kernel[warning][    2.185197] imx-micfil: "
+        "probe of sound-micfil failed with error -22",
+        "2026-08-22 02:08:22.1 kernel[err][    0.201338] imx8-pcie-phy 32f00000.pcie-phy: "
+        "failed to get imx pcie phy clock",
+        "2026-08-22 02:08:22.1 kernel[warning][    1.452057] spi-nor: "
+        "probe of spi0.0 failed with error -2",
+        "2026-08-22 02:08:22.1 kernel[err][   11.599224] ieee80211 phy0: "
+        "lrdmwl_pcie: pci_enable_msi failed -22",
+    ]
+
+    @staticmethod
+    def _exclusion_pattern():
+        prof = yaml.safe_load((CASES_DIR / "board_error_detect.yaml").read_text())
+        cmd = next(c["command"] for c in prof["checks"]["custom_commands"]
+                   if KERN_LOG in c.get("command", ""))
+        m = re.search(r"grep -avE '([^']+)'", cmd)
+        assert m, "제외 필터를 찾을 수 없다"
+        return m.group(1)
+
+    def test_real_errors_survive_the_filter(self):
+        excl = re.compile(self._exclusion_pattern())
+        swallowed = [ln for ln in self.REAL_ERRORS if excl.search(ln)]
+        assert not swallowed, (
+            "제외 필터가 진짜 오류를 삼킨다:\n" + "\n".join(swallowed))
+
+    def test_bsp_noise_is_excluded(self):
+        excl = re.compile(self._exclusion_pattern())
+        leaked = [ln for ln in self.BSP_NOISE if not excl.search(ln)]
+        assert not leaked, (
+            "제외돼야 할 BSP 잡음이 남는다:\n" + "\n".join(leaked))

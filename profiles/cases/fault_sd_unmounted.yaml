@@ -9,6 +9,10 @@ tags: [fault, injection, storage]
 setup:
   inject_command:
     - "sync"
+    # 주입 시각 앵커(모노토닉 초). 이 체크는 "주입 뒤 커널이 반응했는가" 를 묻는데,
+    # 세션/부팅 앵커로는 부팅 잡음이 조건을 만족해 주입 없이도 통과한다 — 실제로
+    # 커널 커맨드라인(root=/dev/mmcblk…, t=0.000000)이 mmcblk 에 매칭됐다. (#73)
+    - "cut -d' ' -f1 /proc/uptime > /tmp/pim_inject_anchor"
     - "umount -l /mnt/sd_cam 2>&1 || echo 'already unmounted'"
     - "sleep 3"
     - "echo 'SD unmounted'"
@@ -21,9 +25,10 @@ checks:
       on_fail: "umount did not take effect — inject failed"
 
     # umount 주입 뒤 커널이 반응했는지 — **감지되어야** 하므로 expected_min: 1.
-    # (기존 expected_min: 0 은 어떤 값이든 만족해 아무것도 감지 못해도 통과했다. #73)
+    # 축은 **inject 시각**(모노토닉) — 세션/부팅 앵커면 부팅 잡음이 통과시킨다.
+    # (기존 expected_min: 0 은 아예 항상 참이었다. #73)
     - name: "dmesg/journal records SD I/O 에러 or remount attempt"
-      command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); grep -aiE 'mmcblk|sd_cam|i/o error|remount' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt' | wc -l"
+      command: "A=$(cat /tmp/pim_inject_anchor 2>/dev/null || echo 999999); awk -v a=\"$A\" 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (t>a+0 && tolower($0) ~ /mmcblk|sd_cam|i\\/o error|remount/) n++ } END { print n+0 }' /var/log/cantops/kern.log"
       expected_min: 1
       on_fail: "SD unmount 후 kernel 응답 없음 (감지 안 됨)"
 
@@ -39,6 +44,7 @@ checks:
 
 teardown:
   recovery_command:
+    - "rm -f /tmp/pim_inject_anchor"
     - "mountpoint -q /mnt/sd_cam || mount /dev/mmcblk1p1 /mnt/sd_cam 2>&1"
     - "sleep 2"
     - "mountpoint -q /mnt/sd_cam && echo 'SD remounted OK' || echo 'remount FAILED'"
