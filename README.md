@@ -1,5 +1,7 @@
 # pim-check v2.0.0
 
+<!-- reviewer-canary: automation v1.45.2; intentionally unmerged -->
+
 iMX8MP 타겟 QA 자동화 도구. SSH 기반 외부 관찰자 패턴으로 타겟 상태를 수집, 판정, 리포트합니다.
 
 ## 설치
