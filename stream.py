@@ -112,7 +112,9 @@ class StreamRunner:
                 try:
                     setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
                     self._emit("phase", {"phase": "teardown", "message": "Teardown complete", "ok": True})
-                except (TimeoutError, SshTimeoutError, SshConnectionError):
+                except Exception:
+                    # teardown 은 best-effort — 어떤 예외도 done 전달을 막으면 안 된다
+                    # (막으면 이 블록이 고치는 매달림을 복구 경로에서 재현한다).
                     self._emit("warning", {"message": "Teardown failed"})
                 self._emit("done", {"status": "ERROR"})
                 return
@@ -181,7 +183,9 @@ class StreamRunner:
                 setup_mgr.run_teardown(
                     setup_config if setup_changed else {}, teardown_config)
                 self._emit("phase", {"phase": "teardown", "message": "Teardown complete", "ok": True})
-            except TimeoutError:
+            except Exception:
+                # best-effort — SSH 예외 등이 새면 done 없이 스레드가 죽어
+                # 검사 결과가 스트림에 도달하지 못한다.
                 self._emit("warning", {"message": "Teardown failed"})
 
         self._emit("done", {

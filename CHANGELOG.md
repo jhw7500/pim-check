@@ -24,7 +24,9 @@
   done(ERROR) 로 반드시 닫는다(Codex P1, 가드 3건). ② "Config matches, skip
   reboot" 예고가 edgeconf 만 보고 나가 ord 상이 결합 프로파일(720p_2ch 등)에서
   예고 직후 재부팅하던 것 — 예고 기준을 run_setup 과 같게 edge+ord 모두로
-  맞춘다(Codex P2, 가드 2건).
+  맞춘다(Codex P2, 가드 2건). ③ teardown(복구·정상 말미 모두)이 목록 밖 예외를
+  던지면 done 전달이 막혀 같은 매달림을 재현하던 것 — teardown 은 best-effort 로
+  두고 어떤 예외도 done 을 막지 않게 넓힌다(Claude MEDIUM, 가드 2건).
 
 ### heartbeat 판정을 YAML 셸 16중복에서 checks/cam_state.py 로 (pim-check#93)
 

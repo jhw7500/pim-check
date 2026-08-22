@@ -257,6 +257,40 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
         self.assertEqual(len(done), 1)
         self.assertEqual(done[0]["data"]["status"], "ERROR")
 
+    def test_recovery_unexpected_exception_still_closes_stream(self):
+        """#99 Claude MEDIUM — 복구가 목록 밖 예외(OSError 등)를 던져도 done 은
+        나가야 한다. teardown 은 best-effort 다."""
+        from ssh import SshConnectionError
+        setup = {"inject_command": "true"}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup, "teardown": {"recovery_command": "mount -a"}}
+        mgr = MagicMock()
+        mgr.run_setup.side_effect = SshConnectionError("lost")
+        mgr.run_teardown.side_effect = RuntimeError("unexpected")
+        events = self._run(profile, mgr)
+        types = [e["event"] for e in events]
+        self.assertIn("warning", types)
+        done = [e for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["data"]["status"], "ERROR")
+
+    def test_end_of_run_teardown_ssh_error_still_closes_stream(self):
+        """정상 실행 말미의 teardown 도 같은 계열 — SSH 예외가 done 전달을 막으면
+        검사 결과가 스트림에 도달하지 못한다."""
+        from ssh import SshTimeoutError
+        setup = {"inject_command": "true"}
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": setup, "teardown": {"recovery_command": "mount -a"}}
+        mgr = MagicMock()
+        mgr.run_setup.return_value = True
+        mgr.run_teardown.side_effect = SshTimeoutError("board down at teardown")
+        events = self._run(profile, mgr)
+        types = [e["event"] for e in events]
+        self.assertIn("warning", types)
+        done = [e for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["data"]["status"], "PASS")
+
 
 if __name__ == "__main__":
     unittest.main()
