@@ -1,0 +1,123 @@
+"""tests/test_kernel_log_source.py — 커널 로그 체크의 소스·축·exit 규약 (pim-check#73).
+
+`journalctl -k` 를 읽던 fault 체크 11건은 **구조적으로 실패할 수 없었다**:
+소스가 사실상 비어 있고(보드 실측: journalctl -k 31줄 vs kern.log 56,140줄)
+`expected: "0"` 이라, 결함 발생 여부와 무관하게 PASS 했다. 증명적으로 무효인 것이
+3건 있었다(`fault_cam_disconnect`·`fault_i2c_bus_error`·`board_error_detect` — 각각
+kern.log 에는 540/540/3978 건이 매칭되는데 journalctl 에서는 0).
+
+소스를 rsyslog 의 `/var/log/cantops/kern.log` 로 옮기고 스코핑 축을 명시했다.
+이 파일은 그 상태가 되돌아가지 않도록 고정한다.
+"""
+from __future__ import annotations
+
+import pathlib
+import re
+
+import yaml
+
+CASES_DIR = pathlib.Path(__file__).resolve().parent.parent / "profiles" / "cases"
+KERN_LOG = "/var/log/cantops/kern.log"
+
+
+def _kernel_log_commands():
+    """커널 로그를 읽는 custom_commands 를 (파일명, 체크명, 명령, spec) 으로 산출."""
+    out = []
+    for path in sorted(CASES_DIR.glob("*.yaml")):
+        prof = yaml.safe_load(path.read_text()) or {}
+        if not isinstance(prof, dict):
+            continue
+        for chk in ((prof.get("checks") or {}).get("custom_commands") or []):
+            cmd = chk.get("command", "")
+            if KERN_LOG in cmd or "journalctl -k" in cmd:
+                out.append((path.name, chk.get("name"), cmd, chk))
+    return out
+
+
+class TestKernelLogSource:
+    def test_no_case_reads_journalctl_k(self):
+        """`journalctl -k` 로 되돌아가면 안 된다 — 이 보드에서 그 싱크는 사실상 비어 있다.
+
+        journald 는 max9296 커널 로그를 전 부팅 통틀어 0건 담았다(보드 실측).
+        `expected: "0"` 과 결합하면 결함이 나도 통과하는 거짓 PASS 가 된다.
+        """
+        offenders = [f"{f}: {n}" for f, n, cmd, _ in _kernel_log_commands()
+                     if "journalctl -k" in cmd]
+        assert not offenders, "journalctl -k 로 되돌아간 체크:\n" + "\n".join(offenders)
+
+    def test_all_kernel_log_checks_use_kern_log(self):
+        cmds = _kernel_log_commands()
+        # 코퍼스가 비면 테스트가 조용히 무의미해진다 — 2026-08 기준 11건.
+        assert len(cmds) >= 10, f"커널 로그 체크가 너무 적다 ({len(cmds)})"
+        for fname, name, cmd, _ in cmds:
+            assert KERN_LOG in cmd, f"{fname}: {name}"
+
+    def test_reads_binary_safe(self):
+        """kern.log 는 바이너리로 판정될 수 있다 — `grep -a` 없으면 'Binary file matches' 로
+        줄이 아니라 한 문장이 나와 카운트가 망가진다(보드 실측)."""
+        for fname, name, cmd, _ in _kernel_log_commands():
+            if "grep" not in cmd:
+                continue  # awk 단독 형태(monotonic)는 해당 없음
+            # 플래그에 대문자가 섞인다(-aiE, -avE) — 문자 클래스에 포함해야 한다.
+            assert re.search(r"grep -[a-zA-Z]*a[a-zA-Z]* ", cmd), f"{fname}: {name} — grep -a 없음"
+
+
+class TestScopingAxis:
+    """스코핑 축 — kern.log 는 재부팅을 넘어 살아남으므로 필터가 유일한 스코핑이다."""
+
+    def test_every_check_is_scoped(self):
+        """전체 파일을 훑는 체크가 없어야 한다 — 4월치까지 보존되므로 과거 부팅이 섞인다."""
+        unscoped = []
+        for fname, name, cmd, _ in _kernel_log_commands():
+            has_anchor = "pim_check_anchor" in cmd and "substr($0,1,19) > bt" in cmd
+            has_monotonic = "if (t<prev) n=0" in cmd
+            if not (has_anchor or has_monotonic):
+                unscoped.append(f"{fname}: {name}")
+        assert not unscoped, "스코핑 없이 kern.log 전체를 훑는 체크:\n" + "\n".join(unscoped)
+
+    def test_rtc_check_uses_monotonic_not_wall_clock(self):
+        """`fault_rtc_fail` 만은 시계를 쓰면 안 된다.
+
+        이 체크의 **가설이 "RTC 통신 실패"** 다. RTC 가 고장 난 맥락에서는 시스템 시계를
+        신뢰할 수 없고(부팅 시 RTC 에서 시각을 읽으므로), wall-clock 필터가 엉뚱한 구간을
+        가리킨다 — 자신이 검출하려는 결함에 의해 자신의 필터가 망가지는 구조다.
+        monotonic 은 시계와 무관하고 재부팅마다 0 으로 리셋돼 부팅 스코핑도 된다.
+        """
+        prof = yaml.safe_load((CASES_DIR / "fault_rtc_fail.yaml").read_text())
+        cmds = [c["command"] for c in prof["checks"]["custom_commands"]
+                if KERN_LOG in c.get("command", "")]
+        assert len(cmds) == 1
+        cmd = cmds[0]
+        assert "if (t<prev) n=0" in cmd, "monotonic 부팅경계 검출이 없다"
+        assert "uptime -s" not in cmd, "wall-clock 을 쓰고 있다"
+        assert "pim_check_anchor" not in cmd, "wall-clock 앵커를 쓰고 있다"
+
+
+class TestExitConvention:
+    """커널 로그 명령은 **항상 exit 0 이고 항상 출력이 있어야 한다**.
+
+    `ssh.run` 은 exit≠0 에 `None` 을 반환하므로, 출력이 없으면 체크가 조용히
+    깨진다. 충족 형태는 `… | wc -l`(파이프라인 종료코드 0) 또는
+    `awk … END{print}`(무조건 출력) 다.
+    """
+
+    def test_every_command_always_exits_zero_with_output(self):
+        bad = []
+        for fname, name, cmd, _ in _kernel_log_commands():
+            ends_wc = cmd.rstrip().endswith("| wc -l")
+            has_awk_end = "END { print n+0 }" in cmd
+            if not (ends_wc or has_awk_end):
+                bad.append(f"{fname}: {name}")
+        assert not bad, "exit 규약을 충족하지 않는 명령:\n" + "\n".join(bad)
+
+
+class TestExpectationsAreNotVacuous:
+    def test_no_vacuous_expected_min_zero(self):
+        """`expected_min: 0` 은 어떤 값이든 만족해 단언이 아니다.
+
+        `fault_sd_unmounted` 가 그랬다 — `on_fail` 은 "감지 안 됨" 인데 임계가 0 이라
+        아무것도 감지 못해도 통과했다(#73).
+        """
+        vacuous = [f"{f}: {n}" for f, n, _, spec in _kernel_log_commands()
+                   if spec.get("expected_min") == 0]
+        assert not vacuous, "expected_min: 0 (항상 참):\n" + "\n".join(vacuous)

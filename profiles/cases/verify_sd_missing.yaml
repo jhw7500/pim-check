@@ -52,7 +52,7 @@ checks:
       on_fail: "SD 없는 상태에서 ORD 크래시"
 
     - name: "시스템 로그에 panic 없음"
-      command: "journalctl -k --since '5 min ago' --no-pager 2>/dev/null | grep -ic 'panic\\|oops' || true"
+      command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); grep -aiE 'panic|oops' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt' | wc -l"
       expected: "0"
       on_fail: "SD 미삽입 상태에서 커널 패닉 발생"
 

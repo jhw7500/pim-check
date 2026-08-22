@@ -20,9 +20,11 @@ checks:
       expected: "UNMOUNTED"
       on_fail: "umount did not take effect — inject failed"
 
+    # umount 주입 뒤 커널이 반응했는지 — **감지되어야** 하므로 expected_min: 1.
+    # (기존 expected_min: 0 은 어떤 값이든 만족해 아무것도 감지 못해도 통과했다. #73)
     - name: "dmesg/journal records SD I/O 에러 or remount attempt"
-      command: "journalctl -k --since '2 min ago' 2>/dev/null | grep -iE 'mmcblk|sd_cam|i/o error|remount' | wc -l"
-      expected_min: 0
+      command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); grep -aiE 'mmcblk|sd_cam|i/o error|remount' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt' | wc -l"
+      expected_min: 1
       on_fail: "SD unmount 후 kernel 응답 없음 (감지 안 됨)"
 
     - name: "SD auto-remount within 60s OR /tmp/cam_state 에 보고"

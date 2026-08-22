@@ -35,7 +35,7 @@ checks:
       on_fail: "CAM SD 카드 미마운트 또는 Read-Only"
 
     - name: "dmesg 하드웨어 에러"
-      command: "journalctl -k --since '10 min ago' --no-pager 2>/dev/null | grep -ic 'error\\|fail\\|fault' || true"
+      command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); grep -aiE 'error|fail|fault' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt' | grep -avE 'samsung-hdmi-phy|imx8-pcie-phy|i\\.MX clk|imx-sdma|spi-nor|fsl-asoc-card|fsl-easrc|audio-xcvr|fsl-aud2htx|imx-xcvr|imx-micfil|imx-cdnhdmi|wm8960|imx_sec_dsim_drv|lrdmwl_pcie' | wc -l"
       expected: "0"
       on_fail: "최근 10분 내 커널 하드웨어 에러 로그 발견"
 
