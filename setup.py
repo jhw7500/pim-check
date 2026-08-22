@@ -655,20 +655,31 @@ class SetupManager:
         # `kernel[notice][   25.557314]` 안에 갖고 있다. 숫자.숫자 형태만 매치하므로
         # `[I2C:1]`·`[max9296.c:4612]` 같은 다른 대괄호에는 걸리지 않는다.
         #
-        # `if (ts < prev) n=0` 가 **부팅 경계**다. dmesg 는 부팅마다 비워져 앵커 0 이
-        # 곧 "이번 부팅"이었지만, kern.log 는 재부팅을 넘어 산다(4월치까지 보존).
-        # 그대로 옮기면 과거 부팅 마커까지 세어 게이트가 조기 개방된다 — monotonic 은
-        # 재부팅마다 0 으로 리셋되므로 감소 지점이 경계가 된다.
+        # `ts < prev` 가 **부팅 경계**다. dmesg 는 부팅마다 비워져 앵커 0 이 곧
+        # "이번 부팅"이었지만, kern.log 는 재부팅을 넘어 산다(4월치까지 보존).
+        # 경계 없이 옮기면 과거 부팅 마커까지 세어 게이트가 조기 개방된다.
+        #
+        # **경계는 마커 줄이 아니라 타임스탬프가 있는 모든 줄에서 판정한다.** 마커로
+        # 선필터를 걸면 경계가 "현재 부팅이 마커를 최소 1개 낸 뒤"에야 발동하는데,
+        # 이 게이트의 목적이 바로 그 첫 마커를 기다리는 것이라 **정작 필요한 구간에서
+        # 무력**해진다(이전 부팅 마커로 조기 개방). 부팅 직후에는 다른 커널 로그가
+        # 얼마든지 있으므로 경계는 첫 폴링 전에 이미 잡힌다.
+        #
+        # `t` 는 타임스탬프와 **무관한** 마커 총건수다 — 그래야 소스 포맷이 바뀌어
+        # 타임스탬프를 못 읽는 상황(`p==0 && t>0`)을 폴백 경고가 감지할 수 있다.
         awk_prog = (
-            "/" + FSYNC_MARKER_RE + "/ {t++; "
+            "{m = ($0 ~ /" + FSYNC_MARKER_RE + "/); "
             "if (match($0, /\\[ *[0-9]+\\.[0-9]+\\]/)) "
-            "{p++; ts=substr($0, RSTART+1, RLENGTH-2)+0; "
-            "if (ts < prev) n=0; prev=ts; if (ts > a) n++}} "
+            "{ts=substr($0, RSTART+1, RLENGTH-2)+0; "
+            "if (ts < prev) {t=0; p=0; n=0} prev=ts; "
+            "if (m) {t++; p++; if (ts > a) n++}} "
+            "else if (m) t++} "
             'END {printf "t=%d p=%d n=%d\\n", t, p, n}'
         )
-        # grep 이 0건이면 exit 1 이지만 파이프 중간이라 무해하다 — 최종 종료코드는
-        # awk 것이고 END 는 입력이 비어도 도달한다. `-a` 는 필수(바이너리 판정 회피).
-        return (f"grep -a 'max9296_fsync' {KERN_LOG_PATH} 2>/dev/null | "
+        # `cat | awk` — awk 가 파일을 직접 열면 열기 실패 시 fatal 로 죽어 END 에
+        # 도달하지 못한다(exit 2 + 무출력 → `ssh.run` 이 None). 파이프면 입력이
+        # 비어도 END 가 돌아 t=0 p=0 n=0 을 낸다.
+        return (f"cat {KERN_LOG_PATH} 2>/dev/null | "
                 f"awk -v a={self._dmesg_anchor_uptime} '{awk_prog}'")
 
     def _ready_dmesg_fsync(self, _clock=None) -> bool:

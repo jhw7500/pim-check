@@ -62,6 +62,49 @@ class TestFsyncProbeRunsAgainstKernLog(unittest.TestCase):
         got = self._run(lines, anchor=0.0)
         self.assertEqual(got["n"], 2, "이전 부팅 마커까지 셌다 — 게이트가 조기 개방된다")
 
+    def test_previous_boot_only_does_not_open_the_gate(self):
+        """이 게이트의 목적이 "현재 부팅이 첫 마커를 낼 때까지 기다리는 것"이므로,
+        **현재 부팅이 아직 마커를 내지 않은 구간**이 가장 중요하다.
+
+        마커로 **선필터**를 걸면 awk 가 fsync 줄만 보게 되어, 부팅 경계(monotonic
+        감소)가 **현재 부팅이 마커를 최소 1개 낸 뒤에야** 발동한다. 즉 정작 필요한
+        구간에서 경계가 무력하고, 이전 부팅 마커로 게이트가 열린다.
+        경계는 **모든 타임스탬프 줄**에서 판정해야 한다.
+        """
+        lines = [
+            _line(100.0, "2026-08-21 09:00:00"),                      # 이전 부팅 마커
+            _line(110.0, "2026-08-21 09:00:10"),
+            _line(120.0, "2026-08-21 09:00:20"),
+            _line(2.0, "2026-08-22 05:00:00", marker=False),          # 재부팅 (마커 아님)
+            _line(5.0, "2026-08-22 05:00:03", marker=False),
+        ]
+        got = self._run(lines, anchor=0.0)
+        self.assertEqual(
+            got, {"t": 0, "p": 0, "n": 0},
+            "현재 부팅이 마커를 내지 않았는데 이전 부팅 것으로 게이트가 열린다")
+
+    def test_boundary_resets_the_diagnostic_counters_too(self):
+        """`t`·`p` 도 경계에서 리셋돼야 한다 — 폴백(`p==0 → t`)과 폴백 경고가 그 값을 쓴다."""
+        lines = [
+            _line(100.0, "2026-08-21 09:00:00"),
+            _line(110.0, "2026-08-21 09:00:10"),
+            _line(3.0, "2026-08-22 05:00:00", marker=False),          # 재부팅
+            _line(25.5, "2026-08-22 05:00:22"),                       # 현재 부팅 마커 1건
+        ]
+        got = self._run(lines, anchor=0.0)
+        self.assertEqual(got, {"t": 1, "p": 1, "n": 1})
+
+    def test_marker_without_timestamp_is_still_counted_in_t(self):
+        """`t` 는 타임스탬프와 무관한 마커 총건수여야 폴백 경고(`p==0 && t>0`)가 살아 있다."""
+        mgr = SetupManager(MagicMock())
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "kern.log"
+            log.write_text("max9296_fsync side fps : 30 (타임스탬프 없는 포맷)\n")
+            cmd = mgr._dmesg_fsync_probe_command().replace(KERN_LOG_PATH, str(log))
+            out = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True)
+        self.assertIn("t=1", out.stdout)
+        self.assertIn("p=0", out.stdout)
+
     def test_anchor_still_gates_within_the_current_boot(self):
         """하드리셋(SoC 재부팅 없음)에서는 같은 부팅 안에서 앵커가 유일한 경계다."""
         got = self._run([_line(10.0), _line(20.0), _line(30.0)], anchor=25.0)
