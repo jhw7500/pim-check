@@ -152,9 +152,6 @@ checks:
     expected: 'OK'
     on_fail: 'ch0 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: dmesg max9296_fsync fps (expected 30)
-    command: |-
-      F=$(dmesg 2>/dev/null | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\n' ',' | sed 's/,$//')
-      [ -z "$F" ] && echo FAIL:NO_DMESG && exit 0
-      [ "$F" = "30" ] && echo OK || echo FAIL:got=$F
+    command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); [ -r /var/log/cantops/kern.log ] || { echo FAIL:NO_SOURCE; exit 0; }; L=$(grep -a 'max9296_fsync' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt'); F=$(printf '%s\\n' \"$L\" | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'); [ -z \"$F\" ] && { echo FAIL:NO_MARKER; exit 0; }; [ \"$F\" = \"30\" ] && echo OK || echo FAIL:got=$F"
     expected: 'OK'
     on_fail: 'dmesg max9296_fsync fps 30와 다름'

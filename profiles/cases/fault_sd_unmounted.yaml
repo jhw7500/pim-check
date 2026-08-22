@@ -42,7 +42,12 @@ checks:
       on_fail: "예상치 못한 응답"
 
     - name: "no kernel panic"
-      command: "dmesg --level=emerg,alert,crit 2>/dev/null | wc -l"
+      # dmesg --level 을 kern.log 로 옮긴 형태 (#69). rsyslog 는 severity 를 줄 안에
+      # `kernel[emerg]` 처럼 적으므로 emerg/alert/crit(0/1/2)를 직접 고른다 — 셋 다
+      # kern.notice(0–5) 안이라 파일에 반드시 들어온다.
+      # 축은 이 파일의 다른 체크와 같은 **inject 앵커**(monotonic) — "SD 를 내린 뒤
+      # 커널 긴급 로그가 났는가"가 질문이므로 주입 시각이 경계다.
+      command: "[ -r /tmp/pim_inject_anchor ] || { echo 0; exit 0; }; A=$(cat /tmp/pim_inject_anchor); cat /var/log/cantops/kern.log 2>/dev/null | awk -v a=\"$A\" 'match($0, /\\[ *[0-9]+\\.[0-9]+\\]/) { t=substr($0,RSTART+1,RLENGTH-2)+0; if (t<prev) n=0; prev=t; if (t>a+0 && $0 ~ /kernel\\[(emerg|alert|crit)\\]/) n++ } END { print n+0 }'"
       expected: "0"
       on_fail: "SD unmount triggered kernel emergency"
 

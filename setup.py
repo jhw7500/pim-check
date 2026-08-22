@@ -45,6 +45,11 @@ RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 # 때마다 같은 파손이 재발하지 않도록. ' fps :' 요구가 무관 라인(스레드명 등) 매칭을
 # 막는다.
 FSYNC_MARKER_RE = "max9296_fsync( [a-z-]+)? fps :"
+# 커널 로그 정본 — rsyslog 가 kern.notice(severity 0–5)를 여기로 보낸다
+# (`/etc/rsyslog.conf:60`). max9296 의 fps 출력 3곳이 전부 printk(KERN_NOTICE) 라
+# 포함이 **설계상 보장**이다. 링버퍼(dmesg)는 CLEAR·wrap 두 기제로 비므로 쓰지 않는다
+# (pim-check#69/#73).
+KERN_LOG_PATH = "/var/log/cantops/kern.log"
 
 # 세션 앵커 — "이번 테스트 세션이 시작된 시각"의 단일 출처.
 #
@@ -323,6 +328,8 @@ class SetupManager:
         self._ready_fsync: bool = False
         # fsync 로그 최초 관측 시각(monotonic) — FSYNC_SETTLE_SEC 경과 판정용.
         self._fsync_seen_at: float | None = None
+        # 앵커 폴백 경고는 인스턴스당 1회 (readiness 는 폴링이라 매 회 찍으면 로그를 덮는다)
+        self._fsync_fallback_warned: bool = False
         # dmesg 델타 판정 앵커(보드 모노토닉 초). 재부팅 경로는 링버퍼가 비워지므로
         # 0 이면 충분하다. 하드리셋 도입 시 리셋 시점의 uptime 을 넣으면 직전 부팅의
         # fsync 라인이 게이트를 조기 개방하는 것을 막는다.
@@ -635,23 +642,50 @@ class SetupManager:
         awk 한 번에 세므로 왕복이 1회이고, 출력이 항상 존재해 ssh.run 의 None 규약에
         의존하지 않는다(grep -c 는 0건일 때 exit 1 이라 None 이 온다).
 
-        `n` 은 dmesg 의 모노토닉 타임스탬프(`[   24.915150]`)가 앵커보다 큰 라인 수다.
-        재부팅 경로에서는 링버퍼가 비워지므로 앵커 0 에서 n == p 이고 기존 동작과 같다.
-        하드리셋(SoC 재부팅 없음)은 링버퍼를 비우지 않아 **직전 부팅의 fsync 라인이
-        남는데**, 그 경우 앵커를 리셋 시각으로 올리면 n 이 0 이 되어 게이트가 조기
-        개방되지 않는다.
+        `n` 은 kern.log 의 모노토닉 타임스탬프(`kernel[notice][   25.557314]`)가
+        앵커보다 큰 라인 수다. **소스가 파일이라 재부팅을 넘어 산다** — dmesg 시절
+        "재부팅하면 링버퍼가 비워진다" 는 전제로 앵커 0 이 곧 "이번 부팅" 이었지만,
+        그 전제는 이제 성립하지 않는다. n 을 이번 부팅으로 한정하는 것은 빈 버퍼가
+        아니라 아래 **부팅 경계 리셋**(monotonic 감소 지점)이다.
+
+        두 기제가 상보적이다:
+          - 부팅 경계  → **이전 부팅** 배제 (재부팅 경로)
+          - 앵커(`a`)  → **같은 부팅 안의 앵커 이전** 배제 (하드리셋 — SoC 재부팅이
+            없어 monotonic 이 리셋되지 않으므로 경계가 발동하지 않는다)
         """
         # awk 프로그램은 중괄호를 리터럴로 쓰므로 .format()/f-string 의 치환 대상이
         # 되면 안 된다. 특히 marker 는 정규식이라 나중에 수량자(`{1,3}`)가 들어오면
         # .format() 이 KeyError 나 잘못된 치환으로 조용히 깨진다 — 연결로 끼운다.
+        # `^` 는 붙이지 않는다 — kern.log 는 monotonic 을 줄머리가 아니라
+        # `kernel[notice][   25.557314]` 안에 갖고 있다. 숫자.숫자 형태만 매치하므로
+        # `[I2C:1]`·`[max9296.c:4612]` 같은 다른 대괄호에는 걸리지 않는다.
+        #
+        # `ts < prev` 가 **부팅 경계**다. dmesg 는 부팅마다 비워져 앵커 0 이 곧
+        # "이번 부팅"이었지만, kern.log 는 재부팅을 넘어 산다(4월치까지 보존).
+        # 경계 없이 옮기면 과거 부팅 마커까지 세어 게이트가 조기 개방된다.
+        #
+        # **경계는 마커 줄이 아니라 타임스탬프가 있는 모든 줄에서 판정한다.** 마커로
+        # 선필터를 걸면 경계가 "현재 부팅이 마커를 최소 1개 낸 뒤"에야 발동하는데,
+        # 이 게이트의 목적이 바로 그 첫 마커를 기다리는 것이라 **정작 필요한 구간에서
+        # 무력**해진다(이전 부팅 마커로 조기 개방). 부팅 직후에는 다른 커널 로그가
+        # 얼마든지 있으므로 경계는 첫 폴링 전에 이미 잡힌다.
+        #
+        # `t` 는 타임스탬프와 **무관한** 마커 총건수다 — 그래야 소스 포맷이 바뀌어
+        # 타임스탬프를 못 읽는 상황(`p==0 && t>0`)을 폴백 경고가 감지할 수 있다.
         awk_prog = (
-            "/" + FSYNC_MARKER_RE + "/ {t++; "
-            "if (match($0, /^\\[ *[0-9]+\\.[0-9]+\\]/)) "
-            "{p++; ts=substr($0, RSTART+1, RLENGTH-2)+0; if (ts > a) n++}} "
+            "{m = ($0 ~ /" + FSYNC_MARKER_RE + "/); "
+            "if (match($0, /\\[ *[0-9]+\\.[0-9]+\\]/)) "
+            "{ts=substr($0, RSTART+1, RLENGTH-2)+0; "
+            "if (ts < prev) {t=0; p=0; n=0} prev=ts; "
+            "if (m) {t++; p++; if (ts > a) n++}} "
+            "else if (m) t++} "
             'END {printf "t=%d p=%d n=%d\\n", t, p, n}'
         )
-        return (f"dmesg 2>/dev/null | awk -v a={self._dmesg_anchor_uptime} "
-                f"'{awk_prog}'")
+        # `cat | awk` — awk 가 파일을 직접 열면 열기 실패 시 fatal 로 죽어 END 에
+        # 도달하지 못한다(exit 2 + 무출력 → `ssh.run` 이 None). 파이프면 입력이
+        # 비어도 END 가 돌아 t=0 p=0 n=0 을 낸다.
+        return (f"cat {KERN_LOG_PATH} 2>/dev/null | "
+                f"awk -v a={self._dmesg_anchor_uptime} '{awk_prog}'")
 
     def _ready_dmesg_fsync(self, _clock=None) -> bool:
         """카메라 init readiness — 앵커 이후의 max9296_fsync fps 로그(구형/2.5+ 포맷
@@ -683,6 +717,16 @@ class SetupManager:
                     counts[key] = 0
 
         # 타임스탬프를 하나도 못 읽었으면 앵커 델타가 불가능 — 총건수로 폴백.
+        # 폴백은 #66 의 앵커 델타를 통째로 무효화하므로(=존재만으로 판정하던 이전
+        # 동작) 조용히 발동하면 안 된다. 소스는 뭔가 주는데(t>0) 파서가 못 읽는
+        # 상태가 그 신호다 — 소스 포맷이 바뀌면 정확히 이 조합이 나온다.
+        # 폴링이라 1회만 알린다 (pim-check#69 (d)).
+        if counts["p"] == 0 and counts["t"] > 0 and not self._fsync_fallback_warned:
+            self._fsync_fallback_warned = True
+            msg = (f"WARNING: fsync 앵커 폴백 — 타임스탬프 파싱 0건 (p=0, t={counts['t']}). "
+                   "앵커 델타 없이 총건수로 판정한다. 소스 포맷을 확인할 것")
+            print(f"  {msg}")
+            self._local0_log(f"readiness FSYNC ANCHOR FALLBACK — p=0 t={counts['t']}")
         effective = counts["n"] if counts["p"] > 0 else counts["t"]
         if effective <= 0:
             self._fsync_seen_at = None
