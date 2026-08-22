@@ -3,8 +3,13 @@ name: Tests
 on:
   push:
     branches: [main]
+  # base 를 제한하지 않는다. `branches: [main]` 이 있으면 **스택 PR**(base 가 다른
+  # 피처 브랜치인 PR)에서 이 워크플로우가 아예 발동하지 않아, 체크 목록에 `Tests`
+  # 가 **나타나지도 않는다** — 실패가 없으니 통과로 읽힌다(pim-check#86).
+  # 봇 리뷰 워크플로우들은 이 필터가 없어 스택 PR 에도 붙으므로, 초록 체크만 보이는
+  # 상태가 만들어진다. 스택 PR 은 중간 브랜치 기준으로 돌게 되는데, 그것이 그 PR 이
+  # 실제로 머지될 상태라 의미상으로도 맞다.
   pull_request:
-    branches: [main]
 
 jobs:
   lint:
