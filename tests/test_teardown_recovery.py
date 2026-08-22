@@ -183,6 +183,110 @@ class TestEveryExecutionPathForwardsTeardown(unittest.TestCase):
     # (test_teardown_section_recovery_reaches_the_board).
 
 
+_PROFILE_TEARDOWN_ONLY = {
+    "target": {},
+    "monitor": {"duration_sec": 0},
+    # setup: 섹션이 아예 없다 — recovery 만 정의한 케이스
+    "teardown": {"recovery_command": "mount /dev/mmcblk1p1 /mnt/sd_cam"},
+}
+
+
+class TestTeardownIsReachableWithoutSetup(unittest.TestCase):
+    """`run_teardown` 이 지원하는 능력에 **도달할 경로가 있어야** 한다 (pim-check#75 리뷰).
+
+    키를 읽는 쪽을 고쳐도 호출을 막는 가드(`if setup_config and setup_changed:`)가
+    그대로면, `setup:` 없이 `teardown.recovery_command` 만 둔 케이스는 `run_teardown`
+    자체가 호출되지 않는다. 그러면 "메서드는 된다" 를 단언하는 테스트가 초록인데
+    시스템은 조용히 복구하지 않는다 — **#75 와 같은 형태**다(능력은 있는데 도달 못 함).
+
+    오늘 코퍼스에 teardown-only 케이스는 0건이라 실피해는 없지만, 다음 사람이 하나
+    쓰는 순간 발현한다.
+
+    ⚠ 함께 지켜야 할 것: `setup_changed` 가 False 인 setup-skip 경로에서는 스냅샷이
+    없으므로, 복원까지 돌리면 `.bak` 폴백이 **바꾸지도 않은 설정을 되돌린다.**
+    복구는 하되 복원은 하지 않아야 한다.
+    """
+
+    def test_cli_path(self):
+        from pim_check import run_case
+        mgr = _mock_setup_mgr()
+        with patch("pim_check.SshClient", return_value=_mock_ssh()), \
+             patch("pim_check.Engine") as MockEngine, \
+             patch("pim_check.SetupManager", return_value=mgr), \
+             patch("pim_check.load_profile", return_value=dict(_PROFILE_TEARDOWN_ONLY)):
+            MockEngine.return_value.run_snapshot.return_value = [
+                {"name": "cpu", "passed": True, "reason": "OK"},
+            ]
+            run_case("teardown_only", "192.168.0.5", "root", "root", 0, quiet=True)
+        self.assertTrue(_teardown_saw_recovery(mgr))
+
+    def test_parallel_path(self):
+        from parallel import run_on_target
+        mgr = _mock_setup_mgr()
+        with patch("parallel.SshClient", return_value=_mock_ssh()), \
+             patch("parallel.Engine") as MockEngine, \
+             patch("parallel.SetupManager", return_value=mgr), \
+             patch("parallel.load_profile", return_value=dict(_PROFILE_TEARDOWN_ONLY)):
+            MockEngine.return_value.run_snapshot.return_value = [
+                {"name": "cpu", "passed": True, "reason": "OK"},
+            ]
+            run_on_target("192.168.0.5", "root", "root", "teardown_only", 0)
+        self.assertTrue(_teardown_saw_recovery(mgr))
+
+    def test_web_path(self):
+        import web
+        mgr = _mock_setup_mgr()
+        with patch("web.SshClient", return_value=_mock_ssh()), \
+             patch("web.Engine") as MockEngine, \
+             patch("web.SetupManager", return_value=mgr), \
+             patch("web.load_profile", return_value=dict(_PROFILE_TEARDOWN_ONLY)):
+            MockEngine.return_value.run_snapshot.return_value = [
+                {"name": "cpu", "passed": True, "reason": "OK"},
+            ]
+            web._run_test("teardown_only", "192.168.0.5", "root", "root", 0)
+        self.assertTrue(_teardown_saw_recovery(mgr))
+
+    def test_stream_path(self):
+        from stream import StreamRunner
+        mgr = _mock_setup_mgr()
+        with patch("stream.SshClient", return_value=_mock_ssh()), \
+             patch("stream.Engine") as MockEngine, \
+             patch("stream.SetupManager", return_value=mgr), \
+             patch("stream.load_profile", return_value=dict(_PROFILE_TEARDOWN_ONLY)):
+            MockEngine.return_value.run_snapshot.return_value = [
+                {"name": "cpu", "passed": True, "reason": "OK"},
+            ]
+            StreamRunner("teardown_only", "192.168.0.5")._run()
+        self.assertTrue(_teardown_saw_recovery(mgr))
+
+    def test_setup_skip_recovers_without_restoring(self):
+        """설정이 이미 일치해 setup 이 아무것도 바꾸지 않았으면 **복원은 하면 안 된다**.
+
+        그 경로는 스냅샷을 찍지 않으므로 복원이 `.bak` 폴백으로 떨어지고, 보드의
+        `.bak` 은 config_guard 가 부팅마다 갱신한다 — 바꾸지도 않은 설정을 되돌리는
+        셈이다.
+        """
+        from pim_check import run_case
+        mgr = _mock_setup_mgr()
+        mgr.run_setup.return_value = False        # setup-skip
+        profile = dict(_PROFILE_TEARDOWN_ONLY,
+                       setup={"edgeconf_changes": {".VHL_CAM.fps": 30}})
+        with patch("pim_check.SshClient", return_value=_mock_ssh()), \
+             patch("pim_check.Engine") as MockEngine, \
+             patch("pim_check.SetupManager", return_value=mgr), \
+             patch("pim_check.load_profile", return_value=profile):
+            MockEngine.return_value.run_snapshot.return_value = [
+                {"name": "cpu", "passed": True, "reason": "OK"},
+            ]
+            run_case("skipped", "192.168.0.5", "root", "root", 0, quiet=True)
+
+        self.assertTrue(_teardown_saw_recovery(mgr), "복구가 실행되지 않았다")
+        passed_setup_cfg = mgr.run_teardown.call_args[0][0]
+        self.assertFalse(
+            passed_setup_cfg.get("edgeconf_changes"),
+            "setup 이 바꾸지 않았는데 복원 대상을 넘겼다 — .bak 폴백이 돈다")
+
+
 class TestUnknownTeardownKeysWarn(unittest.TestCase):
     """`teardown:` 아래 무시되는 키는 로드 시점에 드러나야 한다 (pim-check#75 (c)).
 

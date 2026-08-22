@@ -35,8 +35,11 @@ def _warn_unknown_teardown_keys(profile: dict, case: str | None) -> None:
         return
     unknown = sorted(set(teardown) - TEARDOWN_KEYS)
     if unknown:
+        # "setup: 으로 옮겨라" 라고 단정하지 않는다 — 양쪽 모두에 미지인 키(오타 등)면
+        # 옮겨도 무시된다. 어느 섹션이 그 키를 읽는지는 작성자가 확인해야 한다.
         print(f"WARNING: {case or 'base'}: teardown 아래 {unknown} 는 읽히지 않는다 "
-              f"(지원: {sorted(TEARDOWN_KEYS)}) — setup: 섹션으로 옮길 것")
+              f"(teardown 이 읽는 키: {sorted(TEARDOWN_KEYS)}) — "
+              f"그 키를 실제로 읽는 섹션으로 옮기거나 오타를 확인할 것")
 
 
 def load_profile(profiles_dir: str, case: str | None = None) -> dict:
