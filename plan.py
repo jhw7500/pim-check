@@ -621,6 +621,11 @@ def execute_plan(plan: Plan, profiles_dir: str,
     campaign_snapshots: dict[str, str] = {}
     campaign_edge_changes: dict = {}
     campaign_ord_changes: dict = {}
+    # 아직 해제되지 않은 fault 의 복구 명령. 케이스별 복구가 끝나면 None 이 된다.
+    # SIGINT/SIGTERM 이 `_run_single_case` 도중에 오면 케이스별 복구 블록에 도달하지
+    # 못하므로, finally 가 이 값을 보고 대신 복구한다 — graceful shutdown 핸들러가
+    # 존재하는 이유가 바로 그 정리다 (pim-check#95 리뷰).
+    pending_recovery: str | None = None
 
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
@@ -674,6 +679,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 last_ssh = ssh
                 last_setup_cfg = runtime.get("setup")
                 last_teardown_cfg = runtime.get("teardown")
+                # 주입 **전에** 미해제 표시를 세운다 — 검사 도중 신호가 오면 아래
+                # 케이스별 복구 블록에 도달하지 못하므로 finally 가 넘겨받아야 한다.
+                pending_recovery = ((runtime.get("teardown") or {}).get("recovery_command")
+                                    or (runtime.get("setup") or {}).get("recovery_command"))
                 _mgr_holder: list = []
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
@@ -700,15 +709,14 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 남기므로 재시도 전에도 돈다.
                 # 설정 복원(edge/ord)은 재부팅이 붙으므로 캠페인 끝이 맞다(#68) —
                 # 두 동작은 주기가 다르다. 빈 setup 을 넘겨 복원을 건너뛴다.
-                _recovery = ((runtime.get("teardown") or {}).get("recovery_command")
-                             or _case_setup.get("recovery_command"))
-                if _recovery and setup_factory is not None:
+                if pending_recovery and setup_factory is not None:
                     # `setup:` 이 없는 케이스는 _run_single_case 가 매니저를 만들지
                     # 않는다(setup_cfg 가 없으면 건너뜀). 복구는 setup 유무와 무관하게
                     # 도달해야 하므로(#75) 그 경우 여기서 만든다.
                     _rec_mgr = _mgr_holder[0] if _mgr_holder else setup_factory(ssh)
                     try:
-                        _rec_mgr.run_teardown({}, {"recovery_command": _recovery})
+                        _rec_mgr.run_teardown({}, {"recovery_command": pending_recovery})
+                        pending_recovery = None      # 해제 완료 — finally 는 건너뛴다
                     except Exception as _exc:  # noqa: BLE001
                         print(f"[plan recovery] WARN: {case_name} 복구 실패 — {_exc}")
                 retries_used = attempt
@@ -794,10 +802,16 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 복원 로그만으로는 그 사실이 드러나지 않는다.
                 _teardown_mgr._local0_log(
                     f"teardown CAMPAIGN RESTORE — paths={sorted(campaign_snapshots)}")
-                # 복구는 케이스마다 이미 돌았다(#95) — 여기서 또 넘기면 마지막 케이스만
-                # 두 번 복구된다. 캠페인 teardown 이 맡는 것은 **설정 복원 + 재부팅**뿐이다.
+                # 복구는 케이스마다 이미 돌았다(#95) — 그대로 또 넘기면 마지막 케이스만
+                # 두 번 복구된다. `_campaign_cfg` 는 `dict(last_setup_cfg)` 에서 출발하므로
+                # 누가 `setup:` 아래에 recovery 를 두면 여기 실려 온다(하위 호환 경로) —
+                # 그래서 pop 은 방어적으로 필요하다.
+                # 다만 **중단으로 케이스별 복구에 도달하지 못한 fault** 는 여기서 해제해야
+                # 한다 — graceful shutdown 핸들러가 finally 를 돌리는 이유가 그것이다.
                 _campaign_cfg.pop("recovery_command", None)
-                _teardown_mgr.run_teardown(_campaign_cfg, None)
+                _teardown_mgr.run_teardown(
+                    _campaign_cfg,
+                    {"recovery_command": pending_recovery} if pending_recovery else None)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.

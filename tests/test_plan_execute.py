@@ -833,3 +833,92 @@ class TestPerCaseRecovery(unittest.TestCase):
 
         self.assertFalse([c for c in sent if "reboot" in c.lower()],
                          "케이스별 복구가 재부팅을 유발했다")
+
+
+class TestInterruptedRecoveryFallback(unittest.TestCase):
+    """중단으로 케이스별 복구에 도달하지 못하면 finally 가 대신 복구한다 (pim-check#95 리뷰).
+
+    `pim_check.py::_install_graceful_exit_handlers` 는 SIGINT/SIGTERM 을
+    `KeyboardInterrupt` 로 바꿔 **finally 의 teardown 이 돌게 하는 것이 목적**이다
+    (docstring: "강제 종료 시 보드 conf 잔재로 인한 reboot loop 방지").
+
+    복구를 케이스 단위로 옮기면서 finally 에서 복구를 빼면, `_run_single_case`
+    실행 중에 신호가 오는 경우 **주입된 fault 가 보드에 남는다** — 언마운트된 SD,
+    죽은 gstApp. 정확히 graceful shutdown 이 막으려던 상황이다.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir)
+        self.cases_dir = os.path.join(self.tmpdir, "cases")
+        os.makedirs(self.cases_dir)
+        with open(os.path.join(self.tmpdir, "base.yaml"), "w") as f:
+            f.write("target:\n  host: 192.168.0.5\n  user: root\n  password: root\n"
+                    "monitor:\n  duration_sec: 0\n  interval_sec: 5\n")
+        with open(os.path.join(self.cases_dir, "fault_a.yaml"), "w") as f:
+            f.write('name: fault_a\n'
+                    'setup:\n  inject_command: "inject-a"\n'
+                    'teardown:\n  recovery_command: "recover-a"\n')
+
+    def test_recovery_runs_when_the_case_is_interrupted(self):
+        from setup import SetupManager
+        sent: list[str] = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            ssh.run.side_effect = lambda cmd, *a, **kw: (sent.append(cmd) or "OK")
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = SetupManager(ssh)
+            mgr.reboot_and_wait = MagicMock()
+            return mgr
+
+        def engine_factory(ssh, profile):
+            # 주입은 끝났고 검사 도중 신호가 온 상황
+            raise KeyboardInterrupt("SIGINT received — running teardown")
+
+        plan = Plan(name="t", description="t", version=1,
+                    cases={"regression": ["fault_a"]},
+                    execution=dict(DEFAULT_EXECUTION), gate=dict(DEFAULT_GATE),
+                    reports=[])
+        with self.assertRaises(KeyboardInterrupt):
+            execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                         setup_factory=setup_factory, engine_factory=engine_factory)
+
+        self.assertIn("recover-a", sent,
+                      "중단됐는데 복구가 실행되지 않았다 — fault 가 보드에 남는다")
+
+    def test_no_duplicate_recovery_when_the_case_completed(self):
+        """정상 종료면 케이스별 복구가 이미 돌았으므로 finally 가 또 하면 안 된다."""
+        from setup import SetupManager
+        sent: list[str] = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            ssh.run.side_effect = lambda cmd, *a, **kw: (sent.append(cmd) or "OK")
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = SetupManager(ssh)
+            mgr.reboot_and_wait = MagicMock()
+            return mgr
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "d", "passed": True, "reason": "OK", "data": {}, "duration_ms": 1},
+            ]
+            return engine
+
+        plan = Plan(name="t", description="t", version=1,
+                    cases={"regression": ["fault_a"]},
+                    execution=dict(DEFAULT_EXECUTION), gate=dict(DEFAULT_GATE),
+                    reports=[])
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                     setup_factory=setup_factory, engine_factory=engine_factory)
+
+        self.assertEqual(sent.count("recover-a"), 1,
+                         f"복구가 중복 실행됐다 ({sent.count('recover-a')}회)")
