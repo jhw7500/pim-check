@@ -124,6 +124,30 @@ class TestCampaignWideRestore(unittest.TestCase):
             payloads, ['{"state": "STATE0-EDGE"}'],
             "캠페인 시작 전 상태가 아니라 마지막 케이스 직전 상태로 되돌렸다")
 
+    def test_restore_runs_even_when_the_last_case_has_no_setup(self):
+        """캠페인 복원 **진입 조건**도 캠페인 기준이어야 한다 (보드 실측으로 드러남).
+
+        `smoke` 플랜은 `config_integrity`(setup 섹션 없음)로 끝난다. 진입 조건이
+        `last_setup_cfg or last_teardown_cfg` — 즉 **마지막 케이스** 기준이라, 앞선
+        6개 케이스가 설정을 바꿨는데도 복원이 통째로 건너뛰어졌다.
+
+        보드 로그가 그대로 보여줬다 — 플랜 종료 시각 이후 `PIM_CHECK` 항목이 하나도
+        없고, `edgeconf` 는 캠페인 시작 전 값이 아니라 마지막으로 설정을 바꾼
+        케이스의 값으로 남았다.
+        """
+        self._case("case_cfg", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n"
+                               "  reboot_after: true\n")
+        # 마지막 케이스는 setup 도 teardown 도 없다 (config_integrity 형태)
+        with open(os.path.join(self.cases_dir, "case_readonly.yaml"), "w") as f:
+            f.write("name: case_readonly\n")
+
+        restored = self._run(["case_cfg", "case_readonly"])
+
+        self.assertTrue(
+            restored,
+            "마지막 케이스에 setup 이 없다는 이유로 캠페인 복원이 건너뛰어졌다")
+        self.assertEqual(dict(restored)[EDGECONF_PATH], '{"state": "STATE0-EDGE"}')
+
     def test_campaign_reboot_is_decided_by_the_campaign_not_the_last_case(self):
         """마지막 케이스가 fault 케이스면 `reboot_after` 가 없다 — 그렇다고 복원이
         파일만 되돌리고 재부팅을 건너뛰면 보드는 앞 케이스 설정으로 계속 돈다.

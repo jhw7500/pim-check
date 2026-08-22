@@ -726,9 +726,15 @@ def execute_plan(plan: Plan, profiles_dir: str,
     finally:
         # Plan 종료(정상/예외/KeyboardInterrupt) 시 마지막 case 잔재 cleanup.
         # 보드 fw chk_cam_operate.sh의 stall escalation(reboot loop) 방지.
-        # `teardown:` 만 둔 케이스도 복구가 도달해야 한다 (pim-check#75 리뷰)
+        # 진입 조건도 **캠페인 기준**이다. 마지막 케이스만 보면, 설정을 바꾸지 않는
+        # 케이스(config_integrity 등)로 끝나는 플랜에서 앞선 케이스들이 바꾼 설정이
+        # 통째로 남는다 — `smoke` 가 정확히 그 형태라 보드 실행에서 복원이 아예
+        # 건너뛰어졌다(플랜 종료 후 PIM_CHECK 로그 0건, edgeconf 는 마지막으로
+        # 설정을 바꾼 케이스 값). `teardown:` 만 둔 케이스도 복구가 도달해야 한다
+        # (pim-check#68 보드 검증 · #75 리뷰).
         if (last_ssh is not None and setup_factory is not None
-                and (last_setup_cfg or last_teardown_cfg)):
+                and (campaign_snapshots or campaign_edge_changes
+                     or campaign_ord_changes or last_setup_cfg or last_teardown_cfg)):
             try:
                 # setup 을 돌린 그 매니저를 재사용한다 — 인스턴스 상태(스냅샷)가
                 # 이어져야 teardown 복원이 실효한다. ssh 가 갈렸으면(재연결 등)
