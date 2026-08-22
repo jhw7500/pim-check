@@ -570,8 +570,14 @@ class TestExecutePlanTeardownManager(unittest.TestCase):
         self.assertEqual(calls["bak_restore"], 0,
                          "teardown 이 .bak 폴백으로 떨어졌다 — 이 PR 이 없애려던 경로")
 
-    def test_falls_back_to_factory_when_no_case_manager(self):
-        """케이스가 매니저를 남기지 않은 경우(setup 예외 등)엔 기존 폴백을 유지한다."""
+    def test_setup_exception_still_tears_down_on_the_same_manager(self):
+        """setup 이 예외로 죽어도 teardown 은 **같은 인스턴스**로 시도된다.
+
+        `_run_single_case` 는 `setup_factory` 직후·`run_setup` 이전에 `mgr_holder` 를
+        채운다(의도적). 따라서 run_setup 이 던져도 그 매니저가 holder 에 남아
+        teardown 이 재사용한다 — 그때까지 찍힌 스냅샷이 있으면 복원에 쓸 수 있고,
+        보드 잔재 정리도 건너뛰지 않는다.
+        """
         created = []
 
         def ssh_factory(host, user, password):
@@ -595,3 +601,35 @@ class TestExecutePlanTeardownManager(unittest.TestCase):
                      setup_factory=setup_factory, engine_factory=engine_factory)
         # setup 이 터져도 teardown cleanup 은 시도돼야 한다(보드 잔재 방지).
         self.assertTrue(any(m.run_teardown.called for m in created))
+        # 폴백으로 새로 만들지 않았음을 고정 — factory 는 정확히 한 번만 불린다.
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0].run_teardown.called)
+
+    def test_factory_fallback_when_case_never_created_a_manager(self):
+        """factory 호출 전에 탈출한 경로(SSH 불통 등)에서는 기존 폴백이 유지된다.
+
+        `_run_single_case` 는 `check_connectivity` 실패 시 setup_factory 를 부르지
+        않고 반환하므로 holder 가 비고, finally 는 새 매니저를 만들어 cleanup 한다.
+        """
+        created = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = False   # factory 호출 전 탈출
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            created.append(mgr)
+            return mgr
+
+        def engine_factory(ssh, profile):
+            return MagicMock()
+
+        plan = self._plan({"regression": ["case_a"]}, case_retry=0)
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                     setup_factory=setup_factory, engine_factory=engine_factory)
+        # case 가 매니저를 만들지 않았으므로 finally 가 폴백으로 하나 만든다.
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0].run_teardown.called)
+        self.assertFalse(created[0].run_setup.called)
