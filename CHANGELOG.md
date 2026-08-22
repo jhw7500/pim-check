@@ -2,6 +2,29 @@
 
 ## Unreleased (2026-08-22)
 
+### plan 의 복구를 케이스 단위로 — 앞 fault 를 복구하지 않고 다음을 주입하던 것 (pim-check#95)
+
+- **fix(plan)**: `recovery_command` 를 **케이스(시도)마다** 실행한다. 기존에는 플랜
+  끝의 teardown 한 번뿐이었고 `last_teardown_cfg` 가 매번 덮어써져 **마지막 것만**
+  실행됐다. 앞 케이스의 fault 가 복구되지 않은 채 다음 fault 가 주입된다.
+- `fault_injection` 플랜이 정확히 그 형태다 — `fault_gstapp_crash` →
+  `fault_sd_unmounted` 순이고 **둘 다 `recovery_command` 를 갖는다**. gstApp 이 죽어
+  있는 상태에서 SD 언마운트 반응을 재는 셈이었다. `case_retry: 1` 이라 실패한 첫
+  시도도 복구 없이 재시도됐다.
+- **두 동작의 주기를 갈랐다**: 복구는 fault 해제라 재부팅을 수반하지 않으므로 케이스
+  단위, 설정 복원(edge/ord)은 재부팅이 붙으므로 캠페인 끝(#68). 케이스별 복구는 빈
+  setup 을 넘겨 복원을 건너뛰고, 캠페인 teardown 은 `recovery_command` 를 넘기지
+  않아 마지막 케이스가 두 번 복구되지 않는다.
+- `setup:` 이 없는 케이스는 `_run_single_case` 가 매니저를 만들지 않으므로 복구
+  시점에 만든다 — 복구는 setup 유무와 무관하게 도달해야 한다(#75).
+- **중단 경로 보존**(자동 리뷰 반영): SIGINT/SIGTERM 이 케이스 실행 도중에 오면
+  `KeyboardInterrupt` 가 케이스별 복구 블록 **앞에서** 발생한다. 복구를 케이스로
+  옮기면서 finally 에서 빼면 그 경우 **fault 가 보드에 남는다** — graceful shutdown
+  핸들러가 존재하는 이유가 정확히 그 정리다. 미해제 복구를 `pending_recovery` 로
+  추적해 finally 가 넘겨받는다(정상 종료면 이미 `None` 이라 중복 없음).
+- 가드 4건: 케이스 순서(앞 복구가 다음 주입보다 먼저) · 실패한 시도도 복구 ·
+  마지막 케이스 복구 1회 · 케이스별 복구가 재부팅을 유발하지 않음.
+
 ### cam_state 살아있음 판정을 heartbeat 로 — last_ok 는 이름과 실체가 반대였다 (pim-check#84)
 
 - **fix(cases)**: `ch{N} cam_state last_ok freshness (<30s)` 체크 **36건(16파일)** 을
@@ -38,8 +61,6 @@
   항상 출력 규약 준수.
 - 가드(`tests/test_cam_state_heartbeat.py`): `last_ok` 잔존 0 · 파일당 heartbeat 정확히
   1건 · 명령을 **실제 셸에서** 6가지 입력으로 돌려 판정 확인. 보드에서도 OK 실증.
-
-## Unreleased (2026-08-22)
 
 ### plan 이 캠페인 시작 전 상태로 복원한다 (pim-check#68)
 
