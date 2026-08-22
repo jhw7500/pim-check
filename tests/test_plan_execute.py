@@ -561,6 +561,51 @@ class TestExecutePlanTeardownManager(unittest.TestCase):
             "mount /dev/mmcblk1p1 /mnt/sd_cam", sent,
             "plan 경로가 teardown: 섹션의 recovery_command 를 실행하지 않았다")
 
+    def test_teardown_only_case_recovers_without_a_setup_section(self):
+        """`setup:` 이 없는 케이스도 복구가 도달해야 한다 (pim-check#75 리뷰).
+
+        plan 은 `last_setup_cfg = runtime.get("setup")` 이라 setup 섹션이 없으면
+        **None** 이 담긴다. 가드를 `(last_setup_cfg or last_teardown_cfg)` 로 넓혀
+        놓고 그 None 을 그대로 넘기면 `run_teardown` 이 `.get()` 에서 죽고,
+        `except Exception` 이 삼켜 **가드가 열어준 바로 그 경로가 조용히 죽는다** —
+        #75 가 다른 옷을 입은 형태다. 다른 4경로는 인자를 방어하는데 plan 만 빠졌다.
+        """
+        from setup import SetupManager
+
+        with open(os.path.join(self.cases_dir, "case_td_only.yaml"), "w") as f:
+            f.write('name: case_td_only\n'
+                    'teardown:\n'
+                    '  recovery_command: "mount /dev/mmcblk1p1 /mnt/sd_cam"\n')
+
+        sent: list[str] = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+
+            def run(cmd, *a, **kw):
+                sent.append(cmd)
+                return "OK"
+
+            ssh.run.side_effect = run
+            return ssh
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "dummy", "passed": True, "reason": "OK",
+                 "data": {}, "duration_ms": 1},
+            ]
+            return engine
+
+        plan = self._plan({"regression": ["case_td_only"]})
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                     setup_factory=SetupManager, engine_factory=engine_factory)
+
+        self.assertIn(
+            "mount /dev/mmcblk1p1 /mnt/sd_cam", sent,
+            "setup: 없는 케이스의 복구가 plan 경로에서 실행되지 않았다")
+
     def test_teardown_actually_takes_the_snapshot_path_not_bak_fallback(self):
         """행위 고정 — plan 을 한 바퀴 돌린 뒤 복원이 **스냅샷 경로**를 탔는지 본다.
 

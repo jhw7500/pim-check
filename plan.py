@@ -720,7 +720,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     _teardown_mgr = last_setup_mgr
                 else:
                     _teardown_mgr = setup_factory(last_ssh)
-                _teardown_mgr.run_teardown(last_setup_cfg, last_teardown_cfg)
+                # `setup:` 이 없는 케이스는 last_setup_cfg 가 None 이다 — 가드를
+                # 넓힌 이상 인자도 방어해야 한다(안 그러면 그 경로가 `.get()` 에서
+                # 죽고 아래 except 가 삼켜 조용히 복구가 빠진다).
+                _teardown_mgr.run_teardown(last_setup_cfg or {}, last_teardown_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
