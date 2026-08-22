@@ -693,6 +693,24 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 _case_setup = runtime.get("setup") or {}
                 campaign_edge_changes.update(_case_setup.get("edgeconf_changes") or {})
                 campaign_ord_changes.update(_case_setup.get("ord_vcm_changes") or {})
+                # 복구는 **케이스(시도)마다** 돈다 — fault 해제는 즉시 필요하고 재부팅을
+                # 수반하지 않는다. 캠페인 끝의 teardown 하나로 몰면 `last_teardown_cfg`
+                # 가 매번 덮어써져 **마지막 것만** 실행되고, 앞 케이스의 fault 가 남은
+                # 채 다음 fault 가 주입된다 (pim-check#95). 실패한 시도도 fault 를
+                # 남기므로 재시도 전에도 돈다.
+                # 설정 복원(edge/ord)은 재부팅이 붙으므로 캠페인 끝이 맞다(#68) —
+                # 두 동작은 주기가 다르다. 빈 setup 을 넘겨 복원을 건너뛴다.
+                _recovery = ((runtime.get("teardown") or {}).get("recovery_command")
+                             or _case_setup.get("recovery_command"))
+                if _recovery and setup_factory is not None:
+                    # `setup:` 이 없는 케이스는 _run_single_case 가 매니저를 만들지
+                    # 않는다(setup_cfg 가 없으면 건너뜀). 복구는 setup 유무와 무관하게
+                    # 도달해야 하므로(#75) 그 경우 여기서 만든다.
+                    _rec_mgr = _mgr_holder[0] if _mgr_holder else setup_factory(ssh)
+                    try:
+                        _rec_mgr.run_teardown({}, {"recovery_command": _recovery})
+                    except Exception as _exc:  # noqa: BLE001
+                        print(f"[plan recovery] WARN: {case_name} 복구 실패 — {_exc}")
                 retries_used = attempt
                 if passed:
                     break
@@ -776,7 +794,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 복원 로그만으로는 그 사실이 드러나지 않는다.
                 _teardown_mgr._local0_log(
                     f"teardown CAMPAIGN RESTORE — paths={sorted(campaign_snapshots)}")
-                _teardown_mgr.run_teardown(_campaign_cfg, last_teardown_cfg)
+                # 복구는 케이스마다 이미 돌았다(#95) — 여기서 또 넘기면 마지막 케이스만
+                # 두 번 복구된다. 캠페인 teardown 이 맡는 것은 **설정 복원 + 재부팅**뿐이다.
+                _campaign_cfg.pop("recovery_command", None)
+                _teardown_mgr.run_teardown(_campaign_cfg, None)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
