@@ -749,6 +749,17 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     _campaign_cfg["edgeconf_changes"] = campaign_edge_changes
                 if campaign_ord_changes:
                     _campaign_cfg["ord_vcm_changes"] = campaign_ord_changes
+                # `reboot_after` 도 캠페인 단위 결정이다. 마지막 케이스 것을 그대로
+                # 쓰면, 마지막이 fault 케이스일 때(setup 에 inject_command 만 있고
+                # reboot_after 가 없다) 복원이 **파일만 되돌리고 재부팅을 건너뛴다** —
+                # 보드는 앞 케이스 설정으로 계속 돌아 파일과 구동 상태가 어긋난다.
+                if campaign_edge_changes or campaign_ord_changes:
+                    _campaign_cfg["reboot_after"] = True
+                # 캠페인 기준선이 무엇이었는지 남긴다 — 스냅샷이 한 번이라도 실패하면
+                # 그 파일은 **다음 케이스의(=이미 변경된) 상태**가 기준선이 되는데,
+                # 복원 로그만으로는 그 사실이 드러나지 않는다.
+                _teardown_mgr._local0_log(
+                    f"teardown CAMPAIGN RESTORE — paths={sorted(campaign_snapshots)}")
                 _teardown_mgr.run_teardown(_campaign_cfg, last_teardown_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")

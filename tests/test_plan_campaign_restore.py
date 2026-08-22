@@ -124,6 +124,52 @@ class TestCampaignWideRestore(unittest.TestCase):
             payloads, ['{"state": "STATE0-EDGE"}'],
             "캠페인 시작 전 상태가 아니라 마지막 케이스 직전 상태로 되돌렸다")
 
+    def test_campaign_reboot_is_decided_by_the_campaign_not_the_last_case(self):
+        """마지막 케이스가 fault 케이스면 `reboot_after` 가 없다 — 그렇다고 복원이
+        파일만 되돌리고 재부팅을 건너뛰면 보드는 앞 케이스 설정으로 계속 돈다.
+
+        "복원을 적용하러 재부팅할 것인가" 는 캠페인 단위 결정이다.
+        """
+        self._case("case_cfg", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n"
+                               "  reboot_after: true\n")
+        self._case("case_fault", '  inject_command: "true"\n')   # reboot_after 없음
+
+        created: list = []
+
+        def setup_factory(ssh):
+            mgr = SetupManager(ssh)
+            mgr.check_current = MagicMock(return_value=False)
+            mgr.backup = MagicMock(return_value=True)
+            mgr.reboot_and_wait = MagicMock()
+            created.append(mgr)
+            return mgr
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            ssh.run.side_effect = lambda cmd, *a, **kw: (
+                "eyJhIjogMX0=" if cmd.startswith("base64 -w0") else "OK")
+            return ssh
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "d", "passed": True, "reason": "OK", "data": {}, "duration_ms": 1},
+            ]
+            return engine
+
+        execute_plan(self._plan({"regression": ["case_cfg", "case_fault"]}), self.tmpdir,
+                     ssh_factory=ssh_factory, setup_factory=setup_factory,
+                     engine_factory=engine_factory)
+
+        # 총 재부팅 횟수가 아니라 **teardown 을 돌린 매니저**를 본다 — plan 경로는
+        # setup 재부팅을 따로 하지 않으므로 총계로 세면 전제가 어긋난다(실측으로 확인).
+        teardown_mgr = created[-1]
+        self.assertTrue(
+            teardown_mgr.reboot_and_wait.called,
+            "캠페인이 설정을 바꿨는데 복원이 재부팅 없이 끝났다 — "
+            "마지막 fault 케이스의 reboot_after 부재를 그대로 물려받았다")
+
     def test_restores_a_file_only_an_earlier_case_touched(self):
         """중간 케이스가 ord_vcm 을 바꾸고 마지막이 edgeconf 만 바꿔도 둘 다 되돌아와야 한다."""
         self._case("case_ord", "  ord_vcm_changes:\n    .ord.vcm: 1\n")

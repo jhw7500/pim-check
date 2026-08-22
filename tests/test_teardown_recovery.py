@@ -287,6 +287,32 @@ class TestTeardownIsReachableWithoutSetup(unittest.TestCase):
             "setup 이 바꾸지 않았는데 복원 대상을 넘겼다 — .bak 폴백이 돈다")
 
 
+class TestChangeSetsAreUsedAsFlagsOnly(unittest.TestCase):
+    """`run_teardown` 은 `*_changes` 의 **내용**을 쓰지 않고 truthy 여부만 본다.
+
+    plan 의 캠페인 복원(pim-check#68)이 이 성질에 기대고 있다 — 거기서 넘기는 dict 는
+    케이스 간 키를 **병합한 것**이라 어느 단일 케이스의 change set 도 아니다. 나중에
+    누가 "바뀐 키만 되돌리자" 로 최적화하면 그 병합본으로 조용히 틀린 복원을 한다.
+    암묵 결합을 테스트로 못박는다.
+    """
+
+    def test_restore_is_driven_by_presence_not_by_contents(self):
+        seen = []
+
+        def make(changes):
+            mgr = _mgr()
+            mgr._restore_conf = MagicMock(side_effect=lambda p: seen.append(p))
+            mgr.run_teardown({"edgeconf_changes": changes})
+            return [c[0][0] for c in mgr._restore_conf.call_args_list]
+
+        real = make({".VHL_CAM.fps": 30})
+        merged = make({".VHL_CAM.fps": 30, ".VHL_CAM.bps": [1024], ".other.key": "x"})
+        self.assertEqual(real, merged,
+                         "changes 의 내용에 따라 복원 대상이 달라진다 — "
+                         "캠페인 병합본을 넘기는 plan 경로가 깨진다")
+        self.assertTrue(real, "복원이 아예 일어나지 않았다")
+
+
 class TestUnknownTeardownKeysWarn(unittest.TestCase):
     """`teardown:` 아래 무시되는 키는 로드 시점에 드러나야 한다 (pim-check#75 (c)).
 
