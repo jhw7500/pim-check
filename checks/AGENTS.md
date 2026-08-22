@@ -13,7 +13,7 @@ QA 체크 모듈 디렉토리. `BaseCheck` 추상 클래스를 상속하는 10�
 | `__init__.py` | `ALL_CHECKS` 리스트 정의 + `load_plugins()` 자동 로드. 체크 추가 시 여기에 등록 |
 | `base_check.py` | `BaseCheck` ABC — `collect(ssh, config) -> dict`, `validate(data, config) -> (bool, str)` |
 | `process.py` | `ProcessCheck` — 필수/선택 프로세스 실행 여부 + CPU 사용률 (pgrep + ps) |
-| `cam_state.py` | `CamStateCheck` — `/tmp/cam_state/` 디렉토리의 상태 파일 및 에러 스트릭 체크 |
+| `cam_state.py` | `CamStateCheck` — `/tmp/cam_state/` 상태 파일·에러 스트릭 + BG_Check 감시자 heartbeat(`heartbeat_max_age_sec`, 기본 30s) 체크 |
 | `cam_health.py` | `CamHealthCheck` — gstApp 내장 camera-health v1 producer 스냅샷(`/run/pim-camera/gstApp.json`) 신선도 + FAIL observation |
 | `max9296_abi.py` | `Max9296AbiCheck` — max9296 드라이버 버전(modinfo) + prepare/health_raw sysfs ABI 상태 |
 | `thermal.py` | `ThermalCheck` — CPU/SoC 온도 (`/sys/devices/virtual/thermal/thermal_zone*/temp`) |
