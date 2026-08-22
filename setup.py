@@ -1092,6 +1092,15 @@ class SetupManager:
                 f"teardown RESTORE via board .bak (no snapshot) — {conf_path}")
         self.restore(conf_path)
 
+    def adopt_snapshots(self, snapshots: dict) -> None:
+        """다른 매니저가 찍은 복원 원본을 물려받는다.
+
+        plan 은 케이스마다 teardown 하지 않고 캠페인 끝에서 한 번만 정리하므로,
+        마지막 케이스의 매니저가 들고 있는 스냅샷(= 마지막 케이스 **직전** 상태)이
+        아니라 **캠페인 시작 전** 상태로 되돌려야 한다 (pim-check#68).
+        """
+        self._config_snapshots = dict(snapshots)
+
     def _clear_readiness(self) -> None:
         """readiness 기대값을 비운다 — `_stabilize_stages()` 가 ssh 만 남게 된다.
 

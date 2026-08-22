@@ -613,6 +613,14 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # 빈 채로 시작해 복원이 항상 .bak 폴백으로 떨어진다 (pim-check#67).
     last_setup_mgr = None
     last_mgr_ssh = None
+    # 캠페인 복원 (pim-check#68) — 케이스마다 teardown 하지 않으므로, 마지막 케이스의
+    # 매니저가 든 스냅샷은 "마지막 케이스 직전" 상태다. 파일별 **최초** 스냅샷을
+    # 따로 모아 두고 끝에서 그것으로 되돌린다. 복원 **대상**도 캠페인 기준이어야
+    # 한다 — 중간 케이스가 ord_vcm 을 바꾸고 마지막이 edgeconf 만 바꾸면 ord_vcm 이
+    # 되돌려지지 않는다(ord_vcm_changes 를 쓰는 케이스가 6건 있다).
+    campaign_snapshots: dict[str, str] = {}
+    campaign_edge_changes: dict = {}
+    campaign_ord_changes: dict = {}
 
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
@@ -676,6 +684,15 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 if _mgr_holder:
                     last_setup_mgr = _mgr_holder[0]
                     last_mgr_ssh = ssh
+                    # 파일별 **최초** 스냅샷만 남긴다 — 첫 케이스가 그 파일을
+                    # 건드리지 않았을 수도 있으므로 "첫 케이스"가 아니라
+                    # "그 파일을 처음 건드린 케이스" 기준이다.
+                    for _path, _snap in getattr(
+                            last_setup_mgr, "_config_snapshots", {}).items():
+                        campaign_snapshots.setdefault(_path, _snap)
+                _case_setup = runtime.get("setup") or {}
+                campaign_edge_changes.update(_case_setup.get("edgeconf_changes") or {})
+                campaign_ord_changes.update(_case_setup.get("ord_vcm_changes") or {})
                 retries_used = attempt
                 if passed:
                     break
@@ -709,9 +726,15 @@ def execute_plan(plan: Plan, profiles_dir: str,
     finally:
         # Plan 종료(정상/예외/KeyboardInterrupt) 시 마지막 case 잔재 cleanup.
         # 보드 fw chk_cam_operate.sh의 stall escalation(reboot loop) 방지.
-        # `teardown:` 만 둔 케이스도 복구가 도달해야 한다 (pim-check#75 리뷰)
+        # 진입 조건도 **캠페인 기준**이다. 마지막 케이스만 보면, 설정을 바꾸지 않는
+        # 케이스(config_integrity 등)로 끝나는 플랜에서 앞선 케이스들이 바꾼 설정이
+        # 통째로 남는다 — `smoke` 가 정확히 그 형태라 보드 실행에서 복원이 아예
+        # 건너뛰어졌다(플랜 종료 후 PIM_CHECK 로그 0건, edgeconf 는 마지막으로
+        # 설정을 바꾼 케이스 값). `teardown:` 만 둔 케이스도 복구가 도달해야 한다
+        # (pim-check#68 보드 검증 · #75 리뷰).
         if (last_ssh is not None and setup_factory is not None
-                and (last_setup_cfg or last_teardown_cfg)):
+                and (campaign_snapshots or campaign_edge_changes
+                     or campaign_ord_changes or last_setup_cfg or last_teardown_cfg)):
             try:
                 # setup 을 돌린 그 매니저를 재사용한다 — 인스턴스 상태(스냅샷)가
                 # 이어져야 teardown 복원이 실효한다. ssh 가 갈렸으면(재연결 등)
@@ -720,10 +743,40 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     _teardown_mgr = last_setup_mgr
                 else:
                     _teardown_mgr = setup_factory(last_ssh)
+                # 캠페인 시작 전 상태로 되돌린다 — 매니저가 든 것은 마지막 케이스
+                # 직전 상태다. 대상도 캠페인 동안 건드린 파일 전체로 넓힌다.
+                if campaign_snapshots:
+                    _teardown_mgr.adopt_snapshots(campaign_snapshots)
                 # `setup:` 이 없는 케이스는 last_setup_cfg 가 None 이다 — 가드를
                 # 넓힌 이상 인자도 방어해야 한다(안 그러면 그 경로가 `.get()` 에서
                 # 죽고 아래 except 가 삼켜 조용히 복구가 빠진다).
-                _teardown_mgr.run_teardown(last_setup_cfg or {}, last_teardown_cfg)
+                _campaign_cfg = dict(last_setup_cfg or {})
+                if campaign_snapshots:
+                    if campaign_edge_changes:
+                        _campaign_cfg["edgeconf_changes"] = campaign_edge_changes
+                    if campaign_ord_changes:
+                        _campaign_cfg["ord_vcm_changes"] = campaign_ord_changes
+                    # `reboot_after` 도 캠페인 단위 결정이다. 마지막 케이스 것을 그대로
+                    # 쓰면, 마지막이 fault 케이스일 때(setup 에 inject_command 만 있고
+                    # reboot_after 가 없다) 복원이 **파일만 되돌리고 재부팅을 건너뛴다** —
+                    # 보드는 앞 케이스 설정으로 계속 돌아 파일과 구동 상태가 어긋난다.
+                    if campaign_edge_changes or campaign_ord_changes:
+                        _campaign_cfg["reboot_after"] = True
+                else:
+                    # 되돌릴 원본이 없다 — 전 케이스가 setup-skip 이면 changes 는
+                    # 누적돼도 스냅샷은 안 찍힌다. 그대로 복원을 돌리면 보드 `.bak`
+                    # 폴백으로 떨어져 **바꾸지도 않은 설정을 되돌리고**(그 `.bak` 은
+                    # config_guard 가 부팅마다 갱신하는 자리다) 재부팅까지 낭비한다.
+                    # #75 리뷰에서 4경로에 적용한 것과 같은 논리 — 복원은 되돌릴
+                    # 원본이 있을 때만, 복구(recovery_command)는 정의되면 항상.
+                    _campaign_cfg.pop("edgeconf_changes", None)
+                    _campaign_cfg.pop("ord_vcm_changes", None)
+                # 캠페인 기준선이 무엇이었는지 남긴다 — 스냅샷이 한 번이라도 실패하면
+                # 그 파일은 **다음 케이스의(=이미 변경된) 상태**가 기준선이 되는데,
+                # 복원 로그만으로는 그 사실이 드러나지 않는다.
+                _teardown_mgr._local0_log(
+                    f"teardown CAMPAIGN RESTORE — paths={sorted(campaign_snapshots)}")
+                _teardown_mgr.run_teardown(_campaign_cfg, last_teardown_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
