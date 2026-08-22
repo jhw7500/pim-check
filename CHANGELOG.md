@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased (2026-08-22)
+
+### teardown.recovery_command 가 실행되지 않던 것 — fault 주입이 복구 없이 남았다 (pim-check#75)
+
+- **fix(setup)**: `run_teardown` 이 `setup:` 섹션에서만 `recovery_command` 를 읽었는데,
+  이 키를 쓰는 케이스 **2건이 모두 최상위 `teardown:` 아래**에 두고 있었다
+  (`fault_sd_unmounted`, `fault_gstapp_crash`). 그래서 **주입은 되고 복구는 안 되는**
+  상태가 계속됐다 — `fault_sd_unmounted` 는 `/mnt/sd_cam` 이 언마운트된 채 남는다.
+  로그는 `teardown DONE — inject-only recovery` 로 찍혀 정상처럼 보였다.
+- `run_teardown(setup_config, teardown_config=None)` 로 바꿔 **`teardown:` 을 정본**으로
+  읽고, `setup:` 쪽도 계속 읽어 하위 호환을 지킨다(둘 다 있으면 teardown 만 실행).
+- **실행 경로 5개 전부** 전달하도록 고쳤다 — cli(`pim_check.py`) · `web.py` ·
+  `stream.py` · `parallel.py` · `plan.py`. plan 은 마지막 케이스 설정을 자기
+  지역변수로 들고 종료 cleanup 을 돌기 때문에 `last_teardown_cfg` 추적을 새로 추가했다
+  (#67 에서 plan 만 다른 매니저를 쓰다 수정이 통째로 무효화된 전례와 같은 계열).
+- **feat(config)**: `load_profile` 이 `teardown:` 아래 **읽히지 않는 키**를 만나면 경고한다.
+  이 버그의 본체는 "키를 엉뚱한 섹션에 뒀는데 아무도 말해주지 않았다" 이므로,
+  같은 착각이 다른 키로 재발하는 것을 로드 시점에 드러낸다.
+- **가드 2층** (`tests/test_teardown_recovery.py` 신규, `test_plan_execute.py` 보강):
+  ① 단위 — teardown 섹션의 recovery 가 실제로 보드 명령까지 나가는지 ssh 캡처로 확인.
+  ② 경로 — 5개 경로가 각각 그 섹션을 전달하는지 경로별로 못박음. plan 은 실제
+  `SetupManager` 로 한 바퀴 돌려 복구 명령이 나가는지 직접 본다. 뮤테이션 2종
+  (plan·cli 되돌리기)으로 가드가 실제로 잡는 것을 확인했다.
+- **인접 결함 발견(이번 범위 밖)**: `stream.py` 는 `edgeconf_changes` 가 있을 때만
+  `run_setup` 을 부르므로 **inject-only fault 케이스는 주입도 복구도 하지 않는다.**
+  별도 이슈로 분리했다.
+
 ## Unreleased (2026-08-21)
 
 ### 커널 로그 체크 소스 이관 — 구조적 거짓 PASS 해소 (pim-check#73, #71)

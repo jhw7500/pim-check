@@ -547,10 +547,15 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
         return exit_code
     finally:
-        # Teardown: setup이 실제로 변경한 경우에만 복원
-        if setup_config and setup_changed:
+        # Teardown: 복원은 setup 이 실제로 변경한 경우에만, 복구(recovery_command)는
+        # 정의돼 있으면 항상. 둘을 묶어 두면 `setup:` 없이 teardown 만 둔 케이스가
+        # 복구되지 않고, setup-skip 경로에서는 스냅샷이 없어 복원이 `.bak` 폴백으로
+        # 떨어져 **바꾸지도 않은 설정을 되돌린다** (pim-check#75 리뷰).
+        teardown_config = profile.get("teardown") or {}
+        if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
             try:
-                setup_mgr.run_teardown(setup_config)
+                setup_mgr.run_teardown(
+                    setup_config if setup_changed else {}, teardown_config)
             except TimeoutError as e:
                 print(f"WARNING: Teardown failed - {e}")
 

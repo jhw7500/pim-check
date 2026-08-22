@@ -123,9 +123,12 @@ def run_on_target(
             "total": total_samples,
         }
     finally:
-        if setup_config and setup_changed:
+        # 복원은 setup 이 바꿨을 때만, 복구는 정의되면 항상 (pim-check#75 리뷰)
+        teardown_config = profile.get("teardown") or {}
+        if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
             try:
-                setup_mgr.run_teardown(setup_config)
+                setup_mgr.run_teardown(
+                    setup_config if setup_changed else {}, teardown_config)
             except TimeoutError:
                 pass
 

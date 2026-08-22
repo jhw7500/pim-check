@@ -1048,11 +1048,20 @@ class SetupManager:
                 f"teardown RESTORE via board .bak (no snapshot) — {conf_path}")
         self.restore(conf_path)
 
-    def run_teardown(self, setup_config: dict) -> None:
-        """fault recovery + edgeconf/ord_vcm_conf 복원 + 필요시 재부팅."""
+    def run_teardown(self, setup_config: dict,
+                     teardown_config: dict | None = None) -> None:
+        """fault recovery + edgeconf/ord_vcm_conf 복원 + 필요시 재부팅.
+
+        `recovery_command` 의 정본 자리는 케이스의 **`teardown:` 섹션**이다. 예전에는
+        `setup:` 에서만 읽었는데 이 키를 쓰는 케이스 2건이 모두 `teardown:` 아래 두고
+        있어 **복구가 한 번도 실행되지 않았다**(pim-check#75). `setup:` 쪽도 계속
+        읽어 하위 호환을 지키되, 둘 다 있으면 teardown 쪽만 쓴다(중복 실행 금지).
+        """
+        teardown_config = teardown_config or {}
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
-        recovery = setup_config.get("recovery_command")
+        recovery = (teardown_config.get("recovery_command")
+                    or setup_config.get("recovery_command"))
         inject = setup_config.get("inject_command")
 
         if not edge_changes and not ord_changes and not (recovery or inject):
