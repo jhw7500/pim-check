@@ -207,3 +207,59 @@ class TestBspExclusionDoesNotSwallowRealErrors:
         leaked = [ln for ln in self.BSP_NOISE if not excl.search(ln)]
         assert not leaked, (
             "제외돼야 할 BSP 잡음이 남는다:\n" + "\n".join(leaked))
+
+
+class TestTimestampFormatCoupling:
+    """`substr($0,1,19) > bt` 비교는 **세 생산자가 같은 형식**이라는 데 의존한다.
+
+    - rsyslog 템플릿 → kern.log 줄머리 `YYYY-MM-DD HH:MM:SS` (19자)
+    - `setup._write_session_anchor` → 앵커 1행에 `uptime -s` 기록 (같은 19자)
+    - 케이스의 `uptime -s` 폴백 (같은 19자)
+
+    영(0)패딩 ISO 형식이라 **사전식 비교 = 시간 순서 비교**가 성립한다. 우연이 아니라
+    형식의 성질이다.
+
+    진짜 위험은 비교 의미가 아니라 **결합이 세 곳에 흩어져 있고 서로를 모른다**는
+    것이다. 하나만 바뀌어도 비교는 에러 없이 **조용히 틀린다**. 특히 이 저장소는
+    "monotonic > wall-clock" 을 여러 번 채택했는데(#69·#71·#73), 그 논리를 나중에
+    세션 앵커에 적용하면 1행이 숫자가 되고 그 순간 이 체크들과 케이스 38곳이
+    **에러 없이 오스코핑**된다. 그래서 형식을 여기서 못박는다 — 바뀌면 조용한
+    오작동 대신 **테스트 실패**로 나타난다.
+    """
+
+    TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+    def test_anchor_writer_records_wall_clock_first_line(self):
+        """`_write_session_anchor` 1행이 `uptime -s`(19자 wall-clock)여야 한다."""
+        import setup as setup_mod
+
+        src = pathlib.Path(setup_mod.__file__).read_text()
+        i = src.index("def _write_session_anchor")
+        body = src[i:i + 2500]
+        # docstring 에도 "uptime -s" 가 나오므로 **셸 치환 형태**를 봐야 한다.
+        # (처음엔 docstring 까지 세어 뮤테이션이 통과했다.)
+        assert '$(uptime -s)' in body, (
+            "앵커 1행이 더 이상 wall-clock($(uptime -s))이 아니다 — "
+            "substr($0,1,19) 비교를 쓰는 체크 9건과 케이스 38곳이 "
+            "에러 없이 조용히 오스코핑된다")
+
+    def test_sample_timestamps_are_19_chars(self):
+        """kern.log 줄머리와 `uptime -s` 가 같은 19자 형식임을 고정."""
+        kern_line = ("2026-08-22 02:08:47.219 kernel[notice][   25.557314] "
+                     "[I2C:2][max9296.c:1197] ch0 MCP4018(0x2f) write fail")
+        uptime_s = "2026-08-22 02:08:22"
+        assert self.TS_RE.match(kern_line[:19]), kern_line[:19]
+        assert self.TS_RE.match(uptime_s), uptime_s
+        assert len(uptime_s) == 19
+        # 영패딩 ISO → 사전식 비교가 시간 순서와 일치한다.
+        assert kern_line[:19] > uptime_s
+
+    def test_checks_expect_that_exact_width(self):
+        """wall-clock 축을 쓰는 체크는 `substr($0,1,19)` 로 그 폭을 기대한다."""
+        wall_clock_checks = [(f, n) for f, n, cmd, _ in _kernel_log_commands()
+                             if "pim_check_anchor" in cmd]
+        assert wall_clock_checks, "wall-clock 축 체크가 없다 — 코퍼스 확인"
+        for fname, name, cmd, _ in _kernel_log_commands():
+            if "pim_check_anchor" not in cmd:
+                continue
+            assert "substr($0,1,19)" in cmd, f"{fname}: {name}"
