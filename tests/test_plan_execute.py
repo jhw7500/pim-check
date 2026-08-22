@@ -398,3 +398,238 @@ class TestMonitorUntilPass(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExecutePlanTeardownManager(unittest.TestCase):
+    """plan 의 teardown 이 setup 과 **같은 SetupManager 인스턴스**를 써야 한다.
+
+    회귀 방지 (pim-check#67 리뷰 적발): teardown 이 `setup_factory` 로 새 매니저를
+    만들면, 인스턴스 속성에 보관되는 상태(`_config_snapshots` — teardown 복원 원본)가
+    빈 채로 시작해 복원이 항상 폴백으로 떨어진다. `--case` 단일 실행·parallel·stream·
+    web 은 모두 동일 인스턴스를 쓰는데 plan.py 만 예외였다.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.cases_dir = os.path.join(self.tmpdir, "cases")
+        os.makedirs(self.cases_dir)
+        with open(os.path.join(self.tmpdir, "base.yaml"), "w") as f:
+            f.write(
+                "target:\n  host: 192.168.0.5\n  user: root\n  password: root\n"
+                "monitor:\n  duration_sec: 0\n  interval_sec: 5\n"
+            )
+        # setup 섹션이 있어야 finally 의 teardown 이 돈다.
+        for name in ("case_a", "case_b"):
+            with open(os.path.join(self.cases_dir, f"{name}.yaml"), "w") as f:
+                f.write(
+                    f"name: {name}\n"
+                    "setup:\n"
+                    "  edgeconf_changes:\n"
+                    "    .VHL_CAM.fps: 30\n"
+                    "  reboot_after: true\n"
+                )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def _plan(self, cases: dict, **execution_overrides) -> Plan:
+        execution = {**DEFAULT_EXECUTION, **execution_overrides}
+        return Plan(
+            name="test", description="test", version=1,
+            cases=cases, execution=execution,
+            gate=dict(DEFAULT_GATE), reports=[],
+        )
+
+    def _factories(self):
+        created = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            mgr.run_setup.return_value = True
+            created.append(mgr)
+            return mgr
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "dummy", "passed": True, "reason": "OK",
+                 "data": {}, "duration_ms": 1},
+            ]
+            return engine
+
+        return created, ssh_factory, setup_factory, engine_factory
+
+    def test_teardown_runs_on_the_manager_that_ran_setup(self):
+        created, ssh_f, setup_f, engine_f = self._factories()
+        plan = self._plan({"regression": ["case_a"]})
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_f,
+                     setup_factory=setup_f, engine_factory=engine_f)
+
+        ran_setup = [m for m in created if m.run_setup.called]
+        ran_teardown = [m for m in created if m.run_teardown.called]
+        self.assertEqual(len(ran_setup), 1, "setup 은 한 번만 돌아야 한다")
+        self.assertEqual(len(ran_teardown), 1, "teardown 은 한 번만 돌아야 한다")
+        # 핵심 단언 — 같은 객체여야 인스턴스 상태(스냅샷)가 이어진다.
+        self.assertIs(ran_teardown[0], ran_setup[0])
+
+    def test_snapshot_taken_at_setup_survives_to_teardown(self):
+        """인스턴스 상태가 실제로 이어지는지 — 매니저 동일성의 목적을 직접 확인."""
+        created, ssh_f, setup_f, engine_f = self._factories()
+        seen = {}
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            mgr._config_snapshots = {}
+            # 실제 SetupManager 처럼 setup 때 인스턴스 상태를 채운다.
+            def _run_setup(cfg, **kw):
+                mgr._config_snapshots["/root/shared_v/edgeconf_pim.json"] = "SNAP"
+                return True
+            mgr.run_setup.side_effect = _run_setup
+            mgr.run_teardown.side_effect = (
+                lambda cfg: seen.update(snapshots=dict(mgr._config_snapshots)))
+            created.append(mgr)
+            return mgr
+
+        plan = self._plan({"regression": ["case_a"]})
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_f,
+                     setup_factory=setup_factory, engine_factory=engine_f)
+        self.assertEqual(
+            seen.get("snapshots"),
+            {"/root/shared_v/edgeconf_pim.json": "SNAP"},
+            "teardown 이 setup 에서 찍은 스냅샷을 볼 수 없다 — 별개 인스턴스다")
+
+    def test_last_case_manager_is_used_when_multiple_cases(self):
+        """teardown 대상은 **마지막** 케이스의 매니저다(그 케이스 설정이 보드에 남으므로)."""
+        created, ssh_f, setup_f, engine_f = self._factories()
+        plan = self._plan({"regression": ["case_a", "case_b"]})
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_f,
+                     setup_factory=setup_f, engine_factory=engine_f)
+        ran_teardown = [m for m in created if m.run_teardown.called]
+        self.assertEqual(len(ran_teardown), 1)
+        self.assertIs(ran_teardown[0], created[-1])
+
+    def test_teardown_actually_takes_the_snapshot_path_not_bak_fallback(self):
+        """행위 고정 — plan 을 한 바퀴 돌린 뒤 복원이 **스냅샷 경로**를 탔는지 본다.
+
+        객체 동일성(`is`)만 고정하면, 나중에 매니저를 다시 분리했을 때 "같은 객체"
+        단언만 우회하고 복원은 죽는 조합이 생길 수 있다. 실제 SetupManager 로
+        plan 을 돌려 `.bak` 폴백(`restore`)이 아니라 `restore_from_snapshot` 이
+        성공했는지를 직접 확인한다.
+        """
+        from setup import SetupManager
+
+        calls = {"snapshot_restore": 0, "bak_restore": 0}
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+
+            def run(cmd, *a, **kw):
+                if cmd.startswith("base64 -w0"):
+                    return "eyJhIjogMX0="          # {"a": 1}
+                if "base64 -d" in cmd:
+                    calls["snapshot_restore"] += 1
+                    return "OK"
+                if cmd.startswith("cp ") and ".bak" in cmd:
+                    calls["bak_restore"] += 1
+                    return "OK"
+                return "OK"
+
+            ssh.run.side_effect = run
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = SetupManager(ssh)
+            # 보드 왕복이 필요한 부분만 차단 — 스냅샷/복원 경로는 실제 코드로 탄다.
+            mgr.check_current = MagicMock(return_value=False)
+            mgr.backup = MagicMock(return_value=True)
+            mgr.apply_changes = MagicMock()
+            mgr.reboot_and_wait = MagicMock()
+            mgr._local0_log = MagicMock()
+            return mgr
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "dummy", "passed": True, "reason": "OK",
+                 "data": {}, "duration_ms": 1},
+            ]
+            return engine
+
+        plan = self._plan({"regression": ["case_a"]})
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                     setup_factory=setup_factory, engine_factory=engine_factory)
+
+        self.assertEqual(calls["snapshot_restore"], 1,
+                         "teardown 이 호스트 스냅샷으로 복원하지 않았다")
+        self.assertEqual(calls["bak_restore"], 0,
+                         "teardown 이 .bak 폴백으로 떨어졌다 — 이 PR 이 없애려던 경로")
+
+    def test_setup_exception_still_tears_down_on_the_same_manager(self):
+        """setup 이 예외로 죽어도 teardown 은 **같은 인스턴스**로 시도된다.
+
+        `_run_single_case` 는 `setup_factory` 직후·`run_setup` 이전에 `mgr_holder` 를
+        채운다(의도적). 따라서 run_setup 이 던져도 그 매니저가 holder 에 남아
+        teardown 이 재사용한다 — 그때까지 찍힌 스냅샷이 있으면 복원에 쓸 수 있고,
+        보드 잔재 정리도 건너뛰지 않는다.
+        """
+        created = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            mgr.run_setup.side_effect = RuntimeError("boom")
+            created.append(mgr)
+            return mgr
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = []
+            return engine
+
+        plan = self._plan({"regression": ["case_a"]}, case_retry=0)
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                     setup_factory=setup_factory, engine_factory=engine_factory)
+        # setup 이 터져도 teardown cleanup 은 시도돼야 한다(보드 잔재 방지).
+        self.assertTrue(any(m.run_teardown.called for m in created))
+        # 폴백으로 새로 만들지 않았음을 고정 — factory 는 정확히 한 번만 불린다.
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0].run_teardown.called)
+
+    def test_factory_fallback_when_case_never_created_a_manager(self):
+        """factory 호출 전에 탈출한 경로(SSH 불통 등)에서는 기존 폴백이 유지된다.
+
+        `_run_single_case` 는 `check_connectivity` 실패 시 setup_factory 를 부르지
+        않고 반환하므로 holder 가 비고, finally 는 새 매니저를 만들어 cleanup 한다.
+        """
+        created = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = False   # factory 호출 전 탈출
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            created.append(mgr)
+            return mgr
+
+        def engine_factory(ssh, profile):
+            return MagicMock()
+
+        plan = self._plan({"regression": ["case_a"]}, case_retry=0)
+        execute_plan(plan, self.tmpdir, ssh_factory=ssh_factory,
+                     setup_factory=setup_factory, engine_factory=engine_factory)
+        # case 가 매니저를 만들지 않았으므로 finally 가 폴백으로 하나 만든다.
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0].run_teardown.called)
+        self.assertFalse(created[0].run_setup.called)

@@ -491,8 +491,16 @@ def _run_single_case(ssh, profile: dict, case_name: str,
                      engine_factory: Callable,
                      setup_factory: Callable | None,
                      monitor_cap_sec: int | None = None,
-                     monitor_until_pass: bool = False) -> tuple[list, bool, str | None]:
+                     monitor_until_pass: bool = False,
+                     mgr_holder: list | None = None) -> tuple[list, bool, str | None]:
     """단일 case의 setup → engine.run_snapshot → known_issue 처리 한 번 실행.
+
+    Args:
+        mgr_holder: 주어지면 이번 case 가 만든 SetupManager 를 여기에 담는다.
+            execute_plan 의 finally teardown 이 **같은 인스턴스**를 재사용하기
+            위해서다 — SetupManager 는 teardown 복원 원본(_config_snapshots)을
+            인스턴스 속성에 들고 있어서, 새로 만들면 그 상태가 비어 복원이 항상
+            폴백으로 떨어진다 (pim-check#67).
 
     Returns: (results, passed, error). error는 None or "NO_SSH"/"SETUP_TIMEOUT"/"EXCEPTION:..."
     """
@@ -507,6 +515,11 @@ def _run_single_case(ssh, profile: dict, case_name: str,
         from setup import readiness_kwargs
         try:
             setup_mgr = setup_factory(ssh)
+            # 예외로 빠져나가도 teardown 이 이 인스턴스를 쓰도록 먼저 담는다 —
+            # run_setup 이 중간에 실패해도 그때까지의 스냅샷은 유효하다.
+            if mgr_holder is not None:
+                mgr_holder.clear()
+                mgr_holder.append(setup_mgr)
             setup_mgr.run_setup(setup_cfg, **readiness_kwargs(profile))
         except TimeoutError as exc:
             return [], False, f"SETUP_TIMEOUT: {exc}"
@@ -592,6 +605,11 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # chk_cam_operate.sh의 stall escalation(→ reboot loop)을 방지.
     last_ssh = None
     last_setup_cfg = None
+    # 마지막 case 의 SetupManager 와 그 짝 ssh — finally teardown 이 **같은 인스턴스**를
+    # 재사용하기 위해 추적한다. 새로 만들면 teardown 복원 원본(_config_snapshots)이
+    # 빈 채로 시작해 복원이 항상 .bak 폴백으로 떨어진다 (pim-check#67).
+    last_setup_mgr = None
+    last_mgr_ssh = None
 
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
@@ -644,11 +662,16 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 마지막 활성 ssh + setup_cfg 추적 (finally teardown용)
                 last_ssh = ssh
                 last_setup_cfg = runtime.get("setup")
+                _mgr_holder: list = []
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
                     monitor_cap_sec=plan.execution.get("monitor_cap_sec"),
                     monitor_until_pass=plan.execution.get("monitor_until_pass", False),
+                    mgr_holder=_mgr_holder,
                 )
+                if _mgr_holder:
+                    last_setup_mgr = _mgr_holder[0]
+                    last_mgr_ssh = ssh
                 retries_used = attempt
                 if passed:
                     break
@@ -684,7 +707,13 @@ def execute_plan(plan: Plan, profiles_dir: str,
         # 보드 fw chk_cam_operate.sh의 stall escalation(reboot loop) 방지.
         if last_ssh is not None and last_setup_cfg and setup_factory is not None:
             try:
-                _teardown_mgr = setup_factory(last_ssh)
+                # setup 을 돌린 그 매니저를 재사용한다 — 인스턴스 상태(스냅샷)가
+                # 이어져야 teardown 복원이 실효한다. ssh 가 갈렸으면(재연결 등)
+                # 그 매니저의 세션이 죽었으므로 기존처럼 새로 만든다.
+                if last_setup_mgr is not None and last_mgr_ssh is last_ssh:
+                    _teardown_mgr = last_setup_mgr
+                else:
+                    _teardown_mgr = setup_factory(last_ssh)
                 _teardown_mgr.run_teardown(last_setup_cfg)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
