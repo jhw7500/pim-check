@@ -112,7 +112,9 @@ class CamStateCheck(BaseCheck):
         raw_cfg = cam_config.get("heartbeat_max_age_sec", DEFAULT_HEARTBEAT_MAX_AGE_SEC)
         try:
             max_age = int(raw_cfg)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: YAML .inf → int(inf). 엔진은 SSH 예외만 잡으므로
+            # 여기서 못 삼키면 QA run 전체가 중단된다 (#98 Codex P2).
             return f"heartbeat config invalid: heartbeat_max_age_sec={raw_cfg!r}"
 
         output = (heartbeat or {}).get("output")

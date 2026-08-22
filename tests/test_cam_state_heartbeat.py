@@ -180,6 +180,13 @@ class TestThresholdIsConfig:
         passed, reason = _validate(f"F;{NOW - 1};{NOW}", {"heartbeat_max_age_sec": "thirty"})
         assert not passed and "heartbeat config invalid" in reason
 
+    def test_inf_threshold_fails_loud_not_crash(self):
+        """YAML `.inf` 는 int() 에서 OverflowError — 엔진이 SSH 예외만 잡으므로
+        여기서 삼켜 체크 FAIL 로 바꾸지 않으면 QA run 전체가 중단된다 (#98 Codex P2)."""
+        passed, reason = _validate(f"F;{NOW - 1};{NOW}",
+                                   {"heartbeat_max_age_sec": float("inf")})
+        assert not passed and "heartbeat config invalid" in reason
+
 
 class TestFailClosed:
     """관측 불가는 통과가 아니다 — 수집 실패·키 누락·형식 붕괴 모두 FAIL."""
