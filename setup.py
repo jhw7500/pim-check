@@ -1048,6 +1048,24 @@ class SetupManager:
                 f"teardown RESTORE via board .bak (no snapshot) — {conf_path}")
         self.restore(conf_path)
 
+    def _clear_readiness(self) -> None:
+        """readiness 기대값을 비운다 — `_stabilize_stages()` 가 ssh 만 남게 된다.
+
+        teardown 이 확인해야 할 것은 "보드가 살아 돌아왔는가" 뿐이다. 이 값들은
+        **방금 끝난 케이스**의 프로필에서 유도된 것이라, 설정을 복원한 뒤의 보드를
+        복원 전 기대값으로 게이팅하게 된다(pim-check#70). AE 정착은 gstApp 기동
+        +16s 가 필요한데 teardown 예산은 20초라 들어갈 수도 없어, 매 실행 끝에
+        20초를 버리고 경고만 찍혔다.
+
+        `_config_snapshots` 는 **건드리지 않는다** — teardown 복원의 원본이다.
+        """
+        self._ready_processes_list = []
+        self._ready_recording_paths = []
+        self._ready_fsync = False
+        self._fsync_seen_at = None
+        self._ready_ae_targets = []
+        self._ae_match_at = None
+
     def run_teardown(self, setup_config: dict,
                      teardown_config: dict | None = None) -> None:
         """fault recovery + edgeconf/ord_vcm_conf 복원 + 필요시 재부팅.
@@ -1057,6 +1075,7 @@ class SetupManager:
         있어 **복구가 한 번도 실행되지 않았다**(pim-check#75). `setup:` 쪽도 계속
         읽어 하위 호환을 지키되, 둘 다 있으면 teardown 쪽만 쓴다(중복 실행 금지).
         """
+        self._clear_readiness()
         teardown_config = teardown_config or {}
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})

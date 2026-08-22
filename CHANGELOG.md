@@ -2,6 +2,22 @@
 
 ## Unreleased (2026-08-22)
 
+### teardown 이 setup 의 readiness 기대를 승계하던 것 (pim-check#70)
+
+- **fix(setup)**: `run_teardown` 진입 시 readiness 기대값(`_ready_fsync`,
+  `_ready_ae_targets`, `_ready_processes_list`, `_ready_recording_paths`)을 비운다.
+  이 값들은 **방금 끝난 케이스**에서 유도된 것인데 teardown 은 설정을 **복원한 뒤**
+  재부팅하므로, 복원된 보드를 복원 전 기대값으로 게이팅하고 있었다.
+- AE 정착은 gstApp 기동 +16s 가 필요한데 teardown 예산은 20초 고정이라 **들어갈 수
+  없었다** — 5개 실행 경로 전부가 매 실행 끝에 20초를 버리고 `[timeout] ae_settle`
+  경고를 찍었다. 이제 teardown 재부팅은 `ssh` 단계만 기다린다.
+- `_config_snapshots`(복원 원본)는 그대로 둔다 — 비우면 teardown 복원이 죽는다.
+  그 성질을 테스트로 못박았다(`test_restore_source_survives_the_reset`).
+- 가드: `tests/test_teardown_readiness.py` 신규 4건. 승계가 실재한다는 **전제**부터
+  확인한 뒤(`ssh, session_anchor, processes, camera_init, ae_settle, recording`),
+  teardown 재부팅 시점의 단계 목록을 캡처해 `["ssh"]` 임을 단언한다. 뮤테이션
+  (초기화 호출 제거)으로 가드가 실제로 잡는 것을 확인했다.
+
 ### teardown.recovery_command 가 실행되지 않던 것 — fault 주입이 복구 없이 남았다 (pim-check#75)
 
 - **fix(setup)**: `run_teardown` 이 `setup:` 섹션에서만 `recovery_command` 를 읽었는데,
