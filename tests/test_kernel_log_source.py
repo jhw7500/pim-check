@@ -202,15 +202,69 @@ class TestFsyncDiagnosticsAreDistinguishable:
     """
 
     def test_every_fsync_check_separates_source_from_marker(self):
+        # #85 강등 후 게이팅하지 않으므로 FAIL: 접두 없이 토큰만 남는다 —
+        # 구분 성질(두 사건이 다른 출력)은 그대로 유지된다.
         for fname, name, cmd, _ in _fsync_commands():
-            assert "FAIL:NO_SOURCE" in cmd, f"{fname}: {name} — 소스 부재 진단 없음"
-            assert "FAIL:NO_MARKER" in cmd, f"{fname}: {name} — 마커 부재 진단 없음"
+            assert "NO_SOURCE" in cmd, f"{fname}: {name} — 소스 부재 진단 없음"
+            assert "NO_MARKER" in cmd, f"{fname}: {name} — 마커 부재 진단 없음"
 
     def test_old_undifferentiated_diagnosis_is_gone(self):
         offenders = [f"{f}: {n}" for f, n, cmd, _ in _all_custom_commands()
                      if "NO_DMESG" in cmd]
         assert not offenders, (
             "NO_DMESG 는 두 사건을 뭉뚱그린다:\n" + "\n".join(offenders))
+
+
+class TestFsyncIsDiagnosticOnly:
+    """#85 A — 커널 로그 텍스트가 케이스 통과/실패를 결정하는 자리에서 빠졌다.
+
+    fsync 마커는 SERDES/ISP 가 **내보낸** 레이트이고 ffprobe 는 videorate·mux 를
+    거쳐 **기록된** 레이트라, 둘의 어긋남 자체가 병목 진단이다 — 그래서 지우지
+    않고 강등한다. 게이팅 fps 는 같은 케이스의 ffprobe 실측이 담당한다.
+    대체 없이 빼면 커버리지 손실이므로, 강등된 파일마다 실측이 있는지도 본다.
+    """
+
+    def test_fsync_checks_do_not_gate(self):
+        offenders = [f"{f}: {n}" for f, n, _, spec in _fsync_commands()
+                     if "expected" in spec or "expected_min" in spec]
+        assert not offenders, (
+            "fsync 마커가 다시 게이팅한다(#85 회귀):\n" + "\n".join(offenders))
+
+    def test_gating_fps_measurement_exists_wherever_fsync_is_diagnostic(self):
+        by_file: dict[str, list] = {}
+        for f, n, cmd, spec in _all_custom_commands():
+            by_file.setdefault(f, []).append((n, cmd, spec))
+        missing = []
+        for f, _n, _cmd, _spec in _fsync_commands():
+            # avg_frame_rate 를 본다 — r_frame_rate 는 타임스탬프 기저 레이트라
+            # 프레임 드랍에도 설정값(30/1)을 유지할 수 있다(#102 Codex P1).
+            gating_fps = [nn for nn, cc, ss in by_file[f]
+                          if "avg_frame_rate" in cc and ss.get("expected") is not None]
+            if not gating_fps:
+                missing.append(f)
+        assert not missing, (
+            "fsync 를 강등했는데 게이팅 fps 실측이 없는 파일(커버리지 손실):\n"
+            + "\n".join(sorted(set(missing))))
+
+    def test_multi_integrity_fps_matches_case_edgeconf(self):
+        """무결성 fps 단언의 기대값은 그 케이스의 edgeconf fps 와 같아야 한다."""
+        checked = 0
+        for path in sorted(CASES_DIR.glob("multi_*.yaml")):
+            prof = yaml.safe_load(path.read_text())
+            exp = prof["setup"]["edgeconf_changes"][".VHL_CAM.fps"]
+            for chk in prof["checks"]["custom_commands"]:
+                if "파일 무결성" not in (chk.get("name") or ""):
+                    continue
+                cmd = chk["command"]
+                assert "avg_frame_rate" in cmd, f"{path.name}: {chk['name']}"
+                assert "r_frame_rate" not in cmd, (
+                    f"{path.name}: {chk['name']} — r_frame_rate 는 드랍을 못 본다")
+                m = re.search(r"n>=(\d+)-0\.5", cmd)
+                assert m and int(m.group(1)) == exp, (
+                    f"{path.name}: {chk['name']} — 기대 fps "
+                    f"{m and m.group(1)} != edgeconf {exp}")
+                checked += 1
+        assert checked == 36, f"무결성 fps 단언이 {checked}건 (기대 36)"
 
 
 class TestFsyncCommandsActuallyHonorTheContract:
@@ -258,32 +312,31 @@ class TestFsyncCommandsActuallyHonorTheContract:
             assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
             assert "NO_MARKER" in r.stdout, f"{fname}: {name} — {r.stdout!r}"
 
-    def test_matching_marker_reports_ok(self):
+    def test_marker_reports_the_observed_value(self):
+        """#85 강등 후 이 체크는 관측값 보고가 전부다 — 기대 비교를 하지 않는다
+        (게이팅은 같은 케이스의 ffprobe fps 실측이 담당)."""
         for fname, name, cmd, _ in self._fsync_rows():
-            expected = re.search(r'\[ "\$F" = "(\d+)" \]', cmd)
-            assert expected, f"{fname}: {name} — 기대 fps 를 못 찾았다"
-            r = self._run(cmd, self._MARKER.format(fps=expected.group(1)))
+            r = self._run(cmd, self._MARKER.format(fps=42))
             assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
-            assert r.stdout.strip() == "OK", f"{fname}: {name} — {r.stdout!r}"
+            assert r.stdout.strip() == "got=42", f"{fname}: {name} — {r.stdout!r}"
 
-    def test_mismatching_marker_reports_the_value(self):
-        """실패도 진단이 돼야 한다 — 몇이 나왔는지 없이 FAIL 만 보면 추적이 막힌다."""
-        for fname, name, cmd, _ in self._fsync_rows():
-            expected = int(re.search(r'\[ "\$F" = "(\d+)" \]', cmd).group(1))
-            r = self._run(cmd, self._MARKER.format(fps=expected + 1))
-            assert r.returncode == 0, f"{fname}: {name} — exit {r.returncode}"
-            assert r.stdout.strip() == f"FAIL:got={expected + 1}", (
-                f"{fname}: {name} — {r.stdout!r}")
-
-    def test_previous_boot_marker_does_not_satisfy_the_check(self):
-        """kern.log 는 재부팅을 넘어 산다 — 과거 부팅 값으로 통과하면 안 된다."""
+    def test_divergent_markers_are_all_reported(self):
+        """SERDES 가 두 레이트를 오갔으면 그 자체가 진단 — 값 전부가 보여야 한다."""
         fname, name, cmd, _ = self._fsync_rows()[0]
-        expected = re.search(r'\[ "\$F" = "(\d+)" \]', cmd).group(1)
+        src = self._MARKER.format(fps=15) + self._MARKER.format(fps=16)
+        r = self._run(cmd, src)
+        assert r.returncode == 0
+        assert r.stdout.strip() == "got=15,16", f"{fname}: {name} — {r.stdout!r}"
+
+    def test_previous_boot_marker_is_not_an_observation(self):
+        """kern.log 는 재부팅을 넘어 산다 — 과거 부팅 값이 관측값으로 잡히면 안 된다."""
+        fname, name, cmd, _ = self._fsync_rows()[0]
         stale = ("1999-01-01 00:00:00.000 kernel[notice][   25.557314] "
-                 f"[I2C:1][max9296.c:4612] max9296_fsync side fps : {expected}\n")
+                 "[I2C:1][max9296.c:4612] max9296_fsync side fps : 15\n")
         r = self._run(cmd, stale)
         assert r.returncode == 0
-        assert "NO_MARKER" in r.stdout, f"{fname}: {name} — 과거 부팅 줄로 통과했다: {r.stdout!r}"
+        assert "NO_MARKER" in r.stdout, (
+            f"{fname}: {name} — 과거 부팅 줄이 관측됐다: {r.stdout!r}")
 
 
 class TestExpectationsAreNotVacuous:
