@@ -400,6 +400,11 @@ def _run_plan(args) -> int:
             progress=on_progress,
             on_case_start=on_case_start,
         )
+    except ValueError as exc:
+        # plan 수준 거부(혼합 타겟 등, #96) — 케이스 시작 전이라 보드는 건드리지
+        # 않았다. load_plan lint 실패와 같은 채널(ERROR + exit 3)로 표면화한다.
+        print(f"ERROR: {exc}")
+        return 3
     finally:
         if sess is not None:
             _safe(sess.emit_run_end, completed_cases=_stats["completed"],
