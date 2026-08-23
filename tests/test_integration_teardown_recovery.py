@@ -1,4 +1,4 @@
-"""tests/test_teardown_recovery.py — teardown.recovery_command 가 실제로 실행된다 (pim-check#75).
+"""tests/test_integration_teardown_recovery.py — teardown.recovery_command 가 실제로 실행된다 (pim-check#75).
 
 `run_teardown` 은 `setup:` 섹션에서만 `recovery_command` 를 읽었는데, 이 키를 가진
 케이스 2건(`fault_sd_unmounted`, `fault_gstapp_crash`)은 모두 최상위 `teardown:`

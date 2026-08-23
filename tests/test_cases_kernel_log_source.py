@@ -1,4 +1,4 @@
-"""tests/test_kernel_log_source.py — 커널 로그 체크의 소스·축·exit 규약 (pim-check#73).
+"""tests/test_cases_kernel_log_source.py — 커널 로그 체크의 소스·축·exit 규약 (pim-check#73).
 
 `journalctl -k` 를 읽던 fault 체크 11건은 **구조적으로 실패할 수 없었다**:
 소스가 사실상 비어 있고(보드 실측: journalctl -k 31줄 vs kern.log 56,140줄)

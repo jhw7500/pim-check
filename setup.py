@@ -35,7 +35,8 @@ RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 # 본다 (#85 C). 이전에는 kern.log 의 max9296_fsync fps 마커였는데, 로그 텍스트는
 # CLEAR·wrap·severity·포맷 변경 네 경로로 조용히 깨진다 — 포맷 변경은 max9296
 # 2.5 에서 실제 발생해 구형 고정 문자열이면 게이트가 영원히 열리지 않았다.
-# cam_state 는 tmpfs 라 부팅마다 초기화되고(과거 부팅 오염 원천 차단 — 부팅
+# cam_state 의 /tmp 는 부팅마다 비워지고(systemd-tmpfiles 가 `D /tmp` 를 적용
+# — tmpfs 여부와 무관, 2026-08-22 보드 실측. 과거 부팅 오염 원천 차단으로 부팅
 # 경계·dmesg 앵커 기제가 통째로 불필요), state=healthy 는 BG_Check 가 카메라
 # 동작을 확인한 뒤에야 선다. 판정 상세는 _ready_cam_state docstring 참조.
 CAM_STATE_DIR = "/tmp/cam_state"
@@ -662,7 +663,8 @@ class SetupManager:
         """카메라 init readiness — cam_state(state=healthy + heartbeat 신선) + settle.
 
         fsync 로그 게이트의 대체다 (#85 C). 근거:
-          - /tmp(tmpfs)라 부팅마다 초기화 — 과거 부팅 오염이 원천 차단된다
+          - /tmp 는 부팅마다 비워진다(systemd-tmpfiles `D /tmp` — tmpfs 여부와
+            무관, 2026-08-22 실측) — 과거 부팅 오염이 원천 차단된다
             (kern.log 시절의 부팅 경계·dmesg 앵커·폴백 경고 기제가 통째로 불필요).
           - state=healthy 는 BG_Check 1초 루프가 카메라 **동작을 확인한 뒤** 세우는
             값이라 "init 로그가 찍혔다"(fsync 마커)보다 강한 신호다.
