@@ -1,6 +1,6 @@
 """tests/test_teardown_readiness.py — teardown 은 setup 의 readiness 기대를 물려받지 않는다 (pim-check#70).
 
-`SetupManager` 는 readiness 상태를 **인스턴스 속성**으로 들고 있다(`_ready_fsync`,
+`SetupManager` 는 readiness 상태를 **인스턴스 속성**으로 들고 있다(`_ready_camera_init`,
 `_ready_ae_targets`, `_ready_processes_list`, `_ready_recording_paths`). teardown 은
 같은 인스턴스에서 재부팅을 타므로 `_stabilize_stages()` 가 그 값을 그대로 승계해,
 **방금 끝난 케이스**의 기대값으로 **설정이 복원된** 보드를 게이팅했다.
@@ -36,7 +36,7 @@ def _loaded_with_readiness(mgr):
         {"inject_command": "true"},
         ready_processes=["gstApp"],
         ready_recording_paths=["/mnt/sd_cam"],
-        ready_fsync=True,
+        ready_camera_init=True,
         ready_ae_targets=[{"channel": 0, "value": "0x0100"}],
     )
     return mgr

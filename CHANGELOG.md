@@ -2,6 +2,36 @@
 
 ## Unreleased (2026-08-23)
 
+### 커널 로그 의존 축소 C — 카메라 init readiness 를 cam_state 로 (pim-check#85 2/2)
+
+- **fix(setup)**: 안정화 `camera_init` 게이트를 kern.log 의 fsync 마커 폴링
+  (`_ready_dmesg_fsync`)에서 **cam_state 기반**(`_ready_cam_state` — state=healthy
+  + heartbeat 신선 + settle)으로 전환. 근거: ① cam_state 는 tmpfs 라 부팅마다
+  초기화 — 과거 부팅 오염이 원천 차단돼 부팅 경계·dmesg 앵커·타임스탬프 폴백
+  경고 기제가 통째로 불필요 ② state=healthy 는 BG_Check 가 카메라 **동작을
+  확인한 뒤** 세우는 값이라 "init 로그가 찍혔다"(마커)보다 강한 신호 ③ heartbeat
+  신선도가 감시자가 죽은 채 남은 healthy 로 게이트가 열리는 것을 막는다.
+  채널별 생존 신호는 여전히 없다(#91). ISP settle 의미는 승계(healthy 최초 관측
+  후 `CAM_READY_SETTLE_SEC`, 기본 2s, env `PIM_CAM_READY_SETTLE_SEC`).
+- 제거: `FSYNC_MARKER_RE`·kern.log 프로브(awk 부팅 경계/앵커 델타)·폴백 경고·
+  `_dmesg_anchor_uptime`(유일 소비자 소멸 — **하드리셋 전환점 3곳 → 2곳**).
+  프로브는 state·timestamp·보드 now 를 **한 왕복**으로 읽고 어떤 파일 상태에서도
+  exit 0 + 출력을 지킨다(checks/cam_state 와 같은 계약).
+- 개명: `ready_fsync` → `ready_camera_init` (이름-실체 일치. 주입 경로는
+  `readiness_kwargs` 단일 출처라 호출자 변경 없음).
+- 가드: 판정 단위 13건(healthy 전이·stale/future/zero heartbeat·말폼·SSH 오류
+  리셋·단일 왕복·stage 순서) + 셸 계약 7건(실제 sh 실행 → 판정 파이프). 구
+  fsync 프로브 테스트 2파일은 대체 신호와 함께 제거.
+- **이슈 닫힘 조건 충족**: 커널 로그 텍스트가 통과/실패를 결정하는 자리는 이제
+  사건 계열(B, 13건 — panic/oom/lockup 등 로그에만 남는 사건)뿐이다.
+- 자동 리뷰 반영(#103 Codex P2): 프로파일이 `checks.cam_state.dir` /
+  `heartbeat_max_age_sec` 를 오버라이드하면 게이트가 고정 상수를 쓰던 것 —
+  `readiness_kwargs` 가 **체크와 같은 프로파일 키**에서 dir·임계를 뽑아 게이트로
+  관통시킨다(가드 4건, 수정 전 red). 임계 오염은 체크가 FAIL 로 표면화하고
+  게이트는 기본값으로 계속 간다. Gemini 2건은 무조치 확인 — 시계 역행 시
+  1~2초 fail-closed 후 BG_Check 1초 touch 로 자가 회복(의도), state 의 `;` 는
+  파서가 malformed 로 fail-closed(안전).
+
 ### 커널 로그 의존 축소 A계열 — fsync 마커 21건을 게이팅에서 진단으로 (pim-check#85 1/2)
 
 - **refactor(cases)**: `dmesg max9296_fsync fps` 마커 체크 21건(multi 16 +

@@ -31,25 +31,18 @@ READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
 RECORDING_DIRS = ["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"]
 RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 
-# 안정화 카메라 init readiness — dmesg 의 max9296_fsync fps 로그는 부팅마다
-# dmesg ring buffer 가 초기화되므로 per-boot 정확한 카메라 init 신호다. ISP 레지스터
-# (i2ctransfer read: ROTATION/AE/AWB/EXP)는 카메라 init 전엔 무효값이라, 이 로그가
-# 뜨고 FSYNC_SETTLE_SEC 만큼 더 지나야 레지스터가 settle 됐다고 본다.
-# (recording readiness 는 reboot 직전 /mnt/sd_cam 잔여 파일로 false-positive 가능 —
-#  fsync 로그는 ring buffer 초기화로 그 위험이 없어 ISP 게이트로 더 정확하다.)
-# 드라이버 2.5(2026-08 배포)부터 로그가 'max9296_fsync <mode> fps :'
-# (mode=single|dual|side)로 바뀌었다 — 구형 'max9296_fsync fps :' 와 신형을 모두
-# 매칭하는 ERE(grep -E) 패턴을 쓴다. 구형 고정 문자열이면 2.5 보드에서 0 매칭이라
-# 카메라 케이스 준비 게이트가 영원히 열리지 않는다 (2026-08-21 보드 실측).
-# mode 는 화이트리스트가 아니라 open set([a-z-]+) — 드라이버가 mode 단어를 추가할
-# 때마다 같은 파손이 재발하지 않도록. ' fps :' 요구가 무관 라인(스레드명 등) 매칭을
-# 막는다.
-FSYNC_MARKER_RE = "max9296_fsync( [a-z-]+)? fps :"
-# 커널 로그 정본 — rsyslog 가 kern.notice(severity 0–5)를 여기로 보낸다
-# (`/etc/rsyslog.conf:60`). max9296 의 fps 출력 3곳이 전부 printk(KERN_NOTICE) 라
-# 포함이 **설계상 보장**이다. 링버퍼(dmesg)는 CLEAR·wrap 두 기제로 비므로 쓰지 않는다
-# (pim-check#69/#73).
-KERN_LOG_PATH = "/var/log/cantops/kern.log"
+# 안정화 카메라 init readiness — 보드가 스스로 유지하는 비로그 신호(cam_state)를
+# 본다 (#85 C). 이전에는 kern.log 의 max9296_fsync fps 마커였는데, 로그 텍스트는
+# CLEAR·wrap·severity·포맷 변경 네 경로로 조용히 깨진다 — 포맷 변경은 max9296
+# 2.5 에서 실제 발생해 구형 고정 문자열이면 게이트가 영원히 열리지 않았다.
+# cam_state 는 tmpfs 라 부팅마다 초기화되고(과거 부팅 오염 원천 차단 — 부팅
+# 경계·dmesg 앵커 기제가 통째로 불필요), state=healthy 는 BG_Check 가 카메라
+# 동작을 확인한 뒤에야 선다. 판정 상세는 _ready_cam_state docstring 참조.
+CAM_STATE_DIR = "/tmp/cam_state"
+# heartbeat(감시자 생존) 허용 나이(초) — checks.cam_state.heartbeat_max_age_sec
+# 기본값과 같은 값을 쓴다 (다르면 "체크는 통과하는데 게이트는 안 열리는" 이면
+# 상태가 생긴다).
+CAM_READY_HEARTBEAT_MAX_AGE_SEC = 30
 
 # 세션 앵커 — "이번 테스트 세션이 시작된 시각"의 단일 출처.
 #
@@ -97,16 +90,16 @@ SESSION_ANCHOR_PATH = "/tmp/pim_check_anchor"
 # 부팅마다 고정된 UUID — 잔존 앵커 판별용 (cam_health 와 동일 출처).
 BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 
-# 로그 출현 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
-# 보드별 튜닝을 위해 환경변수 PIM_FSYNC_SETTLE_SEC 로 override 가능
+# healthy 최초 관측 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
+# 보드별 튜닝을 위해 환경변수 PIM_CAM_READY_SETTLE_SEC 로 override 가능
 # (verify_retry 의 PIM_VERIFY_* 와 동일한 패턴).
 try:
-    FSYNC_SETTLE_SEC = float(os.environ.get("PIM_FSYNC_SETTLE_SEC", "2"))
+    CAM_READY_SETTLE_SEC = float(os.environ.get("PIM_CAM_READY_SETTLE_SEC", "2"))
 except ValueError:
-    FSYNC_SETTLE_SEC = 2.0
+    CAM_READY_SETTLE_SEC = 2.0
 
 # 안정화 AE 정착(settle) readiness — pim-check#61.
-# 카메라 init(fsync) 이후에도 AP1302 의 AE 레지스터는 전이값을 거쳐 최종값에
+# 카메라 init(cam_state healthy) 이후에도 AP1302 의 AE 레지스터는 전이값을 거쳐 최종값에
 # 도달한다. 콜드 기동 실측(2026-08-21): 정착 시점 = gstApp 기동 +16s(=boot+28s),
 # 그 전 구간은 AE_CTRL 0x029c / AE_GAIN 0x0100 같은 전이값이 읽힌다. custom_commands
 # 의 readback 단언이 이 창에 걸리면 오탐한다. 현행 마진(+20~35s)은 체크 실행 순서와
@@ -167,7 +160,7 @@ _CAM_CH_ENABLE_RE = re.compile(r"\.VHL_CAM\.[^.]+\.ch\d+\.enable$")
 
 
 def profile_is_camera(profile: dict) -> bool:
-    """카메라(녹화) 케이스인지 — reboot 후 카메라 init(fsync) readiness 게이트가
+    """카메라(녹화) 케이스인지 — reboot 후 카메라 init(cam_state) readiness 게이트가
     필요한 케이스인지 판정한다.
 
     판정 신호는 **setup 설정**을 본다(테스트 스텝 custom_commands 와 분리 — 테스트가
@@ -287,7 +280,7 @@ def readiness_kwargs(profile: dict) -> dict:
     Returns dict(run_setup 키워드):
       - ready_processes: checks.processes.required (코어 프로세스 생존 단계)
       - ready_recording_paths: RECORDING_DIRS (영상파일 생성 단계 고정 인프라 경로)
-      - ready_fsync: 카메라 케이스만 True (카메라 init(fsync) 게이트)
+      - ready_camera_init: 카메라 케이스만 True (카메라 init(cam_state) 게이트)
       - ready_ae_targets: 카메라 케이스의 AE 정착 기대값 목록 (pim-check#61).
         빈 목록이면 단계 자체가 붙지 않는다.
     """
@@ -300,9 +293,20 @@ def readiness_kwargs(profile: dict) -> dict:
         "ready_processes": list(procs),
         # recording 단계는 카메라/비카메라 구분 없이 항상 주입(기존 plan.py 동작 보존).
         # 비카메라 케이스는 녹화 파일이 안 생겨 stabilize_sec 까지 대기 후 진행(경고)하나,
-        # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_fsync 로 분리.
+        # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_camera_init 로 분리.
         "ready_recording_paths": RECORDING_DIRS,
-        "ready_fsync": is_camera,
+        "ready_camera_init": is_camera,
+        # 게이트가 읽는 dir·신선도 임계를 **체크와 같은 프로파일 키**에서 가져온다
+        # (#103 리뷰) — 프로파일이 checks.cam_state.dir / heartbeat_max_age_sec 를
+        # 오버라이드하면 체크와 게이트가 갈라져 "체크는 통과하는데 게이트는 안
+        # 열리는"(또는 그 반대) 이면 상태가 된다.
+        "ready_cam_state_dir": (
+            (checks.get("cam_state") or {}).get("dir", CAM_STATE_DIR)
+            if isinstance(checks, dict) else CAM_STATE_DIR),
+        "ready_cam_heartbeat_max_age_sec": (
+            (checks.get("cam_state") or {}).get(
+                "heartbeat_max_age_sec", CAM_READY_HEARTBEAT_MAX_AGE_SEC)
+            if isinstance(checks, dict) else CAM_READY_HEARTBEAT_MAX_AGE_SEC),
         # AE 정착 게이트는 카메라 게이트와 같은 opt-in/out 을 따른다
         # (camera_init_required: false 면 AE 정착도 끈다 — 게이트 일관성).
         "ready_ae_targets": ae_settle_targets(profile) if is_camera else [],
@@ -323,17 +327,15 @@ class SetupManager:
         # 안정화 3차(영상파일 생성) readiness 에 쓰일 녹화 경로 목록.
         # run_setup(ready_recording_paths=...) 로 주입 (기본 OFF → 미주입 시 단계 skip).
         self._ready_recording_paths: list[str] = []
-        # 안정화 카메라 init(dmesg max9296_fsync) readiness 활성 여부.
-        # run_setup(ready_fsync=True) 로 카메라 케이스에만 주입 (기본 OFF → 단계 skip).
-        self._ready_fsync: bool = False
-        # fsync 로그 최초 관측 시각(monotonic) — FSYNC_SETTLE_SEC 경과 판정용.
-        self._fsync_seen_at: float | None = None
-        # 앵커 폴백 경고는 인스턴스당 1회 (readiness 는 폴링이라 매 회 찍으면 로그를 덮는다)
-        self._fsync_fallback_warned: bool = False
-        # dmesg 델타 판정 앵커(보드 모노토닉 초). 재부팅 경로는 링버퍼가 비워지므로
-        # 0 이면 충분하다. 하드리셋 도입 시 리셋 시점의 uptime 을 넣으면 직전 부팅의
-        # fsync 라인이 게이트를 조기 개방하는 것을 막는다.
-        self._dmesg_anchor_uptime: float = 0.0
+        # 안정화 카메라 init(cam_state healthy+heartbeat) readiness 활성 여부.
+        # run_setup(ready_camera_init=True) 로 카메라 케이스에만 주입 (기본 OFF → 단계 skip).
+        self._ready_camera_init: bool = False
+        # healthy 최초 관측 시각(monotonic) — CAM_READY_SETTLE_SEC 경과 판정용.
+        self._cam_ready_seen_at: float | None = None
+        # 게이트가 읽는 cam_state 좌표 — 프로파일 오버라이드 시 체크와 같은 값을
+        # 쓰도록 run_setup 이 주입한다 (#103 리뷰). 기본은 체크의 기본과 동일.
+        self._cam_state_dir: str = CAM_STATE_DIR
+        self._cam_heartbeat_max_age: int = CAM_READY_HEARTBEAT_MAX_AGE_SEC
         # 안정화 AE 정착 readiness 의 기대값 목록 (pim-check#61).
         # run_setup(ready_ae_targets=...) 로 주입 (기본 빈 목록 → 단계 skip).
         self._ready_ae_targets: list[dict] = []
@@ -640,105 +642,62 @@ class SetupManager:
             return False
         return bool(out and out.strip())
 
-    def _dmesg_fsync_probe_command(self) -> str:
-        """fsync 로그를 세 숫자로 요약하는 명령 — `t=총건수 p=타임스탬프파싱 n=앵커이후`.
+    def _cam_state_ready_probe_command(self) -> str:
+        """cam_state 의 state 와 heartbeat(값+보드 now)를 한 왕복으로 읽는 명령.
 
-        awk 한 번에 세므로 왕복이 1회이고, 출력이 항상 존재해 ssh.run 의 None 규약에
-        의존하지 않는다(grep -c 는 0건일 때 exit 1 이라 None 이 온다).
-
-        `n` 은 kern.log 의 모노토닉 타임스탬프(`kernel[notice][   25.557314]`)가
-        앵커보다 큰 라인 수다. **소스가 파일이라 재부팅을 넘어 산다** — dmesg 시절
-        "재부팅하면 링버퍼가 비워진다" 는 전제로 앵커 0 이 곧 "이번 부팅" 이었지만,
-        그 전제는 이제 성립하지 않는다. n 을 이번 부팅으로 한정하는 것은 빈 버퍼가
-        아니라 아래 **부팅 경계 리셋**(monotonic 감소 지점)이다.
-
-        두 기제가 상보적이다:
-          - 부팅 경계  → **이전 부팅** 배제 (재부팅 경로)
-          - 앵커(`a`)  → **같은 부팅 안의 앵커 이전** 배제 (하드리셋 — SoC 재부팅이
-            없어 monotonic 이 리셋되지 않으므로 경계가 발동하지 않는다)
+        출력: "<state>;F;<ts>;<now>" (timestamp 가 읽히면) 또는 "<state>;N;;<now>".
+        어떤 파일 상태에서도 exit 0 + 출력을 지킨다 — exit≠0 이면 ssh.run 이
+        None 을 돌려줘 판정 근거가 사라진다. delta 의 양변(ts, now)이 같은 보드
+        시계에서 나오도록 한 명령에 묶는다 (checks/cam_state.py 와 같은 계약).
         """
-        # awk 프로그램은 중괄호를 리터럴로 쓰므로 .format()/f-string 의 치환 대상이
-        # 되면 안 된다. 특히 marker 는 정규식이라 나중에 수량자(`{1,3}`)가 들어오면
-        # .format() 이 KeyError 나 잘못된 치환으로 조용히 깨진다 — 연결로 끼운다.
-        # `^` 는 붙이지 않는다 — kern.log 는 monotonic 을 줄머리가 아니라
-        # `kernel[notice][   25.557314]` 안에 갖고 있다. 숫자.숫자 형태만 매치하므로
-        # `[I2C:1]`·`[max9296.c:4612]` 같은 다른 대괄호에는 걸리지 않는다.
-        #
-        # `ts < prev` 가 **부팅 경계**다. dmesg 는 부팅마다 비워져 앵커 0 이 곧
-        # "이번 부팅"이었지만, kern.log 는 재부팅을 넘어 산다(4월치까지 보존).
-        # 경계 없이 옮기면 과거 부팅 마커까지 세어 게이트가 조기 개방된다.
-        #
-        # **경계는 마커 줄이 아니라 타임스탬프가 있는 모든 줄에서 판정한다.** 마커로
-        # 선필터를 걸면 경계가 "현재 부팅이 마커를 최소 1개 낸 뒤"에야 발동하는데,
-        # 이 게이트의 목적이 바로 그 첫 마커를 기다리는 것이라 **정작 필요한 구간에서
-        # 무력**해진다(이전 부팅 마커로 조기 개방). 부팅 직후에는 다른 커널 로그가
-        # 얼마든지 있으므로 경계는 첫 폴링 전에 이미 잡힌다.
-        #
-        # `t` 는 타임스탬프와 **무관한** 마커 총건수다 — 그래야 소스 포맷이 바뀌어
-        # 타임스탬프를 못 읽는 상황(`p==0 && t>0`)을 폴백 경고가 감지할 수 있다.
-        awk_prog = (
-            "{m = ($0 ~ /" + FSYNC_MARKER_RE + "/); "
-            "if (match($0, /\\[ *[0-9]+\\.[0-9]+\\]/)) "
-            "{ts=substr($0, RSTART+1, RLENGTH-2)+0; "
-            "if (ts < prev) {t=0; p=0; n=0} prev=ts; "
-            "if (m) {t++; p++; if (ts > a) n++}} "
-            "else if (m) t++} "
-            'END {printf "t=%d p=%d n=%d\\n", t, p, n}'
+        return (
+            f"printf '%s;' \"$(cat {self._cam_state_dir}/state 2>/dev/null | tr -d ' \\n')\"; "
+            f"T={self._cam_state_dir}/timestamp; "
+            "if [ -r \"$T\" ]; then printf 'F;%s' \"$(cat \"$T\" 2>/dev/null | tr -d ' \\n')\"; "
+            "else printf 'N;'; fi; "
+            "printf ';%s' \"$(date +%s)\""
         )
-        # `cat | awk` — awk 가 파일을 직접 열면 열기 실패 시 fatal 로 죽어 END 에
-        # 도달하지 못한다(exit 2 + 무출력 → `ssh.run` 이 None). 파이프면 입력이
-        # 비어도 END 가 돌아 t=0 p=0 n=0 을 낸다.
-        return (f"cat {KERN_LOG_PATH} 2>/dev/null | "
-                f"awk -v a={self._dmesg_anchor_uptime} '{awk_prog}'")
 
-    def _ready_dmesg_fsync(self, _clock=None) -> bool:
-        """카메라 init readiness — 앵커 이후의 max9296_fsync fps 로그(구형/2.5+ 포맷
-        모두, FSYNC_MARKER_RE)가 뜨고 FSYNC_SETTLE_SEC 초 경과하면 True.
+    def _ready_cam_state(self, _clock=None) -> bool:
+        """카메라 init readiness — cam_state(state=healthy + heartbeat 신선) + settle.
 
-        로그가 보이면 최초 관측 시각을 기록하고, settle 시간이 지나야 ISP 레지스터가
-        유효(settle)하다고 판단해 True 를 반환한다. 로그가 사라지거나 SSH 실패면
-        settle 타이머를 리셋한다(재부팅/재초기화 대비).
-
-        판정 대상은 `_dmesg_anchor_uptime`(모노토닉 초) **이후**의 라인이다. 재부팅
-        경로에서는 앵커 0 + 링버퍼 초기화라 기존과 동일하게 동작한다. 커널이
-        printk 타임스탬프를 끈 보드(파싱 0건)에서는 앵커 델타를 적용할 수 없으므로
-        기존 동작(존재만으로 판정)으로 폴백한다 — 게이트가 영영 안 열리는 것보다 낫다.
+        fsync 로그 게이트의 대체다 (#85 C). 근거:
+          - /tmp(tmpfs)라 부팅마다 초기화 — 과거 부팅 오염이 원천 차단된다
+            (kern.log 시절의 부팅 경계·dmesg 앵커·폴백 경고 기제가 통째로 불필요).
+          - state=healthy 는 BG_Check 1초 루프가 카메라 **동작을 확인한 뒤** 세우는
+            값이라 "init 로그가 찍혔다"(fsync 마커)보다 강한 신호다.
+          - heartbeat(timestamp) 신선도가 그 state 가 **지금** 판정임을 보장한다 —
+            감시자가 죽은 채 남은 healthy 로는 게이트가 열리지 않는다. 0 은
+            NEVER_TOUCHED(초기값)라 인정하지 않고, 음수(시계 역행)도 신선이 아니다.
+        채널별 생존 신호는 여전히 없다(#91 — 쓸 수 있는 것은 state·ch_error·
+        timestamp 셋뿐). ISP 레지스터 settle 의미는 승계 — healthy 최초 관측 후
+        CAM_READY_SETTLE_SEC 경과해야 True. 조건 미충족·SSH 실패는 타이머 리셋.
         """
         clock = _clock or time.monotonic
         try:
-            out = self.ssh.run(self._dmesg_fsync_probe_command())
+            out = self.ssh.run(self._cam_state_ready_probe_command())
         except Exception:
-            self._fsync_seen_at = None
+            self._cam_ready_seen_at = None
             return False
 
-        counts = {"t": 0, "p": 0, "n": 0}
-        for token in (out or "").split():
-            key, _, value = token.partition("=")
-            if key in counts:
-                try:
-                    counts[key] = int(value)
-                except ValueError:
-                    counts[key] = 0
-
-        # 타임스탬프를 하나도 못 읽었으면 앵커 델타가 불가능 — 총건수로 폴백.
-        # 폴백은 #66 의 앵커 델타를 통째로 무효화하므로(=존재만으로 판정하던 이전
-        # 동작) 조용히 발동하면 안 된다. 소스는 뭔가 주는데(t>0) 파서가 못 읽는
-        # 상태가 그 신호다 — 소스 포맷이 바뀌면 정확히 이 조합이 나온다.
-        # 폴링이라 1회만 알린다 (pim-check#69 (d)).
-        if counts["p"] == 0 and counts["t"] > 0 and not self._fsync_fallback_warned:
-            self._fsync_fallback_warned = True
-            msg = (f"WARNING: fsync 앵커 폴백 — 타임스탬프 파싱 0건 (p=0, t={counts['t']}). "
-                   "앵커 델타 없이 총건수로 판정한다. 소스 포맷을 확인할 것")
-            print(f"  {msg}")
-            self._local0_log(f"readiness FSYNC ANCHOR FALLBACK — p=0 t={counts['t']}")
-        effective = counts["n"] if counts["p"] > 0 else counts["t"]
-        if effective <= 0:
-            self._fsync_seen_at = None
+        parts = (out or "").strip().split(";")
+        ok = False
+        if len(parts) >= 4 and parts[1] == "F":
+            state, now_raw = parts[0], parts[-1]
+            ts_raw = ";".join(parts[2:-1])
+            if (state == "healthy"
+                    and ts_raw.isascii() and ts_raw.isdigit()
+                    and now_raw.isascii() and now_raw.isdigit()
+                    and int(ts_raw) > 0):
+                age = int(now_raw) - int(ts_raw)
+                ok = 0 <= age < self._cam_heartbeat_max_age
+        if not ok:
+            self._cam_ready_seen_at = None
             return False
         now = clock()
-        if self._fsync_seen_at is None:
-            self._fsync_seen_at = now
-        return (now - self._fsync_seen_at) >= FSYNC_SETTLE_SEC
+        if self._cam_ready_seen_at is None:
+            self._cam_ready_seen_at = now
+        return (now - self._cam_ready_seen_at) >= CAM_READY_SETTLE_SEC
 
     def _write_session_anchor(self) -> bool:
         """세션 앵커 파일을 보드에 기록한다 (readiness 단계 — SSH 복구 후 재시도됨).
@@ -846,15 +805,15 @@ class SetupManager:
         # 세션 앵커는 SSH 복구 직후 — 케이스 체크가 "이 시각 이후" 로그만 보게 하는
         # 기준점이라 다른 준비 단계보다 먼저 찍혀야 한다. 카메라 케이스만 대상
         # (앵커를 읽는 custom_commands 가 카메라 케이스에만 있다).
-        if self._ready_fsync:
+        if self._ready_camera_init:
             stages.append(("session_anchor", self._write_session_anchor))
         procs = list(self._ready_processes_list)
         if procs:
             stages.append(("processes", lambda: self._ready_processes(procs)))
-        # 카메라 init(fsync)은 recording 보다 먼저 — 카메라가 init 돼야 녹화가 시작되고
-        # ISP 레지스터도 그 시점 이후에야 유효하다.
-        if self._ready_fsync:
-            stages.append(("camera_init", self._ready_dmesg_fsync))
+        # 카메라 init(cam_state)은 recording 보다 먼저 — 카메라가 init 돼야 녹화가
+        # 시작되고 ISP 레지스터도 그 시점 이후에야 유효하다.
+        if self._ready_camera_init:
+            stages.append(("camera_init", self._ready_cam_state))
         # AE 정착은 카메라 init 다음 — AP1302 레지스터는 init 후에도 전이값을 거친다
         # (pim-check#61). 기대값을 단언하는 케이스에만 붙는다.
         if self._ready_ae_targets:
@@ -979,7 +938,9 @@ class SetupManager:
             self._local0_log(f"{label} cmd '{cmd[:80]}' → '{preview}'")
 
     def run_setup(self, setup_config: dict, ready_processes=None,
-                  ready_recording_paths=None, ready_fsync: bool = False,
+                  ready_recording_paths=None, ready_camera_init: bool = False,
+                  ready_cam_state_dir: str | None = None,
+                  ready_cam_heartbeat_max_age_sec=None,
                   ready_ae_targets=None) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
@@ -1002,9 +963,18 @@ class SetupManager:
         # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
         self._ready_processes_list = list(ready_processes or [])
         self._ready_recording_paths = list(ready_recording_paths or [])
-        self._ready_fsync = bool(ready_fsync)
-        self._fsync_seen_at = None  # 이번 setup 의 settle 타이머 초기화
-        self._dmesg_anchor_uptime = 0.0  # 재부팅 경로 기본값(링버퍼 초기화 전제)
+        self._ready_camera_init = bool(ready_camera_init)
+        self._cam_ready_seen_at = None  # 이번 setup 의 settle 타이머 초기화
+        self._cam_state_dir = ready_cam_state_dir or CAM_STATE_DIR
+        try:
+            self._cam_heartbeat_max_age = int(
+                ready_cam_heartbeat_max_age_sec
+                if ready_cam_heartbeat_max_age_sec is not None
+                else CAM_READY_HEARTBEAT_MAX_AGE_SEC)
+        except (TypeError, ValueError, OverflowError):
+            # 임계 오염은 체크(checks.cam_state)가 FAIL 로 표면화한다 — 게이트는
+            # 기본값으로 계속 간다(readiness 가 크래시로 run 을 죽이면 안 된다).
+            self._cam_heartbeat_max_age = CAM_READY_HEARTBEAT_MAX_AGE_SEC
         self._ready_ae_targets = list(ready_ae_targets or [])
         self._ae_match_at = None    # 이번 setup 의 AE 정착 타이머 초기화
         self._config_snapshots = {}  # 이번 setup 의 복원 원본 (이전 케이스 잔존 제거)
@@ -1123,21 +1093,18 @@ class SetupManager:
 
         `_config_snapshots` 는 **건드리지 않는다** — teardown 복원의 원본이다.
 
-        `_dmesg_anchor_uptime` 도 남긴다. 이 값은 `_ready_dmesg_fsync` 만 쓰는데
-        `_ready_fsync=False` 로 비운 이상 `camera_init` 단계가 붙지 않아 소비자가
-        없다. 비워도 무해하지만 "readiness 기대값" 이 아니라 **앵커 좌표**라 성격이
-        다르므로 이 메서드의 대상이 아니다.
-
-        부수 효과 하나: `_ready_fsync=False` 라 teardown 재부팅에서는 `session_anchor`
-        단계도 빠져 앵커를 다시 쓰지 않는다. 오늘은 무해하다 — 다음 실행이 setup-skip
+        부수 효과 하나: `_ready_camera_init=False` 라 teardown 재부팅에서는
+        `session_anchor` 단계도 빠져 앵커를 다시 쓰지 않는다. 오늘은 무해하다 — 다음 실행이 setup-skip
         이면 케이스가 `uptime -s` 로 폴백하는데 지금은 앵커 == 부팅 시각이라 값이 같다.
         **하드리셋(앵커 = 리셋 시각 ≠ 부팅 시각)이 들어오면 달라지므로** 그때 이
         단계를 teardown 에도 남길지 재검토해야 한다.
         """
         self._ready_processes_list = []
         self._ready_recording_paths = []
-        self._ready_fsync = False
-        self._fsync_seen_at = None
+        self._ready_camera_init = False
+        self._cam_ready_seen_at = None
+        self._cam_state_dir = CAM_STATE_DIR
+        self._cam_heartbeat_max_age = CAM_READY_HEARTBEAT_MAX_AGE_SEC
         self._ready_ae_targets = []
         self._ae_match_at = None
 

@@ -13,8 +13,9 @@ from unittest.mock import MagicMock
 from setup import (
     SetupManager,
     READINESS_POLL_INTERVAL,
-    FSYNC_MARKER_RE,
-    FSYNC_SETTLE_SEC,
+    CAM_READY_HEARTBEAT_MAX_AGE_SEC,
+    CAM_READY_SETTLE_SEC,
+    CAM_STATE_DIR,
     AE_SETTLE_MATCH_GAP_SEC,
     AE_SETTLE_GSTAPP_ETIME_SEC,
     ISP_SINGLE_ADDR,
@@ -202,160 +203,107 @@ class _FixedClock:
         return self.v
 
 
-class TestStageCameraInitFsync:
-    """카메라 init readiness — dmesg max9296_fsync fps 로그 + settle."""
+class TestStageCameraInitCamState:
+    """카메라 init readiness — cam_state(state=healthy + heartbeat 신선) + settle (#85 C).
 
-    def test_not_ready_when_log_absent(self):
+    fsync 로그 게이트의 대체다. 프로브의 셸 계약(실제 실행)은
+    tests/test_setup_camera_ready.py 가 진다.
+    """
+
+    @staticmethod
+    def _out(state="healthy", ts=1_000_000, now=1_000_001, flag="F"):
+        return f"{state};{flag};{ts};{now}"
+
+    def test_not_ready_when_state_missing(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "t=0 p=0 n=0"
-        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+        mgr.ssh.run.return_value = ";N;;1000000"
+        assert mgr._ready_cam_state(_clock=_FixedClock()) is False
+
+    def test_not_ready_until_healthy(self):
+        mgr = _mgr()
+        for st in ("", "recovering", "degraded", "failed"):
+            mgr._cam_ready_seen_at = None
+            mgr.ssh.run.return_value = self._out(state=st)
+            assert mgr._ready_cam_state(_clock=_FixedClock()) is False, st
 
     def test_settle_requires_elapsed_time(self):
         mgr = _mgr()
-        mgr.ssh.run.return_value = "t=1 p=1 n=1"  # 앵커 이후 로그 1건
+        mgr.ssh.run.return_value = self._out()
         clk = _FixedClock(start=100.0)
-        # 최초 관측: settle 0초 → 아직 무효
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False
-        # settle 직전 → 여전히 무효
-        clk.v = 100.0 + FSYNC_SETTLE_SEC - 0.5
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False
-        # settle 충족 → 유효
-        clk.v = 100.0 + FSYNC_SETTLE_SEC
-        assert mgr._ready_dmesg_fsync(_clock=clk) is True
+        assert mgr._ready_cam_state(_clock=clk) is False       # 최초 관측
+        clk.v = 100.0 + CAM_READY_SETTLE_SEC - 0.5
+        assert mgr._ready_cam_state(_clock=clk) is False
+        clk.v = 100.0 + CAM_READY_SETTLE_SEC
+        assert mgr._ready_cam_state(_clock=clk) is True
 
-    def test_log_disappear_resets_settle_timer(self):
+    def test_unhealthy_resets_settle_timer(self):
         mgr = _mgr()
-        seq = iter(["t=1 p=1 n=1", "t=0 p=0 n=0", "t=1 p=1 n=1"])
+        seq = iter([self._out(), self._out(state="recovering"), self._out()])
         mgr.ssh.run.side_effect = lambda *a, **k: next(seq)
         clk = _FixedClock(start=0.0)
-        mgr._ready_dmesg_fsync(_clock=clk)            # seen_at=0
+        mgr._ready_cam_state(_clock=clk)                        # seen_at=0
         clk.v = 10.0
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False  # "0" → 리셋
-        assert mgr._fsync_seen_at is None
-        # 재출현: seen_at 새로 기록, settle 미경과 → False
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False
-        assert mgr._fsync_seen_at == 10.0
+        assert mgr._ready_cam_state(_clock=clk) is False        # healthy 이탈 → 리셋
+        assert mgr._cam_ready_seen_at is None
+        assert mgr._ready_cam_state(_clock=clk) is False        # 재관측 → 새 타이머
+        assert mgr._cam_ready_seen_at == 10.0
+
+    def test_stale_heartbeat_is_not_ready(self):
+        """healthy 가 남아 있어도 감시자가 죽었으면(과대 age) 지금 판정이 아니다."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = self._out(
+            ts=1_000_000, now=1_000_000 + CAM_READY_HEARTBEAT_MAX_AGE_SEC)
+        assert mgr._ready_cam_state(_clock=_FixedClock()) is False
+        assert mgr._cam_ready_seen_at is None
+        # 경계 안이면 신선 — 관측이 시작된다(settle 대기).
+        mgr.ssh.run.return_value = self._out(
+            ts=1_000_000, now=1_000_000 + CAM_READY_HEARTBEAT_MAX_AGE_SEC - 1)
+        assert mgr._ready_cam_state(_clock=_FixedClock()) is False
+        assert mgr._cam_ready_seen_at is not None
+
+    def test_future_heartbeat_is_not_ready(self):
+        """시계 역행 — 정지한 감시자가 신선으로 보이면 안 된다."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = self._out(ts=1_000_010, now=1_000_000)
+        assert mgr._ready_cam_state(_clock=_FixedClock()) is False
+
+    def test_never_touched_zero_is_not_ready(self):
+        """timestamp=0 은 cam_state_init 초기값 — heartbeat 로 인정하지 않는다."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = self._out(ts=0)
+        assert mgr._ready_cam_state(_clock=_FixedClock()) is False
 
     def test_ssh_error_is_not_ready_and_resets(self):
         mgr = _mgr()
-        mgr._fsync_seen_at = 5.0
+        mgr._cam_ready_seen_at = 5.0
         mgr.ssh.run.side_effect = RuntimeError("boom")
-        assert mgr._ready_dmesg_fsync() is False
-        assert mgr._fsync_seen_at is None
-
-    def test_probe_command_counts_marker_and_anchor_delta(self):
-        mgr = _mgr()
-        mgr.ssh.run.return_value = "t=0 p=0 n=0"
-        mgr._ready_dmesg_fsync(_clock=_FixedClock())
-        cmd = mgr.ssh.run.call_args[0][0]
-        # 소스는 kern.log 다 — 링버퍼(dmesg)는 CLEAR·wrap 으로 비므로 쓰지 않는다
-        # (pim-check#69). 값의 정확성은 tests/test_fsync_probe_source.py 가 awk 를
-        # 실제로 돌려서 확인한다.
-        assert "/var/log/cantops/kern.log" in cmd
-        assert "dmesg" not in cmd
-        assert FSYNC_MARKER_RE in cmd
-        # awk 단일 패스 — 총건수/타임스탬프파싱/앵커이후 세 숫자를 항상 출력한다.
-        # (grep -c 는 0건일 때 exit 1 이라 ssh.run 이 None 을 반환 — 그 규약에
-        #  의존하지 않도록 END 에서 무조건 찍는다.)
-        assert "awk -v a=" in cmd
-        assert 't=%d p=%d n=%d' in cmd
-        # 앵커가 명령에 실려야 델타 판정이 성립한다.
-        mgr._dmesg_anchor_uptime = 461.7
-        mgr._ready_dmesg_fsync(_clock=_FixedClock())
-        assert "awk -v a=461.7" in mgr.ssh.run.call_args[0][0]
-
-    def test_probe_command_survives_marker_with_regex_braces(self):
-        """marker 에 정규식 수량자(`{1,3}`)가 들어와도 명령 조립이 깨지지 않아야 한다.
-
-        awk 프로그램은 중괄호를 리터럴로 쓴다. marker 를 .format() 으로 끼우면
-        수량자가 치환 필드로 해석돼 KeyError 나 잘못된 치환이 난다 — 연결로 끼운다.
-        """
-        import setup as setup_mod
-
-        original = setup_mod.FSYNC_MARKER_RE
-        try:
-            setup_mod.FSYNC_MARKER_RE = "max9296_fsync( [a-z-]{1,12})? fps :"
-            mgr = _mgr()
-            cmd = mgr._dmesg_fsync_probe_command()   # 예외 없이 조립돼야 한다
-            assert "[a-z-]{1,12}" in cmd             # 수량자가 원형 그대로
-            assert 't=%d p=%d n=%d' in cmd           # awk 리터럴 중괄호 보존
-            assert "{t++;" in cmd
-        finally:
-            setup_mod.FSYNC_MARKER_RE = original
-
-    def test_anchor_delta_blocks_stale_pre_anchor_lines(self):
-        """하드리셋 시나리오 — 링버퍼에 직전 부팅 fsync 가 남아도 게이트는 안 열린다.
-
-        재부팅은 dmesg 링버퍼를 비우지만 하드리셋(SoC 재부팅 없음)은 비우지 않는다.
-        총건수(t)만 보면 조기 개방되고, 앵커 이후(n)를 보면 막힌다.
-        """
-        mgr = _mgr()
-        mgr._dmesg_anchor_uptime = 500.0
-        mgr.ssh.run.return_value = "t=3 p=3 n=0"   # 전부 앵커 이전(직전 부팅)
-        clk = _FixedClock(start=0.0)
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False
-        clk.v = 100.0
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False
-        # 리셋 이후 라인이 생기면 통과한다.
-        mgr.ssh.run.return_value = "t=4 p=4 n=1"
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False   # 최초 관측
-        clk.v = 100.0 + FSYNC_SETTLE_SEC
-        assert mgr._ready_dmesg_fsync(_clock=clk) is True
-
-    def test_falls_back_to_total_when_timestamps_unparseable(self):
-        """printk 타임스탬프가 꺼진 보드 — 앵커 델타 불가 시 기존 동작으로 폴백.
-
-        게이트가 영영 안 열리는 것보다 '존재만으로 판정'이 낫다.
-        """
-        mgr = _mgr()
-        mgr._dmesg_anchor_uptime = 500.0
-        mgr.ssh.run.return_value = "t=2 p=0 n=0"
-        clk = _FixedClock(start=0.0)
-        assert mgr._ready_dmesg_fsync(_clock=clk) is False   # 최초 관측
-        clk.v = FSYNC_SETTLE_SEC
-        assert mgr._ready_dmesg_fsync(_clock=clk) is True
+        assert mgr._ready_cam_state() is False
+        assert mgr._cam_ready_seen_at is None
 
     def test_malformed_probe_output_is_not_ready(self):
         mgr = _mgr()
-        for out in ("", None, "garbage", "t=x p=y n=z"):
-            mgr._fsync_seen_at = None
+        for out in ("", None, "garbage", "healthy", "healthy;X;1;2"):
+            mgr._cam_ready_seen_at = None
             mgr.ssh.run.return_value = out
-            assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False, out
+            assert mgr._ready_cam_state(_clock=_FixedClock()) is False, out
 
-    def test_marker_re_matches_old_and_new_dmesg_formats(self):
-        """구형(pre-2.5)과 2.5+ 실측 dmesg 라인을 모두 매칭해야 한다.
-
-        2.5 실측 (2026-08-21 보드):
-        '[I2C:1][max9296.c:4619] max9296_fsync side fps : 15, low : 65666, ...'
-        """
-        pattern = re.compile(FSYNC_MARKER_RE)
-        old_line = "[I2C:1][max9296.c:1234] max9296_fsync fps : 30, low : 1"
-        new_lines = [
-            "[I2C:1][max9296.c:4619] max9296_fsync side fps : 15, low : 65666, high : 1000",
-            "[I2C:2][max9296.c:4619] max9296_fsync dual fps : 30, low : 1, high : 2",
-            "[I2C:2][max9296.c:4619] max9296_fsync single fps : 15, low : 1, high : 2",
-            # 미래의 새 mode 단어도 매칭해야 한다 (open set — 화이트리스트 재파손 방지).
-            "[I2C:1][max9296.c:4619] max9296_fsync quad-wide fps : 60, low : 1, high : 2",
-        ]
-        assert pattern.search(old_line)
-        for line in new_lines:
-            assert pattern.search(line), line
-        # 무관한 라인은 매칭하지 않는다.
-        assert not pattern.search("max9296_fsync thread started")
-
-    def test_count_parsed_from_self_exiting_output(self):
+    def test_probe_reads_state_and_heartbeat_in_one_roundtrip(self):
+        """state·timestamp·보드 now 가 **한 명령**에서 나온다 — delta 양변이 같은
+        보드 시계이고, 커널 로그 텍스트는 더 이상 읽지 않는다 (#85)."""
         mgr = _mgr()
-        # '|| echo 0' 덕에 board 는 0건이어도 None 이 아닌 "0" 을 반환
-        mgr.ssh.run.return_value = "0"
-        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
-        # None(=SSH 비정상)도 안전하게 0 처리
-        mgr.ssh.run.return_value = None
-        assert mgr._ready_dmesg_fsync(_clock=_FixedClock()) is False
+        mgr.ssh.run.return_value = self._out()
+        mgr._ready_cam_state(_clock=_FixedClock())
+        assert mgr.ssh.run.call_count == 1
+        cmd = mgr.ssh.run.call_args[0][0]
+        assert f"{CAM_STATE_DIR}/state" in cmd
+        assert f"{CAM_STATE_DIR}/timestamp" in cmd
+        assert "date +%s" in cmd
+        assert "kern.log" not in cmd and "dmesg" not in cmd
 
     def test_camera_init_stage_before_recording_when_enabled(self):
         mgr = _mgr()
         mgr._ready_processes_list = ["gstApp"]
-        mgr._ready_fsync = True
+        mgr._ready_camera_init = True
         mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
         assert [n for n, _ in mgr._stabilize_stages()] == [
             "ssh", "session_anchor", "processes", "camera_init", "recording"]
@@ -363,16 +311,40 @@ class TestStageCameraInitFsync:
     def test_camera_init_stage_skipped_when_not_camera(self):
         mgr = _mgr()
         mgr._ready_recording_paths = ["/dev/shm"]
-        # ready_fsync 미주입(기본 False) → camera_init 단계 없음
+        # ready_camera_init 미주입(기본 False) → camera_init 단계 없음
         assert [n for n, _ in mgr._stabilize_stages()] == ["ssh", "recording"]
 
-    def test_run_setup_stores_ready_fsync(self):
+    def test_run_setup_stores_ready_camera_init(self):
         mgr = _mgr()
         # edge_changes 없고 inject 없으면 run_setup 은 곧 False 반환하지만
         # 그 전에 readiness 주입값은 저장된다.
-        mgr.run_setup({}, ready_fsync=True)
-        assert mgr._ready_fsync is True
-        assert mgr._fsync_seen_at is None
+        mgr.run_setup({}, ready_camera_init=True)
+        assert mgr._ready_camera_init is True
+        assert mgr._cam_ready_seen_at is None
+
+    def test_profile_overrides_flow_into_gate(self):
+        """#103 리뷰(Codex P2) — 프로파일이 checks.cam_state 의 dir/임계를
+        오버라이드하면 게이트도 **같은 값**을 봐야 한다. 아니면 체크는 통과하는데
+        게이트는 엉뚱한 디렉터리를 폴링하거나 다른 신선도 정책을 쓴다."""
+        mgr = _mgr()
+        mgr.run_setup({}, ready_camera_init=True,
+                      ready_cam_state_dir="/run/cs",
+                      ready_cam_heartbeat_max_age_sec=60)
+        assert "/run/cs/state" in mgr._cam_state_ready_probe_command()
+        # 기본 임계(30s)면 stale 인 age=45 가, 프로파일 임계(60s)에서는 신선하다.
+        mgr.ssh.run.return_value = self._out(ts=1_000_000, now=1_000_045)
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_cam_state(_clock=clk) is False   # 최초 관측(settle 대기)
+        assert mgr._cam_ready_seen_at is not None
+        clk.v = CAM_READY_SETTLE_SEC
+        assert mgr._ready_cam_state(_clock=clk) is True
+
+    def test_garbage_threshold_falls_back_to_default(self):
+        """임계 오염은 체크가 FAIL 로 표면화한다 — 게이트는 기본값으로 계속 간다."""
+        mgr = _mgr()
+        mgr.run_setup({}, ready_camera_init=True,
+                      ready_cam_heartbeat_max_age_sec="thirty")
+        assert mgr._cam_heartbeat_max_age == CAM_READY_HEARTBEAT_MAX_AGE_SEC
 
 
 class TestProfileIsCamera:
@@ -422,7 +394,7 @@ class TestProfileIsCamera:
 
 
 class TestReadinessKwargs:
-    def test_camera_profile_enables_fsync_and_paths(self):
+    def test_camera_profile_enables_camera_init_and_paths(self):
         from setup import readiness_kwargs, RECORDING_DIRS
         prof = {
             "setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}},
@@ -431,21 +403,39 @@ class TestReadinessKwargs:
         kw = readiness_kwargs(prof)
         assert kw["ready_processes"] == ["gstApp", "chk_cam_operate"]
         assert kw["ready_recording_paths"] == RECORDING_DIRS
-        assert kw["ready_fsync"] is True
+        assert kw["ready_camera_init"] is True
 
-    def test_non_camera_profile_disables_fsync(self):
+    def test_non_camera_profile_disables_camera_init(self):
         from setup import readiness_kwargs
         prof = {"setup": {"edgeconf_changes": {".NETWORK.wifi.ssid": "x"}},
                 "checks": {"custom_commands": [{"name": "cfg", "command": "jq ."}]}}
         kw = readiness_kwargs(prof)
-        assert kw["ready_fsync"] is False
+        assert kw["ready_camera_init"] is False
         assert kw["ready_processes"] == []
 
     def test_handles_missing_checks(self):
         from setup import readiness_kwargs
         kw = readiness_kwargs({})
         assert kw["ready_processes"] == []
-        assert kw["ready_fsync"] is False
+        assert kw["ready_camera_init"] is False
+
+    def test_cam_state_overrides_pass_through(self):
+        """checks.cam_state 의 dir/임계 오버라이드가 게이트 인자로 관통한다 (#103)."""
+        from setup import readiness_kwargs
+        prof = {
+            "setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}},
+            "checks": {"cam_state": {"dir": "/run/cs", "heartbeat_max_age_sec": 60}},
+        }
+        kw = readiness_kwargs(prof)
+        assert kw["ready_cam_state_dir"] == "/run/cs"
+        assert kw["ready_cam_heartbeat_max_age_sec"] == 60
+
+    def test_cam_state_defaults_when_not_overridden(self):
+        from setup import readiness_kwargs, CAM_STATE_DIR
+        from setup import CAM_READY_HEARTBEAT_MAX_AGE_SEC as MAX_AGE
+        kw = readiness_kwargs({})
+        assert kw["ready_cam_state_dir"] == CAM_STATE_DIR
+        assert kw["ready_cam_heartbeat_max_age_sec"] == MAX_AGE
 
 
 class TestAeSettleTargets:
@@ -759,7 +749,7 @@ class TestStageAeSettle:
     def test_stage_order_between_camera_init_and_recording(self):
         mgr = _mgr()
         mgr._ready_processes_list = ["gstApp"]
-        mgr._ready_fsync = True
+        mgr._ready_camera_init = True
         mgr._ready_ae_targets = list(self._T)
         mgr._ready_recording_paths = ["/dev/shm", "/mnt/sd_cam"]
         assert [n for n, _ in mgr._stabilize_stages()] == [
@@ -768,7 +758,7 @@ class TestStageAeSettle:
 
     def test_stage_absent_when_no_targets(self):
         mgr = _mgr()
-        mgr._ready_fsync = True
+        mgr._ready_camera_init = True
         mgr._ready_recording_paths = ["/dev/shm"]
         assert [n for n, _ in mgr._stabilize_stages()] == [
             "ssh", "session_anchor", "camera_init", "recording"]
@@ -778,7 +768,7 @@ class TestStageAeSettle:
 
         wait_until_ready 는 단계 타임아웃에서 즉시 False 를 반환하고, _stabilize 는
         경고 후 진행한다(기존 semantics — monitor 가 최종 검증). 즉 AE 게이트는
-        fsync 가 뜨지 않는 상황을 구제하지 않는다: 그 경우 카메라 자체가 init 되지
+        camera_init 게이트가 열리지 않는 상황을 구제하지 않는다: 그 경우 카메라 자체가 init 되지
         않은 것이라 케이스는 어차피 실패한다. 예산 공유 구조를 명시적으로 고정한다.
         """
         mgr = _mgr()
@@ -939,16 +929,9 @@ class TestSessionAnchor:
         mgr._ready_recording_paths = ["/dev/shm"]
         # 비카메라: 앵커를 읽는 custom_commands 가 없으므로 단계도 없다.
         assert "session_anchor" not in [n for n, _ in mgr._stabilize_stages()]
-        mgr._ready_fsync = True
+        mgr._ready_camera_init = True
         stages = [n for n, _ in mgr._stabilize_stages()]
         assert stages[:2] == ["ssh", "session_anchor"]
-
-    def test_run_setup_resets_dmesg_anchor(self):
-        mgr = _mgr()
-        mgr._dmesg_anchor_uptime = 461.7
-        mgr.run_setup({})
-        # 재부팅 경로 기본값 — 링버퍼가 비워지므로 0 이면 충분하다.
-        assert mgr._dmesg_anchor_uptime == 0.0
 
 
 class TestCasesUseSessionAnchor:
