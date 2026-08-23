@@ -342,6 +342,10 @@ class SetupManager:
         # teardown 복원 원본 — {conf_path: base64 문자열} (pim-check#65).
         # 보드의 .bak 을 쓰지 않는 이유는 snapshot_config 주석 참조.
         self._config_snapshots: dict[str, str] = {}
+        # 이번 setup 에서 스냅샷에 실패한 경로 (pim-check#82). 실패는 setup 을
+        # 중단시키지 않지만, plan 캠페인 복원이 "이 파일의 기준선은 밀렸을 수
+        # 있다" 를 판정하려면 실패 사실이 인스턴스에 남아야 한다.
+        self._snapshot_failures: set[str] = set()
 
     def _backup_path(self, conf_path: str) -> str:
         """conf_path에 대응하는 backup 경로 (보드 fw config_guard.sh 인식)."""
@@ -1004,6 +1008,7 @@ class SetupManager:
         self._ready_ae_targets = list(ready_ae_targets or [])
         self._ae_match_at = None    # 이번 setup 의 AE 정착 타이머 초기화
         self._config_snapshots = {}  # 이번 setup 의 복원 원본 (이전 케이스 잔존 제거)
+        self._snapshot_failures = set()  # 이번 setup 의 스냅샷 실패 (#82)
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")
@@ -1064,9 +1069,15 @@ class SetupManager:
         return True
 
     def _snapshot_or_warn(self, conf_path: str) -> None:
-        """복원 원본 스냅샷. 실패해도 setup 을 중단하지 않고 경고만 남긴다."""
+        """복원 원본 스냅샷. 실패해도 setup 을 중단하지 않고 경고만 남긴다.
+
+        실패 경로는 `_snapshot_failures` 에 남긴다 — 이 경고는 "이 케이스는 복원
+        불가" 까지만 말하고, 캠페인 기준선이 밀렸는지는 plan 이 채택 시점과
+        대조해야 알 수 있다 (#82).
+        """
         if self.snapshot_config(conf_path):
             return
+        self._snapshot_failures.add(conf_path)
         print(f"WARNING: Failed to snapshot {conf_path} — teardown restore unavailable")
         self._local0_log(f"setup SNAPSHOT FAILED — {conf_path} (no teardown restore)")
 

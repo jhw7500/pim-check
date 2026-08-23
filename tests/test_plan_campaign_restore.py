@@ -259,5 +259,187 @@ class TestCampaignWideRestore(unittest.TestCase):
         self.assertEqual(dict(restored)[ORD_VCM_PATH], '{"state": "STATE0-ORD"}')
 
 
+class TestBaselineSuspectSurfacing(unittest.TestCase):
+    """#82 — 채택 전 스냅샷 실패는 기준선을 밀고, 복원은 성공처럼 보인다.
+
+    복원 동작은 바꾸지 않는다(가장 이른 가용 스냅샷으로 최선 복원). 바꾸는 것은
+    가시성이다 — 실패를 아는 곳(setup, `_snapshot_failures`)이 기록하고, 그 영향을
+    아는 곳(plan)이 채택 시점과 대조해 캠페인 끝에 BASELINE SUSPECT 를 정상 복원
+    로그와 **다른 모양으로** 한 번 더 알린다. 채택 이후의 실패는 기준선에 무해하므로
+    조용해야 한다 — 헛경보는 경보를 죽인다.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir)
+        self.cases_dir = os.path.join(self.tmpdir, "cases")
+        os.makedirs(self.cases_dir)
+        with open(os.path.join(self.tmpdir, "base.yaml"), "w") as f:
+            f.write(
+                "target:\n  host: 192.168.0.5\n  user: root\n  password: root\n"
+                "monitor:\n  duration_sec: 0\n  interval_sec: 5\n"
+            )
+
+    def _case(self, name: str, body: str):
+        with open(os.path.join(self.cases_dir, f"{name}.yaml"), "w") as f:
+            f.write(f"name: {name}\nsetup:\n{body}")
+
+    def _plan(self, cases: dict) -> Plan:
+        return Plan(name="t", description="t", version=1, cases=cases,
+                    execution=dict(DEFAULT_EXECUTION), gate=dict(DEFAULT_GATE),
+                    reports=[])
+
+    def _run(self, case_names: list[str], fail_edge_snapshot_read: int,
+             interrupt_in_engine: bool = False):
+        """`fail_edge_snapshot_read` 번째 edgeconf 스냅샷 읽기만 실패시키고 돌린다.
+
+        반환: (restored, board_cmds, stdout, snap_ok) — suspect 경고는 stdout
+        (운영자)과 local0(ssh 로 나가는 logger 명령) 양쪽에서 관찰하고,
+        snap_ok 는 **성공한** edge 스냅샷 읽기가 그 순간 본 보드 상태다
+        (기대 복원값은 이 캡처와 대조한다 — 케이스당 jq 호출 수·retry 에 무관).
+        """
+        state = {EDGECONF_PATH: '{"state": "STATE0-EDGE"}',
+                 ORD_VCM_PATH: '{"state": "STATE0-ORD"}'}
+        applied: list[str] = []
+        restored: list[tuple[str, str]] = []
+        board_cmds: list[str] = []
+        snap_reads = {"n": 0}
+        snap_ok: list[str] = []
+        written: dict[str, str] = {}   # read-back verify 가 돌려줄 마지막 쓴 값
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+
+            def run(cmd, *a, **kw):
+                import base64
+                import re
+                board_cmds.append(cmd)
+                for path in (EDGECONF_PATH, ORD_VCM_PATH):
+                    if cmd.startswith("base64 -w0") and path in cmd:
+                        if path == EDGECONF_PATH:
+                            snap_reads["n"] += 1
+                            if snap_reads["n"] == fail_edge_snapshot_read:
+                                return ""   # 빈 출력 = snapshot_config 실패
+                            snap_ok.append(state[path])
+                        return base64.b64encode(state[path].encode()).decode()
+                    if "base64 -d" in cmd and path in cmd:
+                        m = re.search(r"printf '%s' '([^']+)'", cmd)
+                        if m:
+                            restored.append(
+                                (path, base64.b64decode(m.group(1)).decode()))
+                        return "OK"
+                if cmd.lstrip().startswith("jq "):
+                    if "&& mv" in cmd:   # apply 쓰기 — 보드 상태가 바뀐다
+                        for path in (EDGECONF_PATH, ORD_VCM_PATH):
+                            if path in cmd:
+                                applied.append(path)
+                                state[path] = f'{{"state": "STATE{len(applied)}"}}'
+                                m = re.search(r"--argjson v (\S+) ", cmd)
+                                if m:
+                                    written[path] = m.group(1)
+                        return "OK"
+                    # read-back verify — 읽기는 변이하지 않고 방금 쓴 값을 본다
+                    for path in (EDGECONF_PATH, ORD_VCM_PATH):
+                        if path in cmd:
+                            return written.get(path, "OK")
+                return "OK"
+
+            ssh.run.side_effect = run
+            return ssh
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            if interrupt_in_engine:
+                engine.run_snapshot.side_effect = KeyboardInterrupt()
+            else:
+                engine.run_snapshot.return_value = [
+                    {"name": "d", "passed": True, "reason": "OK", "data": {},
+                     "duration_ms": 1},
+                ]
+            return engine
+
+        def setup_factory(ssh):
+            mgr = SetupManager(ssh)
+            mgr.check_current = MagicMock(return_value=False)
+            mgr.backup = MagicMock(return_value=True)
+            mgr.reboot_and_wait = MagicMock()
+            return mgr
+
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            try:
+                execute_plan(self._plan({"regression": case_names}), self.tmpdir,
+                             ssh_factory=ssh_factory, setup_factory=setup_factory,
+                             engine_factory=engine_factory)
+            except KeyboardInterrupt:
+                pass    # graceful shutdown 경로 — finally 정리는 이미 돌았다
+        return restored, board_cmds, out.getvalue(), snap_ok
+
+    def test_failure_before_adoption_is_surfaced(self):
+        """1케이스 실패 → 이후 스냅샷 채택 — 기준선은 이미 변경된 상태다."""
+        self._case("case_a", "  edgeconf_changes:\n    .VHL_CAM.fps: 15\n")
+        self._case("case_b", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n")
+
+        restored, cmds, out, snap_ok = self._run(["case_a", "case_b"],
+                                                 fail_edge_snapshot_read=1)
+
+        # 복원은 여전히 최선(가장 이른 **가용** 스냅샷 = 첫 성공 읽기)으로 돈다 —
+        # 다만 그 값은 캠페인 시작 전(STATE0)이 아니라 case_a 가 이미 변경한 뒤다.
+        # 이 결함이 조용히 지나가지 않는 것이 이 테스트의 요점이다.
+        payloads = [p for path, p in restored if path == EDGECONF_PATH]
+        self.assertTrue(snap_ok, "성공한 스냅샷이 없다 — 시나리오가 깨졌다")
+        self.assertEqual(payloads, [snap_ok[0]])
+        self.assertNotEqual(snap_ok[0], '{"state": "STATE0-EDGE"}',
+                            "기준선이 밀리지 않았다 — 시나리오가 깨졌다")
+        self.assertIn("campaign baseline suspect", out)
+        self.assertIn("case_a", out, "어느 케이스에서 실패했는지 알려주지 않는다")
+        self.assertTrue(any("BASELINE SUSPECT" in c for c in cmds),
+                        "local0 로그에 suspect 가 남지 않았다")
+
+    def test_failure_after_adoption_is_harmless_and_silent(self):
+        """기준선 채택 뒤의 실패는 캠페인 복원에 무해하다 — 경보를 울리면 안 된다."""
+        self._case("case_a", "  edgeconf_changes:\n    .VHL_CAM.fps: 15\n")
+        self._case("case_b", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n")
+
+        restored, cmds, out, snap_ok = self._run(["case_a", "case_b"],
+                                                 fail_edge_snapshot_read=2)
+
+        payloads = [p for path, p in restored if path == EDGECONF_PATH]
+        self.assertEqual(snap_ok[0], '{"state": "STATE0-EDGE"}')
+        self.assertEqual(payloads, ['{"state": "STATE0-EDGE"}'],
+                         "기준선이 무사한데 복원이 달라졌다")
+        self.assertNotIn("campaign baseline suspect", out)
+        self.assertFalse(any("BASELINE SUSPECT" in c for c in cmds))
+
+    def test_interrupt_after_failed_snapshot_still_surfaces(self):
+        """#100 Codex P2 — SIGINT 가 케이스 실행 도중에 오면(KeyboardInterrupt)
+        루프의 수확 블록에 도달하지 못한다. finally 가 마지막 시도의 매니저를
+        회수해야 중단 시에도 suspect 가 침묵하지 않는다."""
+        self._case("case_a", "  edgeconf_changes:\n    .VHL_CAM.fps: 15\n")
+
+        restored, cmds, out, _snap_ok = self._run(
+            ["case_a"], fail_edge_snapshot_read=1, interrupt_in_engine=True)
+
+        self.assertIn("campaign baseline suspect", out,
+                      "중단 경로에서 suspect 가 침묵한다")
+        self.assertTrue(any("BASELINE SUSPECT" in c for c in cmds))
+
+    def test_never_adopted_failure_is_also_surfaced(self):
+        """실패한 파일을 이후 아무 케이스도 스냅샷하지 못하면 복원 자체가 빠진다 —
+        이것도 같은 suspect 로 알린다."""
+        self._case("case_a", "  edgeconf_changes:\n    .VHL_CAM.fps: 15\n")
+
+        restored, cmds, out, _snap_ok = self._run(
+            ["case_a"], fail_edge_snapshot_read=1)
+
+        self.assertEqual([p for path, p in restored if path == EDGECONF_PATH], [],
+                         "스냅샷 없는 파일이 복원됐다(.bak 폴백이 아니어야 한다)")
+        self.assertIn("campaign baseline suspect", out)
+        self.assertTrue(any("BASELINE SUSPECT" in c for c in cmds))
+
+
 if __name__ == "__main__":
     unittest.main()

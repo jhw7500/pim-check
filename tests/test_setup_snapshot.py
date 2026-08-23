@@ -245,3 +245,31 @@ class TestRunTeardownPrefersSnapshot:
         mgr.run_teardown({"inject_command": "true", "recovery_command": "true"})
         mgr.restore_from_snapshot.assert_not_called()
         mgr.restore.assert_not_called()
+
+
+class TestSnapshotFailureLedger:
+    """#82 — 스냅샷 실패가 인스턴스에 남아야 plan 이 기준선 밀림을 판정한다.
+
+    `_snapshot_or_warn` 의 경고는 그 케이스 시점에 흘러가고, 캠페인 복원은 수천 줄
+    뒤에 성공으로 찍힌다 — 둘을 잇는 것이 이 원장(ledger)이다.
+    """
+
+    def test_failure_records_path(self):
+        mgr = _mgr()
+        mgr.ssh.run.return_value = ""          # 빈 출력 = snapshot_config 실패
+        mgr._snapshot_or_warn(EDGECONF_PATH)
+        assert mgr._snapshot_failures == {EDGECONF_PATH}
+
+    def test_success_records_nothing(self):
+        import base64
+        mgr = _mgr()
+        mgr.ssh.run.return_value = base64.b64encode(b'{"a": 1}').decode()
+        mgr._snapshot_or_warn(EDGECONF_PATH)
+        assert mgr._snapshot_failures == set()
+
+    def test_run_setup_resets_the_ledger(self):
+        """이전 케이스의 실패가 다음 케이스로 새면 plan 이 엉뚱한 케이스를 의심한다."""
+        mgr = _mgr()
+        mgr._snapshot_failures.add(EDGECONF_PATH)
+        mgr.run_setup({})                      # 변경도 inject 도 없음 — 조기 False
+        assert mgr._snapshot_failures == set()
