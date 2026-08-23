@@ -922,3 +922,96 @@ class TestInterruptedRecoveryFallback(unittest.TestCase):
 
         self.assertEqual(sent.count("recover-a"), 1,
                          f"복구가 중복 실행됐다 ({sent.count('recover-a')}회)")
+
+
+class TestMixedTargetRefusal(unittest.TestCase):
+    """#96 — 캠페인 스냅샷은 path 만 키로 쓰고 최종 복원은 last_ssh 한 대에 쓴다.
+
+    케이스별 target.host 가 갈리면 보드 A 의 설정이 보드 B 에 복원되고 A 는
+    변경된 채 남는다 — 아무 신호 없이 두 대가 오염된다. 혼합 타겟 플랜은
+    케이스 시작 전(보드 접촉 전)에 거부한다. 실제로 필요해지면 (host, path)
+    분할(이슈 (a)안)로 간다.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir)
+        self.cases_dir = os.path.join(self.tmpdir, "cases")
+        os.makedirs(self.cases_dir)
+        with open(os.path.join(self.tmpdir, "base.yaml"), "w") as f:
+            f.write(
+                "target:\n  host: 192.168.0.5\n  user: root\n  password: root\n"
+                "monitor:\n  duration_sec: 0\n  interval_sec: 5\n"
+            )
+
+    def _case(self, name: str, text: str):
+        with open(os.path.join(self.cases_dir, f"{name}.yaml"), "w") as f:
+            f.write(text)
+
+    def _plan(self, names):
+        return Plan(name="t", description="t", version=1,
+                    cases={"regression": names},
+                    execution=dict(DEFAULT_EXECUTION), gate=dict(DEFAULT_GATE),
+                    reports=[])
+
+    def _factories(self):
+        ssh_calls: list[str] = []
+
+        def ssh_factory(host, user, password):
+            ssh_calls.append(host)
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            return ssh
+
+        def engine_factory(ssh, profile):
+            e = MagicMock()
+            e.run_snapshot.return_value = [
+                {"name": "d", "passed": True, "reason": "OK", "data": {},
+                 "duration_ms": 1}]
+            return e
+
+        return ssh_calls, ssh_factory, engine_factory
+
+    def test_mixed_hosts_refused_before_any_board_contact(self):
+        self._case("case_a", "name: case_a\n")
+        self._case("case_b", "name: case_b\ntarget:\n  host: 192.168.0.9\n")
+        ssh_calls, ssh_factory, engine_factory = self._factories()
+
+        from plan import MixedTargetError
+        with self.assertRaises(MixedTargetError) as ctx:
+            execute_plan(self._plan(["case_a", "case_b"]), self.tmpdir,
+                         ssh_factory=ssh_factory, setup_factory=None,
+                         engine_factory=engine_factory)
+
+        msg = str(ctx.exception)
+        self.assertIn("192.168.0.5", msg)
+        self.assertIn("192.168.0.9", msg)
+        self.assertIn("case_b", msg, "어느 케이스가 갈리는지 알려주지 않는다")
+        self.assertEqual(ssh_calls, [], "거부 전에 보드에 접촉했다")
+
+    def test_single_host_runs(self):
+        """전 케이스가 같은 host 면(명시든 base 상속이든) 거부하지 않는다."""
+        self._case("case_a", "name: case_a\n")
+        self._case("case_b", "name: case_b\ntarget:\n  host: 192.168.0.5\n")
+        ssh_calls, ssh_factory, engine_factory = self._factories()
+
+        executions = execute_plan(self._plan(["case_a", "case_b"]), self.tmpdir,
+                                  ssh_factory=ssh_factory, setup_factory=None,
+                                  engine_factory=engine_factory)
+
+        self.assertEqual(len(executions), 2)
+        self.assertTrue(all(e.passed for e in executions))
+
+    def test_cli_host_override_unifies_mixed_hosts(self):
+        """CLI --host 는 모든 케이스를 한 타겟으로 모은다 — 그건 혼합이 아니다."""
+        self._case("case_a", "name: case_a\ntarget:\n  host: 192.168.0.8\n")
+        self._case("case_b", "name: case_b\ntarget:\n  host: 192.168.0.9\n")
+        ssh_calls, ssh_factory, engine_factory = self._factories()
+
+        executions = execute_plan(self._plan(["case_a", "case_b"]), self.tmpdir,
+                                  ssh_factory=ssh_factory, setup_factory=None,
+                                  engine_factory=engine_factory,
+                                  cli_args={"target": {"host": "192.168.0.7"}})
+
+        self.assertEqual(len(executions), 2)
+        self.assertEqual(set(ssh_calls), {"192.168.0.7"})

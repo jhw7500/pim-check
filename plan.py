@@ -48,6 +48,18 @@ ALLOWED_REPORT_FORMATS = {"json", "html", "junit", "markdown_summary"}
 ALLOWED_NEW_CASE_POLICIES = {"warn", "skip", "fail"}
 SCHEMA_VERSION = 1
 
+# 프로파일에 target.host 가 없을 때의 폴백 — 혼합 타겟 사전 검사(#96)와 실행
+# 루프가 같은 값을 봐야 하므로 한 곳에 둔다 (리터럴 2곳이면 갈라질 수 있다).
+DEFAULT_TARGET_HOST = "192.168.0.5"
+
+
+class MixedTargetError(ValueError):
+    """혼합 타겟 플랜 거부 (pim-check#96) — execute_plan 이 보드 접촉 전에 던진다.
+
+    ValueError 서브클래스로 두되, CLI 는 이 타입만 잡는다 — Engine 등 하위의
+    무관한 ValueError 가 플랜 설정 오류로 오보되지 않도록.
+    """
+
 
 @dataclass
 class Plan:
@@ -598,6 +610,26 @@ def execute_plan(plan: Plan, profiles_dir: str,
 
     resolved = resolve_cases(plan, profiles_dir)
     total = len(resolved)
+
+    # 혼합 타겟 플랜 거부 (pim-check#96) — 캠페인 스냅샷은 설정 파일 경로만 키로
+    # 쓰고 최종 복원은 마지막 케이스의 ssh 한 대에 쓴다. 케이스별 target.host 가
+    # 갈리면 보드 A 의 설정이 보드 B 에 복원되고 A 는 변경된 채 남는다 — 아무
+    # 신호 없이 두 대가 오염되므로 케이스 시작 전에 멈춘다. 혼합 타겟이 실제로
+    # 필요해지면 스냅샷·teardown 을 (host, path) 단위로 분할할 것(이슈 (a)안).
+    _hosts: dict[str, str] = {}
+    for _section, _cn in resolved:
+        try:
+            _prof = load_profile(profiles_dir, case=_cn)
+        except FileNotFoundError:
+            continue    # 실행 루프가 PROFILE_NOT_FOUND 로 케이스 단위 보고한다
+        _rt = resolve_runtime_profile(_prof, plan_global=None, cli_args=cli_args)
+        _hosts.setdefault((_rt.get("target") or {}).get("host", DEFAULT_TARGET_HOST), _cn)
+    if len(_hosts) > 1:
+        _detail = ", ".join(f"{h} ({c})" for h, c in sorted(_hosts.items()))
+        raise MixedTargetError(
+            "혼합 타겟 플랜은 지원하지 않습니다 (pim-check#96) — 캠페인 복원이 "
+            f"보드 간 설정을 교차 오염시킵니다. hosts: {_detail}")
+
     executions: list[CaseExecution] = []
 
     # 마지막 case의 ssh + setup_cfg 추적 — plan 종료(정상/예외) 시
@@ -665,7 +697,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
                                               cli_args=cli_args)
 
             target = runtime.get("target", {})
-            host = target.get("host", "192.168.0.5")
+            host = target.get("host", DEFAULT_TARGET_HOST)
             user = target.get("user", "root")
             password = target.get("password", "root")
 

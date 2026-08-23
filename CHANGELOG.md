@@ -2,6 +2,31 @@
 
 ## Unreleased (2026-08-23)
 
+### 혼합 타겟 플랜을 시작 전에 거부한다 (pim-check#96)
+
+- **fix(plan)**: 캠페인 스냅샷은 설정 파일 경로만 키로 쓰고 최종 복원은 마지막
+  케이스의 ssh 한 대에 쓴다 — 케이스별 `target.host` 가 갈리면 **보드 A 의 설정이
+  보드 B 에 복원되고 A 는 변경된 채 남는다**(#68 PR #81 Codex P1). 현재 코퍼스에
+  혼합 타겟 플랜은 없지만(케이스 yaml `target.host` 0건) 쓰는 순간 아무 신호 없이
+  두 대가 오염된다.
+- 이슈의 (b)안: `execute_plan` 초입(보드 접촉 전)에서 케이스별 **유효 host**
+  (base+case+CLI 오버라이드 적용 후)를 대조해 갈리면 ValueError 로 거부.
+  CLI `--host` 로 전 케이스가 한 타겟에 모이면 혼합이 아니므로 허용. CLI 는
+  load_plan lint 실패와 같은 채널(ERROR + exit 3)로 표면화.
+- 혼합 타겟이 실제로 필요해지면 (a)안 — 스냅샷·teardown 의 (host, path) 분할 —
+  로 간다. 지금 (a)를 넣는 것은 쓰지 않는 경로에 복잡도를 넣는 것.
+- 가드 3건(수정 전 red 확인): 혼합 거부(양쪽 host·갈린 케이스명 명시 + 보드
+  무접촉) · 동일 host 허용 · CLI 통일 허용.
+- 자동 리뷰 반영(#101): ① Gemini HIGH "plan_global 미반영"은 오탐 — plan_global
+  은 v1 미사용 placeholder(비-None 전달자 0곳)이고 실행 루프도 None 을 쓰므로
+  사전 검사와 실행이 같은 축을 본다. ② 기본 host 리터럴 2곳을
+  `DEFAULT_TARGET_HOST` 상수로 통일(Gemini M — 드리프트 방지). ③ CLI 캐치를
+  전용 `MixedTargetError`(ValueError 서브클래스)로 좁힘 — 하위(Engine 등)의
+  무관한 ValueError 가 설정 오류로 오보되지 않게(Gemini M). ④ 거부가 뷰어에
+  "완료 0/N" 정상 완주처럼 남던 것 — `check="plan"` fail 이벤트를 스트림에
+  남긴다(Codex P2, 가드 1건). 중복 프로파일 로딩(Gemini M)은 유지 — 코퍼스
+  규모(로컬 YAML 수십 개)에서 캐싱이 주는 이득보다 두 경로 결합이 비싸다.
+
 ### 스냅샷 실패로 밀린 캠페인 기준선을 드러낸다 (pim-check#82)
 
 - **fix(plan)**: 케이스의 스냅샷 실패는 setup 을 중단하지 않는다(옳은 판단) —
