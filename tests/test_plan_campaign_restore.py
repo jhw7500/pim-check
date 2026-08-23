@@ -289,7 +289,8 @@ class TestBaselineSuspectSurfacing(unittest.TestCase):
                     execution=dict(DEFAULT_EXECUTION), gate=dict(DEFAULT_GATE),
                     reports=[])
 
-    def _run(self, case_names: list[str], fail_edge_snapshot_read: int):
+    def _run(self, case_names: list[str], fail_edge_snapshot_read: int,
+             interrupt_in_engine: bool = False):
         """`fail_edge_snapshot_read` 번째 edgeconf 스냅샷 읽기만 실패시키고 돌린다.
 
         반환: (restored, board_cmds, stdout, snap_ok) — suspect 경고는 stdout
@@ -304,6 +305,7 @@ class TestBaselineSuspectSurfacing(unittest.TestCase):
         board_cmds: list[str] = []
         snap_reads = {"n": 0}
         snap_ok: list[str] = []
+        written: dict[str, str] = {}   # read-back verify 가 돌려줄 마지막 쓴 값
 
         def ssh_factory(host, user, password):
             ssh = MagicMock()
@@ -328,10 +330,19 @@ class TestBaselineSuspectSurfacing(unittest.TestCase):
                                 (path, base64.b64decode(m.group(1)).decode()))
                         return "OK"
                 if cmd.lstrip().startswith("jq "):
+                    if "&& mv" in cmd:   # apply 쓰기 — 보드 상태가 바뀐다
+                        for path in (EDGECONF_PATH, ORD_VCM_PATH):
+                            if path in cmd:
+                                applied.append(path)
+                                state[path] = f'{{"state": "STATE{len(applied)}"}}'
+                                m = re.search(r"--argjson v (\S+) ", cmd)
+                                if m:
+                                    written[path] = m.group(1)
+                        return "OK"
+                    # read-back verify — 읽기는 변이하지 않고 방금 쓴 값을 본다
                     for path in (EDGECONF_PATH, ORD_VCM_PATH):
                         if path in cmd:
-                            applied.append(path)
-                            state[path] = f'{{"state": "STATE{len(applied)}"}}'
+                            return written.get(path, "OK")
                 return "OK"
 
             ssh.run.side_effect = run
@@ -339,10 +350,13 @@ class TestBaselineSuspectSurfacing(unittest.TestCase):
 
         def engine_factory(ssh, profile):
             engine = MagicMock()
-            engine.run_snapshot.return_value = [
-                {"name": "d", "passed": True, "reason": "OK", "data": {},
-                 "duration_ms": 1},
-            ]
+            if interrupt_in_engine:
+                engine.run_snapshot.side_effect = KeyboardInterrupt()
+            else:
+                engine.run_snapshot.return_value = [
+                    {"name": "d", "passed": True, "reason": "OK", "data": {},
+                     "duration_ms": 1},
+                ]
             return engine
 
         def setup_factory(ssh):
@@ -356,9 +370,12 @@ class TestBaselineSuspectSurfacing(unittest.TestCase):
         import io
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            execute_plan(self._plan({"regression": case_names}), self.tmpdir,
-                         ssh_factory=ssh_factory, setup_factory=setup_factory,
-                         engine_factory=engine_factory)
+            try:
+                execute_plan(self._plan({"regression": case_names}), self.tmpdir,
+                             ssh_factory=ssh_factory, setup_factory=setup_factory,
+                             engine_factory=engine_factory)
+            except KeyboardInterrupt:
+                pass    # graceful shutdown 경로 — finally 정리는 이미 돌았다
         return restored, board_cmds, out.getvalue(), snap_ok
 
     def test_failure_before_adoption_is_surfaced(self):
@@ -396,6 +413,19 @@ class TestBaselineSuspectSurfacing(unittest.TestCase):
                          "기준선이 무사한데 복원이 달라졌다")
         self.assertNotIn("campaign baseline suspect", out)
         self.assertFalse(any("BASELINE SUSPECT" in c for c in cmds))
+
+    def test_interrupt_after_failed_snapshot_still_surfaces(self):
+        """#100 Codex P2 — SIGINT 가 케이스 실행 도중에 오면(KeyboardInterrupt)
+        루프의 수확 블록에 도달하지 못한다. finally 가 마지막 시도의 매니저를
+        회수해야 중단 시에도 suspect 가 침묵하지 않는다."""
+        self._case("case_a", "  edgeconf_changes:\n    .VHL_CAM.fps: 15\n")
+
+        restored, cmds, out, _snap_ok = self._run(
+            ["case_a"], fail_edge_snapshot_read=1, interrupt_in_engine=True)
+
+        self.assertIn("campaign baseline suspect", out,
+                      "중단 경로에서 suspect 가 침묵한다")
+        self.assertTrue(any("BASELINE SUSPECT" in c for c in cmds))
 
     def test_never_adopted_failure_is_also_surfaced(self):
         """실패한 파일을 이후 아무 케이스도 스냅샷하지 못하면 복원 자체가 빠진다 —

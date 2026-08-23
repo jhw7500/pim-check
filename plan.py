@@ -631,6 +631,11 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # 못하므로, finally 가 이 값을 보고 대신 복구한다 — graceful shutdown 핸들러가
     # 존재하는 이유가 바로 그 정리다 (pim-check#95 리뷰).
     pending_recovery: str | None = None
+    # 마지막 시도의 매니저 홀더 — 위와 같은 이유로 finally 가 회수한다 (#82 리뷰).
+    # _run_single_case 는 run_setup **전에** 홀더를 채우므로, 중단으로 루프의
+    # 사후 수확 블록에 도달하지 못해도 원장·스냅샷이 여기 남아 있다.
+    _mgr_holder: list = []
+    case_name = ""
 
     try:
         for idx, (section, case_name) in enumerate(resolved, 1):
@@ -763,6 +768,20 @@ def execute_plan(plan: Plan, profiles_dir: str,
             if wait > 0 and idx < total:
                 time.sleep(wait)
     finally:
+        # 중단으로 루프의 사후 수확 블록에 도달하지 못한 마지막 시도의 매니저를
+        # 회수한다 (#82 리뷰 Codex P2) — 원장(suspect)·스냅샷을 캠페인 집계에
+        # 반영하고, 아래 teardown 이 같은 인스턴스를 재사용하도록 last_* 도 맞춘다.
+        # 정상 종료면 루프가 이미 같은 인스턴스를 수확했으므로(동일성 비교) 중복
+        # 집계는 없다.
+        if _mgr_holder and _mgr_holder[0] is not last_setup_mgr:
+            last_setup_mgr = _mgr_holder[0]
+            last_mgr_ssh = last_ssh
+            for _path in getattr(last_setup_mgr, "_snapshot_failures", set()):
+                if _path not in campaign_snapshots:
+                    campaign_suspect_paths.setdefault(_path, case_name or "?")
+            for _path, _snap in getattr(
+                    last_setup_mgr, "_config_snapshots", {}).items():
+                campaign_snapshots.setdefault(_path, _snap)
         # Plan 종료(정상/예외/KeyboardInterrupt) 시 마지막 case 잔재 cleanup.
         # 보드 fw chk_cam_operate.sh의 stall escalation(reboot loop) 방지.
         # 진입 조건도 **캠페인 기준**이다. 마지막 케이스만 보면, 설정을 바꾸지 않는

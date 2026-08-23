@@ -19,6 +19,13 @@
 - 가드 6건: 채택 전 실패 표면화(+어느 케이스인지) · 채택 후 실패 침묵 ·
   미채택 실패 표면화(플랜 하네스, stash 로 수정 전 red 확인) + 원장 기록/성공
   무기록/케이스별 리셋(단위).
+- 자동 리뷰 반영(#100 Codex P2): SIGINT/SIGTERM 이 케이스 실행 도중에 오면
+  (KeyboardInterrupt) 루프의 수확 블록에 도달하지 못해 **정확히 중단 경로에서**
+  suspect 가 침묵하던 것 — `_run_single_case` 가 run_setup 전에 채우는 매니저
+  홀더를 finally 가 회수해 원장·스냅샷을 캠페인 집계에 반영하고 teardown 이
+  같은 인스턴스를 재사용하게 했다(중단된 케이스의 스냅샷 복원도 함께 살아난다).
+  가드 1건 + 하네스의 read-back verify 를 실제 의미(읽기는 무변이, 쓴 값 반환)
+  로 교정.
 
 ### stream 경로도 inject-only fault 케이스를 실행한다 (pim-check#77)
 
