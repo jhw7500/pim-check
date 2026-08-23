@@ -977,7 +977,8 @@ class TestMixedTargetRefusal(unittest.TestCase):
         self._case("case_b", "name: case_b\ntarget:\n  host: 192.168.0.9\n")
         ssh_calls, ssh_factory, engine_factory = self._factories()
 
-        with self.assertRaises(ValueError) as ctx:
+        from plan import MixedTargetError
+        with self.assertRaises(MixedTargetError) as ctx:
             execute_plan(self._plan(["case_a", "case_b"]), self.tmpdir,
                          ssh_factory=ssh_factory, setup_factory=None,
                          engine_factory=engine_factory)

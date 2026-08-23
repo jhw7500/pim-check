@@ -17,6 +17,15 @@
   로 간다. 지금 (a)를 넣는 것은 쓰지 않는 경로에 복잡도를 넣는 것.
 - 가드 3건(수정 전 red 확인): 혼합 거부(양쪽 host·갈린 케이스명 명시 + 보드
   무접촉) · 동일 host 허용 · CLI 통일 허용.
+- 자동 리뷰 반영(#101): ① Gemini HIGH "plan_global 미반영"은 오탐 — plan_global
+  은 v1 미사용 placeholder(비-None 전달자 0곳)이고 실행 루프도 None 을 쓰므로
+  사전 검사와 실행이 같은 축을 본다. ② 기본 host 리터럴 2곳을
+  `DEFAULT_TARGET_HOST` 상수로 통일(Gemini M — 드리프트 방지). ③ CLI 캐치를
+  전용 `MixedTargetError`(ValueError 서브클래스)로 좁힘 — 하위(Engine 등)의
+  무관한 ValueError 가 설정 오류로 오보되지 않게(Gemini M). ④ 거부가 뷰어에
+  "완료 0/N" 정상 완주처럼 남던 것 — `check="plan"` fail 이벤트를 스트림에
+  남긴다(Codex P2, 가드 1건). 중복 프로파일 로딩(Gemini M)은 유지 — 코퍼스
+  규모(로컬 YAML 수십 개)에서 캐싱이 주는 이득보다 두 경로 결합이 비싸다.
 
 ### 스냅샷 실패로 밀린 캠페인 기준선을 드러낸다 (pim-check#82)
 

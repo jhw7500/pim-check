@@ -253,3 +253,47 @@ def test_run_plan_without_until_pass_keeps_execution(tmp_path, monkeypatch):
                               until_pass=False)
     pim_check._run_plan(args)
     assert captured["plan"].execution["monitor_until_pass"] is False
+
+
+def test_run_plan_mixed_target_rejection_reaches_event_stream(tmp_path, monkeypatch):
+    """#96 리뷰(Codex P2) — plan 수준 거부가 CLI 에만 보이고 스트림에는 정상
+    완주(run_end 0/N)처럼 남으면 대시보드가 거부를 볼 수 없다. 거부는
+    check="plan" fail 이벤트로 스트림에 남고, run_end 로 닫히기는 한다."""
+    events_dir = str(tmp_path / "events")
+    monkeypatch.setattr(run_stream, "default_events_dir", lambda: events_dir)
+
+    fake_plan = types.SimpleNamespace(
+        name="smoke", description="d",
+        execution={"stop_on_fail": False, "case_retry": 0},
+        gate={},
+    )
+    monkeypatch.setattr(plan_mod, "load_plan", lambda path: fake_plan)
+    monkeypatch.setattr(plan_mod, "load_baseline", lambda ref, root: (None, None))
+    monkeypatch.setattr(plan_mod, "evaluate_gate", lambda *a, **k: _Gate())
+    monkeypatch.setattr(plan_mod, "render_reports", lambda *a, **k: [])
+    monkeypatch.setattr(
+        plan_mod, "resolve_cases",
+        lambda plan, profiles_dir: [("regression", "c1"), ("regression", "c2")],
+    )
+
+    from plan import MixedTargetError
+
+    def fake_execute_plan(plan, profiles_dir, **kw):
+        raise MixedTargetError("혼합 타겟 플랜은 지원하지 않습니다 — hosts: a (c1), b (c2)")
+
+    monkeypatch.setattr(plan_mod, "execute_plan", fake_execute_plan)
+
+    args = argparse.Namespace(
+        plan="smoke", host="192.168.0.5", user=None, password=None,
+        duration=None, quiet=True, until_pass=False,
+    )
+    rc = pim_check._run_plan(args)
+    assert rc == 3
+
+    recs = _read(os.path.join(events_dir, "current.jsonl"))
+    kinds = [r["event_type"] for r in recs if r["event_type"] != "heartbeat"]
+    assert "fail" in kinds, f"거부가 스트림에 없다: {kinds}"
+    fail = next(r for r in recs if r["event_type"] == "fail")
+    assert fail["check"] == "plan"
+    assert "혼합 타겟" in fail["reason"]
+    assert kinds[-1] == "run_end", "스트림이 닫히지 않았다"
