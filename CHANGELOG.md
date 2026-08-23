@@ -2,12 +2,30 @@
 
 ## Unreleased (2026-08-23)
 
+### 테스트 파일명 규약 보완 + 개명 4건 (pim-check#94)
+
+- **규약 개정**(tests/AGENTS.md): "`test_{module_name}.py` 1:1" 단일 규칙을
+  코퍼스 실태(이미 `test_{module}_{topic}` 다수)에 맞춰 3분류로 보완 —
+  모듈 대응(`test_{module}[_{topic}]`) · 코퍼스 가드(`test_cases_{topic}`) ·
+  교차 경로 가드(`test_integration_{topic}`). 큰 주제는 모듈 파일에 합치지
+  않는다 — docstring 의 회귀 기전·재현 문맥이 값을 한다(이슈 판단 유지).
+- **개명 4건**(git mv + 자기참조 갱신): `test_teardown_readiness` →
+  `test_setup_teardown_readiness` · `test_cam_state_heartbeat` →
+  `test_checks_cam_state_heartbeat`(#93 이후 실체가 checks.cam_state 단위 +
+  코퍼스 가드) · `test_kernel_log_source` → `test_cases_kernel_log_source` ·
+  `test_teardown_recovery` → `test_integration_teardown_recovery`.
+  `test_plan_campaign_restore` 는 개정 규약에 이미 부합해 유지. 이슈의
+  fsync 2건은 #85 C 에서 파일 자체가 소멸했다.
+- 동봉: #103 주석의 "tmpfs 라 초기화" **기전 서술 교정 4곳** — 이 보드의
+  /tmp 는 디스크 fs 이고 systemd-tmpfiles 가 부팅마다 비운다(2026-08-22
+  실측, 같은 파일들의 기존 정확한 서술과 정합화. 결론은 동일).
+
 ### 커널 로그 의존 축소 C — 카메라 init readiness 를 cam_state 로 (pim-check#85 2/2)
 
 - **fix(setup)**: 안정화 `camera_init` 게이트를 kern.log 의 fsync 마커 폴링
   (`_ready_dmesg_fsync`)에서 **cam_state 기반**(`_ready_cam_state` — state=healthy
-  + heartbeat 신선 + settle)으로 전환. 근거: ① cam_state 는 tmpfs 라 부팅마다
-  초기화 — 과거 부팅 오염이 원천 차단돼 부팅 경계·dmesg 앵커·타임스탬프 폴백
+  + heartbeat 신선 + settle)으로 전환. 근거: ① cam_state 의 /tmp 는 부팅마다
+  비워져(systemd-tmpfiles `D /tmp`, tmpfs 여부와 무관 — 실측) 과거 부팅 오염이 원천 차단돼 부팅 경계·dmesg 앵커·타임스탬프 폴백
   경고 기제가 통째로 불필요 ② state=healthy 는 BG_Check 가 카메라 **동작을
   확인한 뒤** 세우는 값이라 "init 로그가 찍혔다"(마커)보다 강한 신호 ③ heartbeat
   신선도가 감시자가 죽은 채 남은 healthy 로 게이트가 열리는 것을 막는다.

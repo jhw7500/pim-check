@@ -1,4 +1,4 @@
-"""tests/test_cam_state_heartbeat.py — cam_state 살아있음은 heartbeat 로 본다 (#84 → #93 중앙화).
+"""tests/test_checks_cam_state_heartbeat.py — cam_state 살아있음은 heartbeat 로 본다 (#84 → #93 중앙화).
 
 역사 (#84): `ch{N} cam_state last_ok freshness (<30s)` 체크 36건은 이름이 약속한
 `<30s` 비교를 하지 않았고, 비교를 넣는 것도 답이 아니었다 — 보드 소스

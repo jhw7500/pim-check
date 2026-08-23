@@ -41,7 +41,16 @@ pytest 테스트 스위트. 모든 핵심 모듈에 대한 단위 테스트와 �
 - 실행: 프로젝트 루트에서 `pytest` (pyproject.toml에 testpaths 설정됨)
 - SSH mock 패턴: `SshClient` 인스턴스의 `run` 메서드를 lambda나 MagicMock으로 교체
 - 새 체크 추가 시 `test_checks_{name}.py` 파일 생성 필수 — collect/validate 각각 테스트
-- 파일명 규칙: `test_{module_name}.py` (모듈명과 1:1 대응)
+- 파일명 규칙 (pim-check#94 로 3분류 보완 — 코퍼스 실태 반영):
+  - **모듈 대응**: `test_{module}.py` 또는 `test_{module}_{topic}.py` — 접두가
+    대상 모듈과 1:1 (예: `test_plan_gate`, `test_setup_snapshot`,
+    `test_checks_cam_state_heartbeat`). 주제가 크면 모듈 파일에 합치지 말고
+    `_{topic}` 분리를 택한다 — docstring 의 "무엇을 왜 못박는가" 문맥이
+    회귀의 기전·재현 데이터를 담는 자리다.
+  - **코퍼스 가드**: `test_cases_{topic}.py` — 특정 모듈이 아니라 profiles/ 의
+    케이스·셸 명령 성질을 못박는 파일 (예: `test_cases_kernel_log_source`).
+  - **교차 경로(통합) 가드**: `test_integration_{topic}.py` — 여러 실행 경로를
+    함께 보는 파일 (예: `test_integration_teardown_recovery`).
 
 ### Testing Requirements
 - `pytest` 단독 실행으로 전체 통과 확인

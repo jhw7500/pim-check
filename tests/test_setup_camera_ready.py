@@ -4,7 +4,8 @@ fsync(kern.log) 게이트의 대체 — 생성 명령을 **실제 셸에서 돌�
 계약과, 그 출력이 게이트 판정으로 이어지는 파이프 전체를 확인한다.
 (판정 로직 단위는 tests/test_stabilize_ready.py::TestStageCameraInitCamState.)
 
-cam_state 는 tmpfs 라 부팅마다 초기화된다 — kern.log 시절의 부팅 경계·앵커
+cam_state 의 /tmp 는 부팅마다 비워진다(systemd-tmpfiles — tmpfs 여부와 무관,
+2026-08-22 실측) — kern.log 시절의 부팅 경계·앵커
 델타·폴백 경고 기제가 통째로 불필요해진 근거다. 검증 축은 state=healthy(동작
 확인)와 heartbeat 신선도(감시자 생존 — 죽은 채 남은 healthy 차단) 둘이다.
 """

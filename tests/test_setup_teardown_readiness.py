@@ -1,4 +1,4 @@
-"""tests/test_teardown_readiness.py — teardown 은 setup 의 readiness 기대를 물려받지 않는다 (pim-check#70).
+"""tests/test_setup_teardown_readiness.py — teardown 은 setup 의 readiness 기대를 물려받지 않는다 (pim-check#70).
 
 `SetupManager` 는 readiness 상태를 **인스턴스 속성**으로 들고 있다(`_ready_camera_init`,
 `_ready_ae_targets`, `_ready_processes_list`, `_ready_recording_paths`). teardown 은
