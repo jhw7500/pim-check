@@ -97,7 +97,7 @@ checks:
       K=$((BR / 1000)); [ $K -ge 1638 ] && [ $K -le 2457 ] && echo OK || echo FAIL:${K}kbps
     expected: 'OK'
     on_fail: 'ch3 실측 bitrate 범위(1638~2457kbps) 벗어남'
-  - name: ch3 파일 무결성 (codec=hevc, 1920x1080, .mp4)
+  - name: ch3 파일 무결성 (codec=hevc, 1920x1080, fps≈15, .mp4)
     command: |-
       FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
@@ -105,13 +105,15 @@ checks:
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       EXT="${F##*.}"
       [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
-      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 "$F" 2>/dev/null)
+      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of default=nw=1 "$F" 2>/dev/null)
       echo "$P" | grep -qE '^codec_name=hevc$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
       echo "$P" | grep -qE '^width=1920$' || (echo FAIL:width_$(echo "$P" | grep width) && exit 0)
       echo "$P" | grep -qE '^height=1080$' || (echo FAIL:height_$(echo "$P" | grep height) && exit 0)
-      echo OK
+      FR=$(echo "$P" | grep -oE '^r_frame_rate=[0-9]+/[0-9]+$' | cut -d= -f2)
+      [ -z "$FR" ] && { echo FAIL:NO_FPS; exit 0; }
+      echo "$FR" | awk -F/ '{n=$1/$2; if (n>=15-0.5 && n<=15+0.5) print "OK"; else printf "FAIL:fps=%.1f_ex=15\n", n}'
     expected: 'OK'
-    on_fail: 'ch3 파일 무결성 (codec/dim/ext) 미일치'
+    on_fail: 'ch3 파일 무결성 (codec/dim/fps/ext) 미일치'
   - name: ch3 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
       FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
@@ -143,7 +145,6 @@ checks:
       fi
     expected: 'OK'
     on_fail: 'ch3 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
-  - name: dmesg max9296_fsync fps (expected 15)
-    command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); [ -r /var/log/cantops/kern.log ] || { echo FAIL:NO_SOURCE; exit 0; }; L=$(grep -a 'max9296_fsync' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt'); F=$(printf '%s\\n' \"$L\" | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'); [ -z \"$F\" ] && { echo FAIL:NO_MARKER; exit 0; }; [ \"$F\" = \"15\" ] && echo OK || echo FAIL:got=$F"
-    expected: 'OK'
-    on_fail: 'dmesg max9296_fsync fps 15와 다름'
+  - name: 'dmesg max9296_fsync fps (진단: 기대 15, 게이팅 없음)'
+    command: "I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); [ -r /var/log/cantops/kern.log ] || { echo NO_SOURCE; exit 0; }; L=$(grep -a 'max9296_fsync' /var/log/cantops/kern.log 2>/dev/null | awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt'); F=$(printf '%s\\n' \"$L\" | grep -oE 'max9296_fsync( [a-z-]+)? fps : [0-9]+' | grep -oE '[0-9]+$' | sort -u | tr '\\n' ',' | sed 's/,$//'); [ -n \"$F\" ] && echo \"got=$F\" || echo NO_MARKER"
+    on_fail: 'fsync 마커 진단 항목(#85) — 게이팅은 파일 무결성 fps 실측이 담당'
