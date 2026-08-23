@@ -236,8 +236,10 @@ class TestFsyncIsDiagnosticOnly:
             by_file.setdefault(f, []).append((n, cmd, spec))
         missing = []
         for f, _n, _cmd, _spec in _fsync_commands():
+            # avg_frame_rate 를 본다 — r_frame_rate 는 타임스탬프 기저 레이트라
+            # 프레임 드랍에도 설정값(30/1)을 유지할 수 있다(#102 Codex P1).
             gating_fps = [nn for nn, cc, ss in by_file[f]
-                          if "r_frame_rate" in cc and ss.get("expected") is not None]
+                          if "avg_frame_rate" in cc and ss.get("expected") is not None]
             if not gating_fps:
                 missing.append(f)
         assert not missing, (
@@ -254,7 +256,9 @@ class TestFsyncIsDiagnosticOnly:
                 if "파일 무결성" not in (chk.get("name") or ""):
                     continue
                 cmd = chk["command"]
-                assert "r_frame_rate" in cmd, f"{path.name}: {chk['name']}"
+                assert "avg_frame_rate" in cmd, f"{path.name}: {chk['name']}"
+                assert "r_frame_rate" not in cmd, (
+                    f"{path.name}: {chk['name']} — r_frame_rate 는 드랍을 못 본다")
                 m = re.search(r"n>=(\d+)-0\.5", cmd)
                 assert m and int(m.group(1)) == exp, (
                     f"{path.name}: {chk['name']} — 기대 fps "

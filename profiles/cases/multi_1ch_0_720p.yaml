@@ -105,13 +105,13 @@ checks:
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
       EXT="${F##*.}"
       [ "$EXT" != "mp4" ] && echo FAIL:ext=$EXT && exit 0
-      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of default=nw=1 "$F" 2>/dev/null)
+      P=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,avg_frame_rate -of default=nw=1 "$F" 2>/dev/null)
       echo "$P" | grep -qE '^codec_name=hevc$' || (echo FAIL:codec_$(echo "$P" | grep codec_name) && exit 0)
       echo "$P" | grep -qE '^width=1280$' || (echo FAIL:width_$(echo "$P" | grep width) && exit 0)
       echo "$P" | grep -qE '^height=720$' || (echo FAIL:height_$(echo "$P" | grep height) && exit 0)
-      FR=$(echo "$P" | grep -oE '^r_frame_rate=[0-9]+/[0-9]+$' | cut -d= -f2)
+      FR=$(echo "$P" | grep -oE '^avg_frame_rate=[0-9]+/[0-9]+$' | cut -d= -f2)
       [ -z "$FR" ] && { echo FAIL:NO_FPS; exit 0; }
-      echo "$FR" | awk -F/ '{n=$1/$2; if (n>=30-0.5 && n<=30+0.5) print "OK"; else printf "FAIL:fps=%.1f_ex=30\n", n}'
+      echo "$FR" | awk -F/ '{if ($2 == 0) { print "FAIL:BAD_AVG"; exit } n=$1/$2; if (n>=30-0.5 && n<=30+0.5) print "OK"; else printf "FAIL:fps=%.1f_ex=30\n", n}'
     expected: 'OK'
     on_fail: 'ch0 파일 무결성 (codec/dim/fps/ext) 미일치'
   - name: ch0 duration (~60s ±5s, 첫 짧은 finalize skip)
