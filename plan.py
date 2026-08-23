@@ -621,6 +621,11 @@ def execute_plan(plan: Plan, profiles_dir: str,
     campaign_snapshots: dict[str, str] = {}
     campaign_edge_changes: dict = {}
     campaign_ord_changes: dict = {}
+    # 기준선이 밀렸을 수 있는 파일 {path: 첫 실패 케이스} (pim-check#82) —
+    # 기준선 채택 **전에** 스냅샷이 실패한 파일은, 이후 채택되는 스냅샷이 이미
+    # 변경된 상태라 복원이 "캠페인 시작 전"이 아니라 중간 상태로 간다. 복원
+    # 자체는 성공으로 찍히므로 여기서 모아 끝에 한 번 더 알린다.
+    campaign_suspect_paths: dict[str, str] = {}
     # 아직 해제되지 않은 fault 의 복구 명령. 케이스별 복구가 끝나면 None 이 된다.
     # SIGINT/SIGTERM 이 `_run_single_case` 도중에 오면 케이스별 복구 블록에 도달하지
     # 못하므로, finally 가 이 값을 보고 대신 복구한다 — graceful shutdown 핸들러가
@@ -693,6 +698,14 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 if _mgr_holder:
                     last_setup_mgr = _mgr_holder[0]
                     last_mgr_ssh = ssh
+                    # 스냅샷 실패를 채택 **전에** 대조한다 (#82) — 아직 기준선이 없는
+                    # 파일의 실패만 기준선을 밀 수 있다(이후 채택되는 스냅샷은 이
+                    # 케이스가 이미 변경한 뒤의 상태다). 채택 이후의 실패는 캠페인
+                    # 복원에 무해하므로 모으지 않는다.
+                    for _path in getattr(
+                            last_setup_mgr, "_snapshot_failures", set()):
+                        if _path not in campaign_snapshots:
+                            campaign_suspect_paths.setdefault(_path, case_name)
                     # 파일별 **최초** 스냅샷만 남긴다 — 첫 케이스가 그 파일을
                     # 건드리지 않았을 수도 있으므로 "첫 케이스"가 아니라
                     # "그 파일을 처음 건드린 케이스" 기준이다.
@@ -802,6 +815,19 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 복원 로그만으로는 그 사실이 드러나지 않는다.
                 _teardown_mgr._local0_log(
                     f"teardown CAMPAIGN RESTORE — paths={sorted(campaign_snapshots)}")
+                # 기준선 신뢰 불가 파일을 복원 성공 로그와 **다른 모양으로** 알린다
+                # (#82) — 케이스 시점의 스냅샷 실패 경고는 "이 케이스 복원 불가"
+                # 까지만 말하고, 캠페인 로그 수천 줄 뒤의 복원은 성공으로 찍힌다.
+                if campaign_suspect_paths:
+                    _suspects = ", ".join(
+                        f"{p} (first failed in {c})"
+                        for p, c in sorted(campaign_suspect_paths.items()))
+                    print("WARNING: campaign baseline suspect — snapshot failed "
+                          f"before a baseline existed: {_suspects} — restore for "
+                          "these paths is missing or targets a mid-campaign state")
+                    _teardown_mgr._local0_log(
+                        f"teardown BASELINE SUSPECT — {_suspects} "
+                        "(restore missing or targets mid-campaign state)")
                 # 복구는 케이스마다 이미 돌았다(#95) — 그대로 또 넘기면 마지막 케이스만
                 # 두 번 복구된다. `_campaign_cfg` 는 `dict(last_setup_cfg)` 에서 출발하므로
                 # 누가 `setup:` 아래에 recovery 를 두면 여기 실려 온다(하위 호환 경로) —
