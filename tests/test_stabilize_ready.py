@@ -322,6 +322,30 @@ class TestStageCameraInitCamState:
         assert mgr._ready_camera_init is True
         assert mgr._cam_ready_seen_at is None
 
+    def test_profile_overrides_flow_into_gate(self):
+        """#103 리뷰(Codex P2) — 프로파일이 checks.cam_state 의 dir/임계를
+        오버라이드하면 게이트도 **같은 값**을 봐야 한다. 아니면 체크는 통과하는데
+        게이트는 엉뚱한 디렉터리를 폴링하거나 다른 신선도 정책을 쓴다."""
+        mgr = _mgr()
+        mgr.run_setup({}, ready_camera_init=True,
+                      ready_cam_state_dir="/run/cs",
+                      ready_cam_heartbeat_max_age_sec=60)
+        assert "/run/cs/state" in mgr._cam_state_ready_probe_command()
+        # 기본 임계(30s)면 stale 인 age=45 가, 프로파일 임계(60s)에서는 신선하다.
+        mgr.ssh.run.return_value = self._out(ts=1_000_000, now=1_000_045)
+        clk = _FixedClock(start=0.0)
+        assert mgr._ready_cam_state(_clock=clk) is False   # 최초 관측(settle 대기)
+        assert mgr._cam_ready_seen_at is not None
+        clk.v = CAM_READY_SETTLE_SEC
+        assert mgr._ready_cam_state(_clock=clk) is True
+
+    def test_garbage_threshold_falls_back_to_default(self):
+        """임계 오염은 체크가 FAIL 로 표면화한다 — 게이트는 기본값으로 계속 간다."""
+        mgr = _mgr()
+        mgr.run_setup({}, ready_camera_init=True,
+                      ready_cam_heartbeat_max_age_sec="thirty")
+        assert mgr._cam_heartbeat_max_age == CAM_READY_HEARTBEAT_MAX_AGE_SEC
+
 
 class TestProfileIsCamera:
     """카메라 판정은 setup 설정 기반 (test-step custom_commands 와 분리)."""
@@ -394,6 +418,24 @@ class TestReadinessKwargs:
         kw = readiness_kwargs({})
         assert kw["ready_processes"] == []
         assert kw["ready_camera_init"] is False
+
+    def test_cam_state_overrides_pass_through(self):
+        """checks.cam_state 의 dir/임계 오버라이드가 게이트 인자로 관통한다 (#103)."""
+        from setup import readiness_kwargs
+        prof = {
+            "setup": {"edgeconf_changes": {".VHL_CAM.i2c2.ch0.enable": True}},
+            "checks": {"cam_state": {"dir": "/run/cs", "heartbeat_max_age_sec": 60}},
+        }
+        kw = readiness_kwargs(prof)
+        assert kw["ready_cam_state_dir"] == "/run/cs"
+        assert kw["ready_cam_heartbeat_max_age_sec"] == 60
+
+    def test_cam_state_defaults_when_not_overridden(self):
+        from setup import readiness_kwargs, CAM_STATE_DIR
+        from setup import CAM_READY_HEARTBEAT_MAX_AGE_SEC as MAX_AGE
+        kw = readiness_kwargs({})
+        assert kw["ready_cam_state_dir"] == CAM_STATE_DIR
+        assert kw["ready_cam_heartbeat_max_age_sec"] == MAX_AGE
 
 
 class TestAeSettleTargets:

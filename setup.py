@@ -296,6 +296,17 @@ def readiness_kwargs(profile: dict) -> dict:
         # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_camera_init 로 분리.
         "ready_recording_paths": RECORDING_DIRS,
         "ready_camera_init": is_camera,
+        # 게이트가 읽는 dir·신선도 임계를 **체크와 같은 프로파일 키**에서 가져온다
+        # (#103 리뷰) — 프로파일이 checks.cam_state.dir / heartbeat_max_age_sec 를
+        # 오버라이드하면 체크와 게이트가 갈라져 "체크는 통과하는데 게이트는 안
+        # 열리는"(또는 그 반대) 이면 상태가 된다.
+        "ready_cam_state_dir": (
+            (checks.get("cam_state") or {}).get("dir", CAM_STATE_DIR)
+            if isinstance(checks, dict) else CAM_STATE_DIR),
+        "ready_cam_heartbeat_max_age_sec": (
+            (checks.get("cam_state") or {}).get(
+                "heartbeat_max_age_sec", CAM_READY_HEARTBEAT_MAX_AGE_SEC)
+            if isinstance(checks, dict) else CAM_READY_HEARTBEAT_MAX_AGE_SEC),
         # AE 정착 게이트는 카메라 게이트와 같은 opt-in/out 을 따른다
         # (camera_init_required: false 면 AE 정착도 끈다 — 게이트 일관성).
         "ready_ae_targets": ae_settle_targets(profile) if is_camera else [],
@@ -321,6 +332,10 @@ class SetupManager:
         self._ready_camera_init: bool = False
         # healthy 최초 관측 시각(monotonic) — CAM_READY_SETTLE_SEC 경과 판정용.
         self._cam_ready_seen_at: float | None = None
+        # 게이트가 읽는 cam_state 좌표 — 프로파일 오버라이드 시 체크와 같은 값을
+        # 쓰도록 run_setup 이 주입한다 (#103 리뷰). 기본은 체크의 기본과 동일.
+        self._cam_state_dir: str = CAM_STATE_DIR
+        self._cam_heartbeat_max_age: int = CAM_READY_HEARTBEAT_MAX_AGE_SEC
         # 안정화 AE 정착 readiness 의 기대값 목록 (pim-check#61).
         # run_setup(ready_ae_targets=...) 로 주입 (기본 빈 목록 → 단계 skip).
         self._ready_ae_targets: list[dict] = []
@@ -636,8 +651,8 @@ class SetupManager:
         시계에서 나오도록 한 명령에 묶는다 (checks/cam_state.py 와 같은 계약).
         """
         return (
-            f"printf '%s;' \"$(cat {CAM_STATE_DIR}/state 2>/dev/null | tr -d ' \\n')\"; "
-            f"T={CAM_STATE_DIR}/timestamp; "
+            f"printf '%s;' \"$(cat {self._cam_state_dir}/state 2>/dev/null | tr -d ' \\n')\"; "
+            f"T={self._cam_state_dir}/timestamp; "
             "if [ -r \"$T\" ]; then printf 'F;%s' \"$(cat \"$T\" 2>/dev/null | tr -d ' \\n')\"; "
             "else printf 'N;'; fi; "
             "printf ';%s' \"$(date +%s)\""
@@ -675,7 +690,7 @@ class SetupManager:
                     and now_raw.isascii() and now_raw.isdigit()
                     and int(ts_raw) > 0):
                 age = int(now_raw) - int(ts_raw)
-                ok = 0 <= age < CAM_READY_HEARTBEAT_MAX_AGE_SEC
+                ok = 0 <= age < self._cam_heartbeat_max_age
         if not ok:
             self._cam_ready_seen_at = None
             return False
@@ -924,6 +939,8 @@ class SetupManager:
 
     def run_setup(self, setup_config: dict, ready_processes=None,
                   ready_recording_paths=None, ready_camera_init: bool = False,
+                  ready_cam_state_dir: str | None = None,
+                  ready_cam_heartbeat_max_age_sec=None,
                   ready_ae_targets=None) -> bool:
         """현재 설정을 확인하고, 다를 경우에만 변경+재부팅한다.
 
@@ -948,6 +965,16 @@ class SetupManager:
         self._ready_recording_paths = list(ready_recording_paths or [])
         self._ready_camera_init = bool(ready_camera_init)
         self._cam_ready_seen_at = None  # 이번 setup 의 settle 타이머 초기화
+        self._cam_state_dir = ready_cam_state_dir or CAM_STATE_DIR
+        try:
+            self._cam_heartbeat_max_age = int(
+                ready_cam_heartbeat_max_age_sec
+                if ready_cam_heartbeat_max_age_sec is not None
+                else CAM_READY_HEARTBEAT_MAX_AGE_SEC)
+        except (TypeError, ValueError, OverflowError):
+            # 임계 오염은 체크(checks.cam_state)가 FAIL 로 표면화한다 — 게이트는
+            # 기본값으로 계속 간다(readiness 가 크래시로 run 을 죽이면 안 된다).
+            self._cam_heartbeat_max_age = CAM_READY_HEARTBEAT_MAX_AGE_SEC
         self._ready_ae_targets = list(ready_ae_targets or [])
         self._ae_match_at = None    # 이번 setup 의 AE 정착 타이머 초기화
         self._config_snapshots = {}  # 이번 setup 의 복원 원본 (이전 케이스 잔존 제거)
@@ -1076,6 +1103,8 @@ class SetupManager:
         self._ready_recording_paths = []
         self._ready_camera_init = False
         self._cam_ready_seen_at = None
+        self._cam_state_dir = CAM_STATE_DIR
+        self._cam_heartbeat_max_age = CAM_READY_HEARTBEAT_MAX_AGE_SEC
         self._ready_ae_targets = []
         self._ae_match_at = None
 

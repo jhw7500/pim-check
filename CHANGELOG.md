@@ -24,6 +24,13 @@
   fsync 프로브 테스트 2파일은 대체 신호와 함께 제거.
 - **이슈 닫힘 조건 충족**: 커널 로그 텍스트가 통과/실패를 결정하는 자리는 이제
   사건 계열(B, 13건 — panic/oom/lockup 등 로그에만 남는 사건)뿐이다.
+- 자동 리뷰 반영(#103 Codex P2): 프로파일이 `checks.cam_state.dir` /
+  `heartbeat_max_age_sec` 를 오버라이드하면 게이트가 고정 상수를 쓰던 것 —
+  `readiness_kwargs` 가 **체크와 같은 프로파일 키**에서 dir·임계를 뽑아 게이트로
+  관통시킨다(가드 4건, 수정 전 red). 임계 오염은 체크가 FAIL 로 표면화하고
+  게이트는 기본값으로 계속 간다. Gemini 2건은 무조치 확인 — 시계 역행 시
+  1~2초 fail-closed 후 BG_Check 1초 touch 로 자가 회복(의도), state 의 `;` 는
+  파서가 malformed 로 fail-closed(안전).
 
 ### 커널 로그 의존 축소 A계열 — fsync 마커 21건을 게이팅에서 진단으로 (pim-check#85 1/2)
 
