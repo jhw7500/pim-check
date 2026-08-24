@@ -35,6 +35,10 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "python3 run_comprehensive_verify.py",
         "python3 run_bps_quick.py",
         "echo precheck && python3 pim_check.py --plan nightly",
+        "echo precheck\npython3 pim_check.py --plan nightly",
+        "env -i python3 pim_check.py --plan smoke",
+        "env -- python3 pim_check.py --plan smoke",
+        "command python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -51,6 +55,7 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
         "python3 pim_check.py --list-plans",
+        "command -v python3 pim_check.py --plan smoke",
         "rg run_comprehensive_verify.py",
         "pytest -q tests/test_plan_load.py",
     ],

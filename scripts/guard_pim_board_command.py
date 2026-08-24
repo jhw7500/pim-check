@@ -17,11 +17,13 @@ HARDWARE_RUNNERS = {
     "run_comprehensive_verify.py",
     "run_bps_quick.py",
 }
-SHELL_BREAKS = set(";&|")
+SHELL_BREAKS = set(";&|\n")
+ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
 
 
 def _segments(command: str) -> Iterator[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
     segment: list[str] = []
@@ -40,13 +42,55 @@ def _basename(token: str) -> str:
     return PurePosixPath(token).name
 
 
+def _skip_env_options(tokens: list[str], index: int) -> int:
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index + 1
+        if not token.startswith("-") or token == "-":
+            return index
+        index += 1
+        if token in ENV_OPTIONS_WITH_VALUE and index < len(tokens):
+            index += 1
+    return index
+
+
+def _skip_command_options(tokens: list[str], index: int) -> Optional[int]:
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index + 1
+        if not token.startswith("-") or token == "-":
+            return index
+        if token in {"-v", "-V"}:
+            return None
+        index += 1
+    return index
+
+
 def _command_index(tokens: list[str]) -> Optional[int]:
     index = 0
-    if tokens and _basename(tokens[0]) == "env":
-        index = 1
-    while index < len(tokens) and ASSIGNMENT.match(tokens[index]):
-        index += 1
-    return index if index < len(tokens) else None
+    allow_assignments = True
+    while index < len(tokens):
+        if allow_assignments:
+            while index < len(tokens) and ASSIGNMENT.match(tokens[index]):
+                index += 1
+        if index >= len(tokens):
+            return None
+        executable = _basename(tokens[index])
+        if executable == "env":
+            index = _skip_env_options(tokens, index + 1)
+            allow_assignments = True
+            continue
+        if executable == "command":
+            command_index = _skip_command_options(tokens, index + 1)
+            if command_index is None:
+                return None
+            index = command_index
+            allow_assignments = False
+            continue
+        return index
+    return None
 
 
 def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str], list[str]]:
