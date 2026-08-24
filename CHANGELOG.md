@@ -28,14 +28,15 @@
   Codex 는 PR open 시 한 번만 리뷰하므로, 정작 Codex 가 지적한 P1/P2 를 고친
   `(#N 자동리뷰)` 커밋을 Codex 는 한 번도 다시 보지 않은 채 머지돼 왔다.
   재리뷰는 PR 에 `@codex review` 코멘트로 트리거된다(도구가 remedy 로 안내).
-- 가드: `tests/test_pr_reviews.py` 54건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
+- 가드: `tests/test_pr_reviews.py` 56건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
   것이라 봇 출력 형식이 바뀌면 테스트가 먼저 깨진다. Codex 의 `Reviewed commit`
   이 축약 sha 라 접두 비교해야 하는 것, 답글(`in_reply_to_id`)은 지적으로 세지
   않는 것, 처분 코멘트가 봇 산출물보다 나중이어야 하는 것을 각각 못박는다.
   또한 자동화 상태 누락을 실패로 처리하고, 여러 Codex 실행이 남아도 API 경로를
   가로질러 최신 산출물만 고르며 해당 review id의 지적만 집계하도록 가드한다.
   Claude·Gemini는 정확한 `github-actions[bot]`+마커 일치, Codex는 정확한 REST Bot
-  신원을 요구하고, 외부 계정 코멘트가 지적을 처분한 것처럼 위조하지 못하게 한다.
+  신원을 요구하고, 외부 계정이나 평범한 질문·진행 코멘트가 지적을 처분한 것처럼
+  위조하지 못하게 한다. 처분에는 독립 줄 `<!-- pr-review-disposition -->`과 판단 근거가 필요하다.
   신뢰 구성원의 Codex 인라인 답글도 처분으로 인정하되, `in_reply_to_id`가
   가리키는 finding 1건에만 적용한다. 다른 review comment·무관한 스레드 답글·
   `@codex review` 트리거는 처분이 아니다. PR 메인 처분 요약만 전체 finding에 적용한다.

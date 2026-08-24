@@ -10,7 +10,7 @@ tests/test_pr_reviews.py — scripts/pr_reviews.py 단위 테스트.
   - Codex 의 `Reviewed commit` 은 축약 sha 라 접두 비교해야 한다는 것
   - 리뷰 대상 커밋이 HEAD 와 다르면 STALE 로 잡힌다는 것 — 실제로 최근 8개 PR
     중 7개가 이 상태로 머지됐다
-  - PR 메인 처분은 전체 finding에, 인라인 답글은 해당 finding 1건에만 적용된다
+  - 명시적 마커+근거가 있는 PR 메인 처분은 전체 finding에, 인라인 답글은 해당 finding 1건에만 적용된다
   - Claude/Gemini가 독립 상태 줄에서 무지적을 선언하지 않으면 사람 처분 전까지 NON_CLEAR다
 """
 
@@ -23,6 +23,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from pr_reviews import (  # type: ignore[import-not-found]
     CODEX,
+    DISPOSITION_MARKER,
     GhError,
     collect,
     commits_match,
@@ -84,6 +85,10 @@ CODEX_NO_FINDING_BODY = "Codex Review: Didn't find any major issues. Breezy!\n\n
 BOT = {"login": "github-actions[bot]", "type": "Bot"}
 CODEX_USER = {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}
 HUMAN = {"login": "jhw7500", "type": "User"}
+
+
+def disposition(text: str) -> str:
+    return f"{DISPOSITION_MARKER}\n{text}"
 
 
 def payloads_pr103():
@@ -400,7 +405,7 @@ class TestCollect(unittest.TestCase):
         p["issue_comments"].append(
             {
                 "user": HUMAN,
-                "body": "자동 리뷰 처분 요약 ...",
+                "body": disposition("자동 리뷰 처분 요약 ..."),
                 "author_association": "OWNER",
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "u6",
@@ -408,13 +413,34 @@ class TestCollect(unittest.TestCase):
         )
         self.assertTrue(collect(p)["disposed"])
 
+    def test_trusted_pr_comment_requires_explicit_disposition_intent(self):
+        marker = DISPOSITION_MARKER
+        bodies = (
+            "수정 커밋을 푸시했습니다.",
+            marker,
+            f"> {marker}\n지적을 검토하고 처분했습니다.",
+            f"```text\n{marker}\n```\n지적을 검토하고 처분했습니다.",
+        )
+        for body in bodies:
+            p = payloads_pr103()
+            p["issue_comments"].append(
+                {
+                    "user": HUMAN,
+                    "body": body,
+                    "author_association": "OWNER",
+                    "created_at": "2026-08-23T09:38:03Z",
+                    "html_url": "ordinary-comment",
+                }
+            )
+            self.assertFalse(collect(p)["disposed"], body)
+
     def test_outsider_comment_cannot_dispose_findings(self):
         p = payloads_pr103()
         p["issue_comments"].append(
             {
                 "user": {"login": "untrusted-user", "type": "User"},
                 "author_association": "NONE",
-                "body": "처분했습니다",
+                "body": disposition("처분했습니다"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "outsider",
             }
@@ -427,7 +453,7 @@ class TestCollect(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "Codex 지적 검토 및 처분",
+                "body": disposition("Codex 지적 검토 및 처분"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "inline-disposition",
                 "in_reply_to_id": CODEX_COMMENT_ID_103,
@@ -435,13 +461,27 @@ class TestCollect(unittest.TestCase):
         )
         self.assertTrue(collect(p)["disposed"])
 
+    def test_trusted_inline_question_is_not_disposition(self):
+        p = payloads_pr103()
+        p["review_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "이 지적의 재현 조건을 설명해 주세요.",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "inline-question",
+                "in_reply_to_id": CODEX_COMMENT_ID_103,
+            }
+        )
+        self.assertFalse(collect(p)["disposed"])
+
     def test_outsider_inline_reply_cannot_dispose_findings(self):
         p = payloads_pr103()
         p["review_comments"].append(
             {
                 "user": {"login": "untrusted-user", "type": "User"},
                 "author_association": "NONE",
-                "body": "처분했습니다",
+                "body": disposition("처분했습니다"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "outsider-inline",
                 "in_reply_to_id": 3840563292,
@@ -455,7 +495,7 @@ class TestCollect(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "별도 인라인 리뷰 지적",
+                "body": disposition("별도 인라인 리뷰 지적"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "new-human-finding",
                 "in_reply_to_id": None,
@@ -486,7 +526,7 @@ class TestCollect(unittest.TestCase):
                 {
                     "user": HUMAN,
                     "author_association": "OWNER",
-                    "body": "첫 번째 지적만 처분",
+                    "body": disposition("첫 번째 지적만 처분"),
                     "created_at": "2026-08-23T09:38:03Z",
                     "html_url": "first-reply",
                     "in_reply_to_id": CODEX_COMMENT_ID_103,
@@ -523,7 +563,7 @@ class TestCollect(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "모든 자동리뷰 지적 처분 요약",
+                "body": disposition("모든 자동리뷰 지적 처분 요약"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "global-disposition",
             }
@@ -541,7 +581,7 @@ class TestCollect(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "다른 스레드 답글",
+                "body": disposition("다른 스레드 답글"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "unrelated-reply",
                 "in_reply_to_id": 9999999999,
@@ -555,7 +595,7 @@ class TestCollect(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "재검토 부탁: @codex review",
+                "body": disposition("재검토 부탁: @codex review"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "trigger",
             }
@@ -568,7 +608,7 @@ class TestCollect(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "지적 처분",
+                "body": disposition("지적 처분"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "disposition",
             }
@@ -584,7 +624,7 @@ class TestCollect(unittest.TestCase):
             0,
             {
                 "user": HUMAN,
-                "body": "리뷰 부탁",
+                "body": disposition("리뷰 부탁"),
                 "created_at": "2026-08-23T08:00:00Z",
                 "html_url": "u0",
                 "author_association": "OWNER",
@@ -640,7 +680,7 @@ class TestEvaluate(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "Claude 본문 검토 후 처분",
+                "body": disposition("Claude 본문 검토 후 처분"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "global-disposition",
             }
@@ -657,7 +697,7 @@ class TestEvaluate(unittest.TestCase):
             {
                 "user": HUMAN,
                 "author_association": "OWNER",
-                "body": "Codex 지적만 처분",
+                "body": disposition("Codex 지적만 처분"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "inline-disposition",
                 "in_reply_to_id": CODEX_COMMENT_ID_103,
@@ -677,7 +717,7 @@ class TestEvaluate(unittest.TestCase):
         p["issue_comments"].append(
             {
                 "user": HUMAN,
-                "body": "처분 요약",
+                "body": disposition("처분 요약"),
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "u6",
                 "author_association": "OWNER",

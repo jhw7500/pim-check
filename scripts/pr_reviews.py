@@ -21,7 +21,7 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   FAILED    automation-state.attempt_status != success
   STALE     리뷰한 커밋 != PR HEAD → 지금 머지될 코드는 그 리뷰어가 못 봤다
   NON_CLEAR Claude/Gemini 본문에 독립 상태 줄의 무지적 선언이 없음 → 사람이 읽고 처분
-  FINDINGS  지적이 있고, 그 이후 신뢰할 수 있는 구성원의 처분 코멘트가 없음
+  FINDINGS  지적이 있고, 그 이후 신뢰할 수 있는 구성원의 명시적 처분 코멘트가 없음
             (PR 메인 대화는 전체, 인라인 답글은 해당 finding 1건에 적용)
 
 무엇을 판정하지 '않는가'
@@ -33,6 +33,7 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   - Claude/Gemini 의 지적 심각도는 산문이라 파싱하지 않는다. 대신 본문에 독립
     상태 줄로 된 무지적 문구("차단 이슈 없음" / "No blocking issues found" 등)가 없으면
     NON_CLEAR 로 차단한다. 사람이 `--full` 로 읽고 PR 메인 처분을 남겨야 통과한다.
+    처분에는 독립 줄 `<!-- pr-review-disposition -->` 과 판단 근거가 모두 필요하다.
 
 STALE 이 왜 중요한가 (실측)
 ---------------------------
@@ -62,7 +63,7 @@ import json
 import re
 import subprocess
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 # --- 리뷰어 식별 -----------------------------------------------------------
 
@@ -92,6 +93,7 @@ CODEX_REVIEW_TRIGGER_RE = re.compile(r"@codex\s+review\b", re.IGNORECASE)
 FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 CODEX_NO_FINDINGS = "Didn't find any major issues"
+DISPOSITION_MARKER = "<!-- pr-review-disposition -->"
 TRUSTED_HUMAN_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 # Claude/Gemini 가 스스로 "지적 없음" 을 선언하는 독립 상태 줄.
@@ -218,9 +220,8 @@ def commits_match(reviewed: Optional[str], head: Optional[str]) -> bool:
     return long_.startswith(short)
 
 
-def has_clear_phrase(body: str) -> bool:
-    """Claude/Gemini 가 인용·코드가 아닌 독립 줄에서 무지적을 선언했는가."""
-    allowed = {phrase.casefold() for phrase in CLEAR_PHRASES}
+def _plain_markdown_lines(body: str) -> Iterator[str]:
+    """인용문과 코드 블록을 제외한 Markdown 줄을 정규화해 순회한다."""
     fence: Optional[tuple[str, int]] = None
 
     for raw_line in (body or "").splitlines():
@@ -243,11 +244,23 @@ def has_clear_phrase(body: str) -> bool:
         if raw_line.startswith(("    ", "\t")) or stripped.startswith(">"):
             continue
 
-        normalized = stripped.rstrip(".!。").strip().casefold()
-        if normalized in allowed:
-            return True
+        yield stripped
 
-    return False
+
+def has_clear_phrase(body: str) -> bool:
+    """Claude/Gemini 가 인용·코드가 아닌 독립 줄에서 무지적을 선언했는가."""
+    allowed = {phrase.casefold() for phrase in CLEAR_PHRASES}
+    return any(line.rstrip(".!。").strip().casefold() in allowed for line in _plain_markdown_lines(body))
+
+
+def has_disposition_intent(body: str) -> bool:
+    """명시적 처분 마커와 판단 근거가 인용·코드 밖에 함께 있는가."""
+    lines = list(_plain_markdown_lines(body))
+    return (
+        DISPOSITION_MARKER in lines
+        and any(line and line != DISPOSITION_MARKER for line in lines)
+        and not CODEX_REVIEW_TRIGGER_RE.search(body or "")
+    )
 
 
 def _is_bot(user: Dict[str, Any]) -> bool:
@@ -265,9 +278,8 @@ def _is_trusted_human_comment(comment: Dict[str, Any]) -> bool:
 
 
 def _is_global_disposition_comment(comment: Dict[str, Any]) -> bool:
-    """PR 메인 대화의 전역 처분인가. 재리뷰 트리거는 처분이 아니다."""
-    body = comment.get("body") or ""
-    return _is_trusted_human_comment(comment) and not CODEX_REVIEW_TRIGGER_RE.search(body)
+    """PR 메인 대화에서 명시적 처분 의도를 기록한 코멘트인가."""
+    return _is_trusted_human_comment(comment) and has_disposition_intent(comment.get("body") or "")
 
 
 # --- 집계 ------------------------------------------------------------------
@@ -378,7 +390,12 @@ def collect(payloads: Dict[str, Any]) -> Dict[str, Any]:
     ]
     latest_global_human = max(global_human_times) if global_human_times else None
     trusted_replies = [
-        c for c in review_comments if c.get("in_reply_to_id") and _is_trusted_human_comment(c) and c.get("created_at")
+        c
+        for c in review_comments
+        if c.get("in_reply_to_id")
+        and _is_trusted_human_comment(c)
+        and has_disposition_intent(c.get("body") or "")
+        and c.get("created_at")
     ]
 
     # 봇이 남긴 리뷰 산출물 중 가장 최신 시각 (전역 처분이 그 이후여야 유효).
@@ -486,7 +503,7 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
                     "reviewer": who,
                     "kind": "NON_CLEAR",
                     "detail": "본문에 명시적 무지적 선언이 없어 자동 통과할 수 없다",
-                    "remedy": "--full 로 본문을 읽고 PR 메인 대화에 처분 근거를 기록한다",
+                    "remedy": (f"--full 로 본문을 읽고 PR 메인 대화에 {DISPOSITION_MARKER} + 처분 근거를 기록한다"),
                 }
             )
 
@@ -499,7 +516,9 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
                 "reviewer": who,
                 "kind": "FINDINGS",
                 "detail": f"{f['severity']} {f['title']} ({f.get('path')}:{f.get('line')})",
-                "remedy": "지적을 반영하거나, 신뢰할 수 있는 구성원이 PR 에 처분 근거를 기록한다",
+                "remedy": (
+                    f"지적을 반영하거나, 신뢰할 수 있는 구성원이 PR 에 {DISPOSITION_MARKER} + 처분 근거를 기록한다"
+                ),
             }
         )
     return violations
