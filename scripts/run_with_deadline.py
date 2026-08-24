@@ -100,8 +100,9 @@ def _stop_and_reap(
     process_group: int,
     term_until: float,
     reap_until: float,
+    initial_signal: int = signal.SIGTERM,
 ) -> bool:
-    _signal_group(process_group, signal.SIGTERM)
+    _signal_group(process_group, initial_signal)
     if _wait_for_group(child, process_group, term_until):
         return True
     _signal_group(process_group, signal.SIGKILL)
@@ -128,13 +129,10 @@ def supervise(options: argparse.Namespace, command: list[str]) -> int:
         return SUPERVISOR_ERROR_EXIT
 
     received_signal: Optional[int] = None
-    process_group: Optional[int] = None
-
     def forward(signum: int, _frame: object) -> None:
         nonlocal received_signal
-        received_signal = signum
-        if process_group is not None:
-            _signal_group(process_group, signum)
+        if received_signal is None:
+            received_signal = signum
 
     previous_handlers = {
         signum: signal.getsignal(signum)
@@ -206,6 +204,11 @@ def supervise(options: argparse.Namespace, command: list[str]) -> int:
             process_group,
             term_until,
             options.deadline_epoch,
+            initial_signal=(
+                received_signal
+                if received_signal is not None
+                else signal.SIGTERM
+            ),
         ):
             print(
                 "deadline supervisor: process group survived KILL through lease deadline",
