@@ -23,6 +23,11 @@ HARDWARE_RUNNERS = {
 SHELL_BREAKS = set(";&|\n")
 ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
 PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X", "--check-hash-based-pycs"}
+TIMEOUT_OPTIONS_WITH_VALUE = {"-k", "--kill-after", "-s", "--signal"}
+TIMEOUT_OPTIONS = {"--foreground", "--preserve-status", "--verbose", "-v"}
+SHELLS = {"bash", "dash", "sh", "zsh"}
+SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
+MAX_LAUNCHER_DEPTH = 8
 REMEDIATION = (
     "run this command through scripts/with_pim_board.sh with --for/--until "
     "and --purpose"
@@ -145,13 +150,100 @@ def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str]
     return _basename(tokens[index]), tokens[index + 1 :]
 
 
-def _segment_is_blocked(tokens: list[str]) -> bool:
+def _timeout_command_index(tokens: list[str], command_index: int) -> int:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if not token.startswith("-") or token == "-":
+            break
+        if token in TIMEOUT_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{token} requires an operand")
+            index += 2
+            continue
+        if any(
+            token.startswith(f"{option}=")
+            for option in ("--kill-after", "--signal")
+        ):
+            if not token.partition("=")[2]:
+                raise ValueError(f"{token.partition('=')[0]} requires an operand")
+            index += 1
+            continue
+        if token.startswith(("-k", "-s")) and len(token) > 2:
+            index += 1
+            continue
+        if token not in TIMEOUT_OPTIONS:
+            raise ValueError(f"unsupported timeout option: {token}")
+        index += 1
+    if index >= len(tokens):
+        raise ValueError("timeout requires a duration")
+    index += 1
+    if index >= len(tokens):
+        raise ValueError("timeout requires a command")
+    return index
+
+
+def _nohup_command_index(tokens: list[str], command_index: int) -> Optional[int]:
+    index = command_index + 1
+    if index < len(tokens) and tokens[index] == "--":
+        index += 1
+    elif index < len(tokens) and tokens[index] in {"--help", "--version"}:
+        return None
+    elif index < len(tokens) and tokens[index].startswith("-"):
+        raise ValueError(f"unsupported nohup option: {tokens[index]}")
+    if index >= len(tokens):
+        raise ValueError("nohup requires a command")
+    return index
+
+
+def _shell_command(tokens: list[str], command_index: int) -> Optional[str]:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--" or not token.startswith(("-", "+")):
+            return None
+        if token == "-c" or (
+            token.startswith("-")
+            and not token.startswith("--")
+            and "c" in token[1:]
+        ):
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{_basename(tokens[command_index])} -c requires a command")
+            return tokens[index + 1]
+        if token in SHELL_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{token} requires an operand")
+            index += 2
+            continue
+        index += 1
+    return None
+
+
+def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
+    if depth > MAX_LAUNCHER_DEPTH:
+        raise ValueError("launcher nesting is too deep")
     command_index = _command_index(tokens)
     if command_index is None:
         return False
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
         return False
+    if executable == "timeout":
+        child_index = _timeout_command_index(tokens, command_index)
+        return _segment_is_blocked(tokens[child_index:], depth + 1)
+    if executable == "nohup":
+        child_index = _nohup_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable in SHELLS:
+        child_command = _shell_command(tokens, command_index)
+        return child_command is not None and _command_is_blocked(
+            child_command, depth + 1
+        )
     if executable in HARDWARE_RUNNERS:
         return True
     if executable in {"pim_check.py", "pim-check"}:
@@ -166,9 +258,15 @@ def _segment_is_blocked(tokens: list[str]) -> bool:
     )
 
 
+def _command_is_blocked(command: str, depth: int = 0) -> bool:
+    return any(
+        _segment_is_blocked(segment, depth) for segment in _segments(command)
+    )
+
+
 def command_is_blocked(command: str) -> bool:
     try:
-        return any(_segment_is_blocked(segment) for segment in _segments(command))
+        return _command_is_blocked(command)
     except ValueError:
         return True
 

@@ -15,9 +15,10 @@
   600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
-- Claude에 커밋한 command hook은 직접 실행을 막는 defense in depth일 뿐 보안 경계가
-  아니다. `SIGKILL`/OOM과 영구 실행되는 web dashboard, Docker runner, non-plan CLI
-  entry point는 여전히 명시적 한계로 남는다.
+- Claude에 커밋한 command hook은 `timeout`·`nohup`과 shell `-c` 내부까지 재귀
+  검사해 직접 실행을 막지만 defense in depth일 뿐 보안 경계가 아니다. `SIGKILL`/OOM과
+  영구 실행되는 web dashboard, Docker runner, non-plan CLI entry point는 여전히
+  명시적 한계로 남는다.
 - 테스트는 fake control executable만 사용하며 실제 보드를 acquire하지 않는다.
 
 ### PR 자동리뷰 3종 집계 + 머지 게이트 (scripts/pr_reviews.py)

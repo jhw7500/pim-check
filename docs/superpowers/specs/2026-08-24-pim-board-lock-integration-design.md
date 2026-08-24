@@ -204,6 +204,12 @@ The hook exits with status `2` and writes a remediation message to stderr so
 Claude blocks the tool call before execution. Unrelated shell commands pass
 unchanged.
 
+Before classifying a non-Python command as unrelated, the guard unwraps
+`timeout` and `nohup` command operands and reparses command strings passed to
+`bash`, `dash`, `sh`, or `zsh` with `-c`. Launcher inspection is recursive and
+fails closed after a bounded nesting depth; a recognized board wrapper ends
+inspection because that child already executes under the lease.
+
 This hook is defense in depth, not enforcement against arbitrary shell
 composition or non-Claude callers. The actual coordination mechanism is the
 shared advisory board lease.
