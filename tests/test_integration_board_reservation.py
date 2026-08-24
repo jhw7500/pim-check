@@ -77,7 +77,8 @@ def test_wrapper_derives_github_session_and_passes_long_lease(tmp_path: Path) ->
 
 
 def test_wrapper_derives_codex_then_local_session_fallbacks(tmp_path: Path) -> None:
-    env, log = _control_env(tmp_path); env["CODEX_THREAD_ID"] = "thread-abc"
+    env, log = _control_env(tmp_path)
+    env["CODEX_THREAD_ID"] = "thread-abc"
     codex = subprocess.run([str(WRAPPER), "--for", "30m", "--purpose", "codex", "--", "true"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert codex.returncode == 0
     assert _logged_args(log)[_logged_args(log).index("--session") + 1] == "codex:thread-abc"
@@ -89,14 +90,17 @@ def test_wrapper_derives_codex_then_local_session_fallbacks(tmp_path: Path) -> N
 
 
 def test_wrapper_propagates_board_busy_without_starting_child(tmp_path: Path) -> None:
-    env, _ = _control_env(tmp_path); marker = tmp_path / "child-started"; env["FAKE_CONTROL_EXIT"] = "4"
+    env, _ = _control_env(tmp_path)
+    marker = tmp_path / "child-started"
+    env["FAKE_CONTROL_EXIT"] = "4"
     result = subprocess.run([str(WRAPPER), "--for", "30m", "--purpose", "busy test", "--", "sh", "-c", f"touch {marker}"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 4
     assert not marker.exists()
 
 
 def test_wrapper_reuses_existing_marker_without_control_files(tmp_path: Path) -> None:
-    env = os.environ.copy(); env.update({"PIM_BOARD_LOCK_HELD": "1", "JHW_CONTROL_BIN": str(tmp_path / "missing-control"), "JHW_CONTROL_ENV": str(tmp_path / "missing.env")})
+    env = os.environ.copy()
+    env.update({"PIM_BOARD_LOCK_HELD": "1", "JHW_CONTROL_BIN": str(tmp_path / "missing-control"), "JHW_CONTROL_ENV": str(tmp_path / "missing.env")})
     result = subprocess.run([str(WRAPPER), "--for", "30m", "--purpose", "nested", "--", "sh", "-c", "exit 9"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 9
 
@@ -104,8 +108,10 @@ def test_wrapper_reuses_existing_marker_without_control_files(tmp_path: Path) ->
 @pytest.mark.parametrize("missing, message", [("config", "not readable"), ("binary", "not executable")])
 def test_wrapper_reports_missing_control_dependency(tmp_path: Path, missing: str, message: str) -> None:
     env, _ = _control_env(tmp_path)
-    if missing == "config": env["JHW_CONTROL_ENV"] = str(tmp_path / "missing.env")
-    else: env["JHW_CONTROL_BIN"] = str(tmp_path / "missing-control")
+    if missing == "config":
+        env["JHW_CONTROL_ENV"] = str(tmp_path / "missing.env")
+    else:
+        env["JHW_CONTROL_BIN"] = str(tmp_path / "missing-control")
     result = subprocess.run([str(WRAPPER), "--for", "30m", "--purpose", "missing", "--", "true"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 64
     assert message in result.stderr.lower()
