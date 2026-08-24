@@ -108,6 +108,10 @@ def _stop_and_reap(
     return _wait_for_group(child, process_group, reap_until)
 
 
+def _normalize_child_exit(returncode: int) -> int:
+    return 128 + (-returncode) if returncode < 0 else returncode
+
+
 def supervise(options: argparse.Namespace, command: list[str]) -> int:
     execution_deadline = options.deadline_epoch - options.cleanup_margin_seconds
     if time.time() >= execution_deadline:
@@ -156,7 +160,7 @@ def supervise(options: argparse.Namespace, command: list[str]) -> int:
             except subprocess.TimeoutExpired:
                 continue
             if not _group_exists(process_group):
-                return returncode
+                return _normalize_child_exit(returncode)
             print(
                 "deadline supervisor: child exited with descendants still running; "
                 "cleaning process group",
@@ -172,7 +176,7 @@ def supervise(options: argparse.Namespace, command: list[str]) -> int:
                 term_until,
                 options.deadline_epoch,
             )
-            return returncode if clean else SUPERVISOR_ERROR_EXIT
+            return _normalize_child_exit(returncode) if clean else SUPERVISOR_ERROR_EXIT
 
         if received_signal is None:
             print(

@@ -113,6 +113,83 @@ def _run_deadline_supervisor(
     )
 
 
+def test_deadline_supervisor_preserves_nonnegative_child_exit() -> None:
+    result = _run_deadline_supervisor(
+        time.time() + 5,
+        cleanup_margin=1,
+        term_grace=0.3,
+        command=[sys.executable, "-c", "raise SystemExit(7)"],
+    )
+
+    assert result.returncode == 7
+
+
+@pytest.mark.parametrize(
+    "signal_name, with_descendant, expected_exit",
+    [
+        ("SIGTERM", False, 143),
+        ("SIGSEGV", True, 139),
+    ],
+)
+def test_deadline_supervisor_normalizes_child_signal_exit(
+    signal_name: str,
+    with_descendant: bool,
+    expected_exit: int,
+    tmp_path: Path,
+) -> None:
+    descendant_pid = tmp_path / "signal-child-descendant.pid"
+    descendant = """
+import os
+import sys
+import time
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+time.sleep(60)
+"""
+    child = """
+import os
+import resource
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+marker = Path(sys.argv[2])
+if sys.argv[3] == "descendant":
+    subprocess.Popen([sys.executable, "-c", sys.argv[4], str(marker)])
+    limit = time.time() + 2
+    while time.time() < limit and not marker.exists():
+        time.sleep(0.01)
+    if not marker.exists():
+        raise SystemExit(70)
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+os.kill(os.getpid(), getattr(signal, sys.argv[1]))
+"""
+
+    result = _run_deadline_supervisor(
+        time.time() + 5,
+        cleanup_margin=1,
+        term_grace=0.3,
+        command=[
+            sys.executable,
+            "-c",
+            child,
+            signal_name,
+            str(descendant_pid),
+            "descendant" if with_descendant else "none",
+            descendant,
+        ],
+    )
+
+    assert result.returncode == expected_exit
+    if with_descendant:
+        pid = int(descendant_pid.read_text(encoding="utf-8"))
+        assert not Path(f"/proc/{pid}").exists()
+        assert "descendants still running" in result.stderr.lower()
+
+
 def test_deadline_supervisor_runs_teardown_and_returns_timeout_before_lease_expiry(
     tmp_path: Path,
 ) -> None:
