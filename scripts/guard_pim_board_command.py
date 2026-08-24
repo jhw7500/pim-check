@@ -70,6 +70,12 @@ def _skip_env_options(tokens: list[str], index: int) -> int:
                 raise ValueError(f"{token} split-string operand is empty")
             tokens[index : index + 2] = expanded
             continue
+        if token.startswith("-S"):
+            expanded = shlex.split(token[2:])
+            if not expanded:
+                raise ValueError("-S split-string operand is empty")
+            tokens[index : index + 1] = expanded
+            continue
         if token.startswith("--split-string="):
             expanded = shlex.split(token.partition("=")[2])
             if not expanded:
