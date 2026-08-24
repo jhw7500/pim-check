@@ -4,7 +4,19 @@
 # 종료 시각 마커 작성: /tmp/pim-check-auto-chain-done.flag
 
 set -u
-PROJECT=/home/jhw/ai/opencode/projects/pim-check
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PROJECT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+BOARD_WRAPPER="$SCRIPT_DIR/with_pim_board.sh"
+
+if [[ "${PIM_BOARD_LOCK_HELD:-}" != "1" ]]; then
+    exec "$BOARD_WRAPPER" \
+        --for 24h \
+        --purpose "pim-check auto_chain" \
+        --long-lease true \
+        -- "$SCRIPT_PATH" "$@"
+fi
+
 cd "$PROJECT" || exit 1
 
 SESSION_TS=$(date +%Y%m%d_%H%M%S)

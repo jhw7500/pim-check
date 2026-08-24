@@ -4,7 +4,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -119,3 +121,63 @@ def test_wrapper_rejects_invalid_contract(arguments: list[str], message: str) ->
     result = subprocess.run([str(WRAPPER), *arguments], cwd=ROOT, capture_output=True, text=True, check=False)
     assert result.returncode == 64
     assert message in result.stderr.lower()
+
+
+def _run_automation(
+    script_name: str,
+    tmp_path: Path,
+    extra_env: Optional[dict[str, str]] = None,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    env, log = _control_env(tmp_path)
+    env.update(
+        {
+            "PIM_BOARD_SESSION": f"pytest:{script_name}",
+            "FAKE_CONTROL_EXIT": "4",
+            "TZ": "Asia/Seoul",
+        }
+    )
+    if extra_env:
+        env.update(extra_env)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts" / script_name)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    return result, _logged_args(log)
+
+
+def test_auto_chain_self_wraps_with_24_hour_long_lease(tmp_path: Path) -> None:
+    result, args = _run_automation("auto_chain.sh", tmp_path)
+
+    assert result.returncode == 4
+    assert args[args.index("--for") + 1] == "24h"
+    assert args[args.index("--long-lease") + 1] == "true"
+    assert "auto_chain" in args[args.index("--purpose") + 1]
+
+
+@pytest.mark.parametrize("script_name", ["auto_overnight.sh", "auto_weekend.sh"])
+def test_timed_automation_self_wraps_until_exact_deadline(script_name: str, tmp_path: Path) -> None:
+    kst = timezone(timedelta(hours=9))
+    target = datetime(2026, 8, 25, 9, 0, 0, tzinfo=kst)
+    result, args = _run_automation(
+        script_name,
+        tmp_path,
+        {"PIM_AUTOMATION_TARGET_END": str(int(target.timestamp()))},
+    )
+
+    assert result.returncode == 4
+    assert args[args.index("--until") + 1] == target.isoformat()
+    assert args[args.index("--long-lease") + 1] == "true"
+    assert script_name.removesuffix(".sh") in args[args.index("--purpose") + 1]
+
+
+@pytest.mark.parametrize("script_name", ["auto_chain.sh", "auto_overnight.sh", "auto_weekend.sh"])
+def test_automation_uses_its_own_checkout_before_run_state(script_name: str) -> None:
+    text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+
+    assert "PROJECT=/home/jhw/ai/opencode/projects/pim-check" not in text
+    assert text.index("with_pim_board.sh") < text.index("SESSION_TS=")

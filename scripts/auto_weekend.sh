@@ -11,7 +11,22 @@
 # 월요일 09:00 KST에 자동 종료
 
 set -u
-PROJECT=/home/jhw/ai/opencode/projects/pim-check
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PROJECT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+BOARD_WRAPPER="$SCRIPT_DIR/with_pim_board.sh"
+TARGET_END=${PIM_AUTOMATION_TARGET_END:-$(date -d 'next monday 09:00' +%s 2>/dev/null || date -d 'monday 09:00' +%s)}
+
+if [[ "${PIM_BOARD_LOCK_HELD:-}" != "1" ]]; then
+    export PIM_AUTOMATION_TARGET_END="$TARGET_END"
+    TARGET_UNTIL=$(date -d "@$TARGET_END" -Iseconds)
+    exec "$BOARD_WRAPPER" \
+        --until "$TARGET_UNTIL" \
+        --purpose "pim-check auto_weekend" \
+        --long-lease true \
+        -- "$SCRIPT_PATH" "$@"
+fi
+
 cd "$PROJECT" || exit 1
 
 SESSION_TS=$(date +%Y%m%d_%H%M%S)
@@ -19,8 +34,6 @@ SESSION_DIR=$PROJECT/reports/auto-weekend/$SESSION_TS
 mkdir -p "$SESSION_DIR"
 MAIN_LOG=$SESSION_DIR/main.log
 
-# Target: 다음 월요일 09:00 KST
-TARGET_END=$(date -d 'next monday 09:00' +%s 2>/dev/null || date -d 'monday 09:00' +%s)
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$MAIN_LOG"; }
 
 log "=== auto_weekend session start ==="
