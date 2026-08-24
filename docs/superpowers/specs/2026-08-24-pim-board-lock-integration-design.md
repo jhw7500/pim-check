@@ -210,6 +210,12 @@ Before classifying a non-Python command as unrelated, the guard unwraps
 fails closed after a bounded nesting depth; a recognized board wrapper ends
 inspection because that child already executes under the lease.
 
+Shell grouping tokens (`()`, `{}`) are command boundaries, and command-bearing
+control prefixes such as `if`, `then`, `while`, and `do` are reduced before the
+inner command is classified. Compound forms that cannot be reduced without a
+full shell parser (`for`, `case`, function declarations, `coproc`, and `time`)
+fail closed and require a simpler invocation through the canonical wrapper.
+
 This hook is defense in depth, not enforcement against arbitrary shell
 composition or non-Claude callers. The actual coordination mechanism is the
 shared advisory board lease.

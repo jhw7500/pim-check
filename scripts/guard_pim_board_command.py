@@ -20,7 +20,7 @@ HARDWARE_RUNNERS = {
     "run_channel_verify.py",
     "run_failed_retry.py",
 }
-SHELL_BREAKS = set(";&|\n")
+SHELL_BREAKS = set(";&|(){}\n")
 ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
 PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X", "--check-hash-based-pycs"}
 TIMEOUT_OPTIONS_WITH_VALUE = {"-k", "--kill-after", "-s", "--signal"}
@@ -28,6 +28,9 @@ TIMEOUT_OPTIONS = {"--foreground", "--preserve-status", "--verbose", "-v"}
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 MAX_LAUNCHER_DEPTH = 8
+SHELL_COMMAND_PREFIXES = {"if", "then", "elif", "else", "while", "until", "do", "!"}
+SHELL_CLOSING_WORDS = {"fi", "done", "esac"}
+UNSUPPORTED_SHELL_COMPOUNDS = {"for", "select", "case", "function", "coproc", "time"}
 REMEDIATION = (
     "run this command through scripts/with_pim_board.sh with --for/--until "
     "and --purpose"
@@ -35,7 +38,7 @@ REMEDIATION = (
 
 
 def _segments(command: str) -> Iterator[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|(){}\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -228,9 +231,26 @@ def _shell_command(tokens: list[str], command_index: int) -> Optional[str]:
     return None
 
 
+def _shell_command_tokens(tokens: list[str]) -> list[str]:
+    while tokens and tokens[0] in SHELL_COMMAND_PREFIXES:
+        tokens = tokens[1:]
+    if not tokens:
+        return []
+    if tokens[0] in SHELL_CLOSING_WORDS:
+        if len(tokens) > 1:
+            raise ValueError(f"unexpected tokens after {tokens[0]}")
+        return []
+    if tokens[0] in UNSUPPORTED_SHELL_COMPOUNDS:
+        raise ValueError(f"unsupported shell compound syntax: {tokens[0]}")
+    return tokens
+
+
 def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     if depth > MAX_LAUNCHER_DEPTH:
         raise ValueError("launcher nesting is too deep")
+    tokens = _shell_command_tokens(tokens)
+    if not tokens:
+        return False
     command_index = _command_index(tokens)
     if command_index is None:
         return False
