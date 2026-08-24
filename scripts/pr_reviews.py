@@ -20,6 +20,7 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   MISSING   리뷰어가 아무 것도 남기지 않음 (워크플로 미실행/실패)
   FAILED    automation-state.attempt_status != success
   STALE     리뷰한 커밋 != PR HEAD → 지금 머지될 코드는 그 리뷰어가 못 봤다
+  INCOMPLETE 조회 중 산출물이 변했거나 Codex clear/finding 어느 쪽인지 확정 불가
   NON_CLEAR Claude/Gemini 본문에 독립 상태 줄의 무지적 선언이 없음 → 사람이 읽고 처분
   FINDINGS  지적이 있고, 그 이후 신뢰할 수 있는 구성원의 명시적 처분 코멘트가 없음
             (PR 메인 대화는 전체, 인라인 답글은 해당 finding 1건에 적용)
@@ -52,7 +53,7 @@ Codex 가 지적한 P1/P2 를 고친 `(#N 자동리뷰)` 커밋을 정작 Codex 
 
 Exit code:
   0 = 통과 (--gate 없이 실행한 경우도 0)
-  1 = 차단 (--gate 에서 MISSING/FAILED/STALE/NON_CLEAR/미처분 FINDINGS 발견)
+  1 = 차단 (--gate 에서 MISSING/FAILED/STALE/INCOMPLETE/NON_CLEAR/미처분 FINDINGS 발견)
   3 = 입력·환경 에러 (gh 미설치·미인증, PR 없음 등)
 """
 
@@ -141,14 +142,54 @@ def detect_repo() -> str:
 
 
 def fetch_payloads(repo: str, pr: int, gh: Callable[[List[str]], Any] = gh_json) -> Dict[str, Any]:
-    """PR 메타 + 세 경로의 코멘트를 모두 가져온다."""
+    """PR 메타 + 세 경로를 안정성 확인이 가능한 순서로 가져온다."""
     # gh 2.96.0 실측: --paginate 는 여러 배열 페이지를 단일 배열로 병합한다.
     # --slurp 를 더하면 배열의 배열이 되어 아래 collect 계약과 맞지 않는다.
+    # 두 round에서 세 산출물 경로가 같은지 확인한다. 각 round 안에서는 review를
+    # 먼저 읽고 그 review의 인라인 코멘트를 읽는다.
+    issues_before = gh(["api", f"repos/{repo}/issues/{pr}/comments", "--paginate"])
+    reviews_before = gh(["api", f"repos/{repo}/pulls/{pr}/reviews", "--paginate"])
+    comments_before = gh(["api", f"repos/{repo}/pulls/{pr}/comments", "--paginate"])
+    issues_after = gh(["api", f"repos/{repo}/issues/{pr}/comments", "--paginate"])
+    reviews_after = gh(["api", f"repos/{repo}/pulls/{pr}/reviews", "--paginate"])
+    comments_after = gh(["api", f"repos/{repo}/pulls/{pr}/comments", "--paginate"])
+
+    review_ids = {r.get("id") for r in reviews_after if isinstance(r, dict) and r.get("id") is not None}
+    orphan_review_ids = {
+        c.get("pull_request_review_id")
+        for c in comments_after
+        if isinstance(c, dict)
+        and is_codex(c.get("user") or {})
+        and c.get("pull_request_review_id") is not None
+        and c.get("pull_request_review_id") not in review_ids
+    }
+    issue_comments_consistent = issues_before == issues_after
+    codex_consistent = reviews_before == reviews_after and comments_before == comments_after and not orphan_review_ids
+    problems = []
+    if not issue_comments_consistent:
+        problems.append("issue 코멘트 목록이 조회 중 변경됨")
+    if reviews_before != reviews_after:
+        problems.append("review 목록이 조회 중 변경됨")
+    if comments_before != comments_after:
+        problems.append("인라인 코멘트 목록이 조회 중 변경됨")
+    if orphan_review_ids:
+        rendered_ids = ", ".join(sorted(str(review_id) for review_id in orphan_review_ids))
+        problems.append(f"알 수 없는 review id의 Codex 코멘트: {rendered_ids}")
+
+    # freshness의 권위는 모든 산출물 뒤에 읽은 마지막 HEAD다. 중간 push가 있으면
+    # 앞서 읽은 리뷰가 자연스럽게 STALE이 된다.
+    pr_payload = gh(["api", f"repos/{repo}/pulls/{pr}"])
     return {
-        "pr": gh(["api", f"repos/{repo}/pulls/{pr}"]),
-        "issue_comments": gh(["api", f"repos/{repo}/issues/{pr}/comments", "--paginate"]),
-        "review_comments": gh(["api", f"repos/{repo}/pulls/{pr}/comments", "--paginate"]),
-        "reviews": gh(["api", f"repos/{repo}/pulls/{pr}/reviews", "--paginate"]),
+        "pr": pr_payload,
+        "issue_comments": issues_after,
+        "review_comments": comments_after,
+        "reviews": reviews_after,
+        "_snapshot": {
+            "consistent": issue_comments_consistent and codex_consistent,
+            "issue_comments_consistent": issue_comments_consistent,
+            "codex_consistent": codex_consistent,
+            "detail": "; ".join(problems),
+        },
     }
 
 
@@ -440,6 +481,7 @@ def collect(payloads: Dict[str, Any]) -> Dict[str, Any]:
         "latest_bot_artifact": latest_bot,
         "global_disposed": global_disposed,
         "disposed": global_disposed or all_findings_disposed,
+        "snapshot": payloads.get("_snapshot") or {"consistent": True, "detail": ""},
     }
 
 
@@ -454,11 +496,40 @@ def _run_failed(who: str, entry: Dict[str, Any]) -> bool:
     return status not in (None, "success")
 
 
+def _codex_incomplete(entry: Dict[str, Any]) -> bool:
+    """Codex 산출물이 clear와 findings 어느 쪽으로도 완결되지 않았는가."""
+    return not entry.get("self_reported_clear") and not entry.get("findings")
+
+
 def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
     """게이트 위반 목록을 반환한다. 빈 리스트면 통과."""
     violations: List[Dict[str, str]] = []
     entries = summary.get("entries") or {}
     head = summary.get("head") or ""
+    snapshot = summary.get("snapshot") or {"consistent": True}
+    snapshot_consistent = snapshot.get("consistent", True)
+    issue_comments_consistent = snapshot.get("issue_comments_consistent", snapshot_consistent)
+    codex_snapshot_consistent = snapshot.get("codex_consistent", snapshot_consistent)
+
+    if not issue_comments_consistent:
+        for who in (CLAUDE, GEMINI):
+            violations.append(
+                {
+                    "reviewer": who,
+                    "kind": "INCOMPLETE",
+                    "detail": f"자동리뷰 issue 코멘트 스냅샷이 조회 중 변경됐다: {snapshot.get('detail')}",
+                    "remedy": "잠시 후 다시 실행해 안정된 리뷰 스냅샷을 확인한다",
+                }
+            )
+    if not codex_snapshot_consistent:
+        violations.append(
+            {
+                "reviewer": CODEX,
+                "kind": "INCOMPLETE",
+                "detail": f"리뷰 스냅샷이 조회 중 변경됐다: {snapshot.get('detail') or '원인 불명'}",
+                "remedy": "잠시 후 다시 실행해 안정된 리뷰 스냅샷을 확인한다",
+            }
+        )
 
     for who in REVIEWERS:
         entry = entries.get(who)
@@ -489,6 +560,15 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
                     "kind": "STALE",
                     "detail": f"리뷰 대상 {reviewed[:10]} != HEAD {head[:10]} — 지금 머지될 코드를 못 봤다",
                     "remedy": _remedy(who),
+                }
+            )
+        if who == CODEX and codex_snapshot_consistent and _codex_incomplete(entry):
+            violations.append(
+                {
+                    "reviewer": who,
+                    "kind": "INCOMPLETE",
+                    "detail": "Codex review에 명시적 무지적 선언도 matching 인라인 지적도 없다",
+                    "remedy": "잠시 후 다시 실행하고 계속되면 PR 에 `@codex review`로 재리뷰를 요청한다",
                 }
             )
         if (
@@ -544,19 +624,32 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
     out.append("-" * 67)
 
     entries = summary.get("entries") or {}
+    snapshot = summary.get("snapshot") or {"consistent": True}
+    snapshot_consistent = snapshot.get("consistent", True)
+    issue_comments_consistent = snapshot.get("issue_comments_consistent", snapshot_consistent)
+    codex_snapshot_consistent = snapshot.get("codex_consistent", snapshot_consistent)
     for who in REVIEWERS:
         entry = entries.get(who)
         if entry is None:
             out.append(f"{who:<8} {'MISSING':<15} {'-':<12} {'-':<5} -")
             continue
+        snapshot_incomplete = (who in (CLAUDE, GEMINI) and not issue_comments_consistent) or (
+            who == CODEX and not codex_snapshot_consistent
+        )
+        codex_incomplete = who == CODEX and _codex_incomplete(entry)
+        incomplete = snapshot_incomplete or codex_incomplete
         if _run_failed(who, entry):
             status = "FAILED"
+        elif not entry.get("fresh") and incomplete:
+            status = "STALE/INCOMPLETE"
         elif not entry.get("fresh") and entry.get("findings"):
             status = "STALE/FINDINGS"
         elif not entry.get("fresh"):
             status = "STALE"
         elif who in (CLAUDE, GEMINI) and not entry.get("self_reported_clear"):
             status = "NON_CLEAR"
+        elif incomplete:
+            status = "INCOMPLETE"
         elif entry.get("findings"):
             status = "FINDINGS"
         elif entry.get("self_reported_clear"):

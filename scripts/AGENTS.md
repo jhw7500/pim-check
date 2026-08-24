@@ -33,7 +33,7 @@
 
 | File | Description |
 |------|-------------|
-| `pr_reviews.py` | PR 자동리뷰 3종(Claude·Gemini·Codex) 집계 + 머지 게이트. 세 리뷰어가 서로 다른 API 경로에 남기므로 한 경로만 보면 리뷰를 통째로 놓친다. 봇 신원과 automation 마커 일치를 검증하고, Claude/Gemini의 무지적 선언은 인용·코드가 아닌 독립 상태 줄에서만 인정한다. 처분은 신뢰 구성원의 코멘트에 독립 줄 `<!-- pr-review-disposition -->`과 판단 근거가 있을 때만 인정하며, PR 메인 처분은 전체 finding·NON_CLEAR에, 인라인 답글은 `in_reply_to_id`가 가리키는 finding 1건에만 적용한다. `--gate`는 MISSING/FAILED/STALE/NON_CLEAR/미처분 FINDINGS에서 exit 1. |
+| `pr_reviews.py` | PR 자동리뷰 3종(Claude·Gemini·Codex) 집계 + 머지 게이트. 세 리뷰어가 서로 다른 API 경로에 남기므로 한 경로만 보면 리뷰를 통째로 놓친다. 봇 신원과 automation 마커 일치를 검증하고, Claude/Gemini의 무지적 선언은 인용·코드가 아닌 독립 상태 줄에서만 인정한다. issue 코멘트와 Codex review→인라인 코멘트를 두 라운드 조회해 목록 안정성·review id 참조를 확인하고 마지막 PR HEAD를 freshness 권위로 쓰며, clear/finding 어느 쪽도 확인되지 않거나 스냅샷이 변하면 INCOMPLETE로 차단한다. 처분은 신뢰 구성원의 코멘트에 독립 줄 `<!-- pr-review-disposition -->`과 판단 근거가 있을 때만 인정하며, PR 메인 처분은 전체 finding·NON_CLEAR에, 인라인 답글은 `in_reply_to_id`가 가리키는 finding 1건에만 적용한다. `--gate`는 MISSING/FAILED/STALE/INCOMPLETE/NON_CLEAR/미처분 FINDINGS에서 exit 1. |
 
 ## For AI Agents
 

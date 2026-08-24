@@ -12,6 +12,7 @@ tests/test_pr_reviews.py — scripts/pr_reviews.py 단위 테스트.
     중 7개가 이 상태로 머지됐다
   - 명시적 마커+근거가 있는 PR 메인 처분은 전체 finding에, 인라인 답글은 해당 finding 1건에만 적용된다
   - Claude/Gemini가 독립 상태 줄에서 무지적을 선언하지 않으면 사람 처분 전까지 NON_CLEAR다
+  - issue/review/comment 스냅샷이 변하거나 orphan review id가 보이면 INCOMPLETE다
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from pr_reviews import (  # type: ignore[import-not-found]
     collect,
     commits_match,
     evaluate,
+    fetch_payloads,
     gh_json,
     has_clear_phrase,
     identify_reviewer,
@@ -123,6 +125,80 @@ def payloads_pr103():
             }
         ],
     }
+
+
+class TestFetchPayloads(unittest.TestCase):
+    def test_fetches_codex_reviews_before_their_inline_comments(self):
+        calls = []
+
+        def fake_gh(args):
+            calls.append(args)
+            return {"head": {"sha": "final-head"}} if args[1] == "repos/o/r/pulls/7" else []
+
+        payloads = fetch_payloads("o/r", 7, gh=fake_gh)
+        endpoints = [args[1] for args in calls]
+
+        self.assertLess(endpoints.index("repos/o/r/pulls/7/reviews"), endpoints.index("repos/o/r/pulls/7/comments"))
+        self.assertGreater(
+            endpoints.index("repos/o/r/pulls/7"),
+            max(endpoints.index("repos/o/r/pulls/7/reviews"), endpoints.index("repos/o/r/pulls/7/comments")),
+        )
+        self.assertEqual(payloads["pr"]["head"]["sha"], "final-head")
+        self.assertEqual(payloads["review_comments"], [])
+
+    def test_orphan_codex_comment_marks_snapshot_inconsistent(self):
+        old_clear_review = {
+            "id": 1,
+            "user": CODEX_USER,
+            "body": CODEX_NO_FINDING_BODY,
+            "submitted_at": "2026-08-23T09:20:00Z",
+        }
+        orphan_finding = {
+            "id": 2,
+            "user": CODEX_USER,
+            "body": CODEX_INLINE_BODY,
+            "pull_request_review_id": 999,
+            "created_at": "2026-08-23T09:21:00Z",
+        }
+
+        def fake_gh(args):
+            endpoint = args[1]
+            if endpoint == "repos/o/r/pulls/7/reviews":
+                return [old_clear_review]
+            if endpoint == "repos/o/r/pulls/7/comments":
+                return [orphan_finding]
+            if endpoint == "repos/o/r/pulls/7":
+                return {"number": 7, "head": {"sha": "a0b744ce68"}}
+            return []
+
+        payloads = fetch_payloads("o/r", 7, gh=fake_gh)
+        summary = collect(payloads)
+
+        self.assertFalse(payloads["_snapshot"]["consistent"])
+        self.assertIn((CODEX, "INCOMPLETE"), {(v["reviewer"], v["kind"]) for v in evaluate(summary)})
+
+    def test_sticky_automation_update_marks_snapshot_inconsistent(self):
+        issue_reads = 0
+
+        def fake_gh(args):
+            nonlocal issue_reads
+            endpoint = args[1]
+            if endpoint == "repos/o/r/issues/7/comments":
+                issue_reads += 1
+                body = CLAUDE_BODY if issue_reads == 1 else CLAUDE_BODY.replace("차단 이슈 없음.", "P1 결함이 있다.")
+                return [{"id": 1, "user": BOT, "body": body, "updated_at": f"2026-08-24T00:00:0{issue_reads}Z"}]
+            if endpoint == "repos/o/r/pulls/7":
+                return {"number": 7, "head": {"sha": HEAD_103}}
+            return []
+
+        payloads = fetch_payloads("o/r", 7, gh=fake_gh)
+        summary = collect(payloads)
+        violations = {(v["reviewer"], v["kind"]) for v in evaluate(summary)}
+
+        self.assertEqual(issue_reads, 2)
+        self.assertFalse(payloads["_snapshot"]["issue_comments_consistent"])
+        self.assertIn(("claude", "INCOMPLETE"), violations)
+        self.assertIn(("gemini", "INCOMPLETE"), violations)
 
 
 class TestMarkerParsing(unittest.TestCase):
@@ -664,6 +740,17 @@ class TestEvaluate(unittest.TestCase):
         p["issue_comments"][1]["body"] = CLAUDE_BODY.replace('"attempt_status":"success",', "")
         v = evaluate(collect(p))
         self.assertIn(("claude", "FAILED"), {(x["reviewer"], x["kind"]) for x in v})
+
+    def test_codex_review_without_clear_declaration_or_comments_is_incomplete(self):
+        p = payloads_pr103()
+        p["pr"]["head"]["sha"] = OLD_103
+        p["review_comments"] = []
+
+        summary = collect(p)
+        violations = evaluate(summary)
+
+        self.assertIn((CODEX, "INCOMPLETE"), {(v["reviewer"], v["kind"]) for v in violations})
+        self.assertRegex(render(summary, violations), r"(?m)^codex\s+INCOMPLETE\s+")
 
     def test_successful_non_clear_automation_review_requires_human_review(self):
         p = payloads_pr103()
