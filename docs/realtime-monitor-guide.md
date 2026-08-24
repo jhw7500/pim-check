@@ -43,7 +43,7 @@ python3 pim_web_viewer.py            # http://localhost:8077
 보드 점유로 인한 exit 4는 의도된 동작이다. lease를 우회해 재시도하지 말고
 `jhw-control board status pim`으로 상태를 확인한다.
 
-### 2-B. 웹 제어판에서 직접 시작 (CLI 불필요)
+### 2-B. 웹 제어판에서 직접 시작 (공유 보드에서는 사용 금지)
 
 ```bash
 python3 pim_web_viewer.py            # http://localhost:8077
@@ -51,6 +51,10 @@ python3 pim_web_viewer.py            # http://localhost:8077
 
 브라우저에서 상단 제어판에 **플랜 선택 + 타겟 IP/유저/비번 입력 → ▶ 시작**.
 별도로 `pim_check.py` 를 실행할 필요가 없다(뷰어가 대신 spawn).
+
+> **점유 통합 제외**: 웹 제어판의 plan 실행은 현재 board lease를 획득하지 않는
+> 직접 실행 경로다. 공유 PIM 보드에서는 사용하면 안 되며, 통합될 때까지는 위
+> 터미널 1의 `scripts/with_pim_board.sh`로 감싼 CLI 실행만 지원되는 경로다.
 
 ---
 

@@ -306,7 +306,7 @@ email:
 
 | 변수 | 우선순위 | 설명 | 예시 |
 |------|---------|------|------|
-| `TARGET_HOST` | 최상위 | 타겟 IP — `run_*.py` runner와 `qa_agent`/`infer_agent`의 기본 호스트 | `TARGET_HOST=192.168.0.50 python3 run_mixed_combo_verify.py` |
+| `TARGET_HOST` | 최상위 | 타겟 IP — `run_*.py` runner와 `qa_agent`/`infer_agent`의 기본 호스트 | `scripts/with_pim_board.sh --for 30m --purpose "manual mixed_combo" -- env TARGET_HOST=192.168.0.50 python3 run_mixed_combo_verify.py` |
 
 **우선순위 (높음→낮음)**: env var → CLI 인자(`--host`) → `~/.pim-check.yaml`(`default_host`) → `profiles/base.yaml`(`target.host`) → 코드 fallback (`192.168.0.5`).
 
