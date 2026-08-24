@@ -16,6 +16,9 @@ HARDWARE_RUNNERS = {
     "run_mixed_combo_verify.py",
     "run_comprehensive_verify.py",
     "run_bps_quick.py",
+    "run_smart_verify.py",
+    "run_channel_verify.py",
+    "run_failed_retry.py",
 }
 SHELL_BREAKS = set(";&|\n")
 ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
