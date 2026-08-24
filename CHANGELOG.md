@@ -1,6 +1,55 @@
 # Changelog
 
-## Unreleased (2026-08-23)
+## Unreleased (2026-08-24)
+
+### PR 자동리뷰 3종 집계 + 머지 게이트 (scripts/pr_reviews.py)
+
+- **문제**: 세 리뷰어가 서로 다른 API 경로에 결과를 남긴다 — Claude·Gemini 는
+  `issues/{pr}/comments`(github-actions[bot] + automation 마커), Codex 는 지적이
+  있으면 `pulls/{pr}/comments`+`pulls/{pr}/reviews`, 없으면 `issues/{pr}/comments`.
+  한 경로만 보면 리뷰 하나를 통째로 놓치고, `statusCheckRollup` 은 pass/fail 만
+  보여준다. 실제로 리뷰를 안 읽고 머지한 PR 들에서 P1 3건이 사후에 #93/#94/#96 로
+  올라왔다.
+- **도구**: `python3 scripts/pr_reviews.py <PR> [--gate|--json|--full]` — 세 경로를
+  한 번에 모아 리뷰어별 표(상태·리뷰 커밋·지적 수·출처)로 제시. `--gate` 는
+  위반 시 exit 1.
+- **게이트는 객관 신호만 판정**: `MISSING`(산출물 없음) · `FAILED`
+  (`automation-state.attempt_status != success`) · `STALE`(리뷰 대상 커밋 != HEAD)
+  · `INCOMPLETE`(조회 중 산출물 변경 또는 Codex clear/finding 확정 불가)
+  · `NON_CLEAR`(Claude/Gemini의 독립 상태 줄 무지적 선언 없음) · `FINDINGS`(지적이
+  있는데 그 이후 OWNER/MEMBER/COLLABORATOR의 처분
+  코멘트가 없음).
+- **resolve 상태는 신호로 쓰지 않는다**(실측 2026-08-24): 머지된 PR #97~#103 의
+  codex 스레드가 전부 `isResolved=false` 이고, #103 은 지적이 반영됐는데도
+  `isOutdated=false` 였다. 거기에 게이트를 걸면 모든 PR 이 영구 차단된다.
+  Claude·Gemini 의 지적 심각도도 산문이라 파싱하지 않고, 명시적 무지적 문구만
+  '자기신고' 로 표시한다.
+- **STALE 이 드러낸 것**(실측): 최근 8개 PR(#97~#104)에서 Claude·Gemini 는 push
+  마다 재리뷰해 8/8 이 HEAD 기준이었으나 **Codex 는 7/8 이 옛 커밋 기준**이었다.
+  Codex 는 PR open 시 한 번만 리뷰하므로, 정작 Codex 가 지적한 P1/P2 를 고친
+  `(#N 자동리뷰)` 커밋을 Codex 는 한 번도 다시 보지 않은 채 머지돼 왔다.
+  재리뷰는 PR 에 `@codex review` 코멘트로 트리거된다(도구가 remedy 로 안내).
+- 가드: `tests/test_pr_reviews.py` 61건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
+  것이라 봇 출력 형식이 바뀌면 테스트가 먼저 깨진다. Codex 의 `Reviewed commit`
+  이 축약 sha 라 접두 비교해야 하는 것, 답글(`in_reply_to_id`)은 지적으로 세지
+  않는 것, 처분 코멘트가 봇 산출물보다 나중이어야 하는 것을 각각 못박는다.
+  또한 자동화 상태 누락을 실패로 처리하고, 여러 Codex 실행이 남아도 API 경로를
+  가로질러 최신 산출물만 고르며 해당 review id의 지적만 집계하도록 가드한다.
+  Claude·Gemini는 정확한 `github-actions[bot]`+마커 일치, Codex는 정확한 REST Bot
+  신원을 요구하고, 외부 계정이나 평범한 질문·진행 코멘트가 지적을 처분한 것처럼
+  위조하지 못하게 한다. 처분에는 독립 줄 `<!-- pr-review-disposition -->`과 영숫자
+  근거를 포함한 `Decision: <근거>`(또는 `판단:`/`처분 근거:`) 줄이 필요하다.
+  신뢰 구성원의 Codex 인라인 답글도 처분으로 인정하되, `in_reply_to_id`가
+  가리키는 finding 1건에만 적용한다. 다른 review comment·무관한 스레드 답글·
+  `@codex review` 트리거는 처분이 아니다. PR 메인 처분 요약만 전체 finding에 적용한다.
+  Sticky 리뷰가 처분 후 갱신되면 새 본문 확인을 위해 예전 전역 처분을 무효화하고,
+  STALE과 FINDINGS가 겹치면 표에 두 상태를 함께 표시하며 일부만 처분된 경우 건수를 보여준다.
+  Claude/Gemini의 산문 심각도는 추측하지 않되, 인용·코드가 아닌 독립 상태 줄에 무지적 선언이 없으면
+  `NON_CLEAR`로 fail-closed하여 사람의 `--full` 검토+전역 처분을 요구한다.
+  issue 코멘트와 Codex review→인라인 코멘트를 두 라운드 조회해 목록 안정성과
+  review id 참조를 검증하고 마지막에 읽은 PR HEAD를 freshness 권위로 쓴다.
+  중간 sticky 갱신·publish·push로 확정할 수 없는 스냅샷은 `INCOMPLETE`로 fail-closed한다.
+  `--full`은 Codex parent review뿐 아니라 선택된 인라인 finding 원문도 함께 출력한다.
 
 ### 테스트 파일명 규약 보완 + 개명 4건 (pim-check#94)
 
