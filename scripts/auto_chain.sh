@@ -26,13 +26,13 @@ MAIN_LOG=$SESSION_DIR/main.log
 
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$MAIN_LOG"; }
 
-# Wait for any running pim_check plan to finish
+# Refuse a legacy unwrapped process instead of consuming this lease waiting for it.
 log "=== auto_chain session $SESSION_TS started ==="
-log "Waiting for any current pim_check.py to finish..."
-while pgrep -f "pim_check.py.*--plan" > /dev/null 2>&1; do
-    sleep 60
-done
-log "previous plan finished, starting chain"
+if pgrep -f "pim_check.py.*--plan" > /dev/null 2>&1; then
+    log "ERROR: legacy pim_check.py --plan process is already running; refusing unsafe lease wait"
+    exit 75
+fi
+log "no legacy plan detected, starting chain"
 
 PLANS=(smoke comprehensive release_next nightly)
 for plan in "${PLANS[@]}"; do

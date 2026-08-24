@@ -4,9 +4,8 @@
 # scripts
 
 ## Purpose
-두 가지 목적의 스크립트가 공존:
-1. **Windows 운영 스크립트** — PowerShell/Batch로 가상환경 설정, 서버 시작/종료 자동화
-2. **Plan 운영 도구** (Python) — equivalence_check, comprehensive 매핑 생성기
+운영·검증 목적의 스크립트가 공존한다. Windows 환경 자동화, Plan 운영,
+PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞게 제공한다.
 
 ## Key Files
 
@@ -34,6 +33,7 @@
 | File | Description |
 |------|-------------|
 | `with_pim_board.sh` | 공통 exclusive lease 래퍼. mode-600 control 환경을 로드하고 사용자 로컬 `jhw-control` 절대 경로로 자식 하드웨어 명령을 실행한다. |
+| `run_with_deadline.py` | long-lease automation 자식을 lease 종료 전 TERM→teardown→KILL 순서로 종료하고 프로세스 그룹을 회수한다. |
 | `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. 직접 plan/standalone runner 실행을 차단하고 래퍼 사용을 요구한다. 방어 심화용이며 보안 경계는 아니다. |
 | `auto_chain.sh` | `smoke → comprehensive → release_next → nightly` 자동 체인. 실행 상태 생성 전 24시간 long lease로 자신을 래핑한다. |
 | `auto_overnight.sh` | 다음 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |

@@ -38,7 +38,9 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "echo precheck\npython3 pim_check.py --plan nightly",
         "env -i python3 pim_check.py --plan smoke",
         "env -- python3 pim_check.py --plan smoke",
+        'env -S "python3 pim_check.py --plan smoke"',
         "command python3 pim_check.py --plan smoke",
+        "python3 -W ignore pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -55,6 +57,8 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
         "python3 pim_check.py --list-plans",
+        'env -S "printf %s safe"',
+        'python3 -W ignore -c "print(\"safe\")"',
         "command -v python3 pim_check.py --plan smoke",
         "rg run_comprehensive_verify.py",
         "pytest -q tests/test_plan_load.py",
@@ -87,6 +91,8 @@ def test_guard_fails_closed_on_malformed_hook_json() -> None:
 
     assert result.returncode == 2
     assert "invalid hook input" in result.stderr.lower()
+    assert "scripts/with_pim_board.sh" in result.stderr
+    assert "--for/--until" in result.stderr
 
 
 def test_project_settings_register_bash_pretooluse_guard() -> None:
@@ -98,3 +104,17 @@ def test_project_settings_register_bash_pretooluse_guard() -> None:
     hook = entries[0]["hooks"][0]
     assert hook["type"] == "command"
     assert "$CLAUDE_PROJECT_DIR/scripts/guard_pim_board_command.py" in hook["command"]
+
+
+def test_guard_is_directly_executable() -> None:
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "true"}})
+
+    result = subprocess.run(
+        [str(GUARD)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0

@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import os
 import re
+import signal
+import shutil
 import subprocess
+import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -14,6 +18,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "scripts" / "with_pim_board.sh"
+DEADLINE_SUPERVISOR = ROOT / "scripts" / "run_with_deadline.py"
 
 FAKE_CONTROL = """#!/usr/bin/env bash
 set -u
@@ -68,12 +73,227 @@ def test_wrapper_loads_config_acquires_exclusive_and_preserves_child_exit(tmp_pa
 def test_wrapper_derives_github_session_and_passes_long_lease(tmp_path: Path) -> None:
     env, log = _control_env(tmp_path)
     env.update({"GITHUB_REPOSITORY": "jhw7500/pim-check", "GITHUB_RUN_ID": "1234", "GITHUB_RUN_ATTEMPT": "2"})
-    result = subprocess.run([str(WRAPPER), "--until", "2026-08-25T09:00:00+09:00", "--purpose", "github test", "--long-lease", "true", "--", "true"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    target = datetime.now(timezone.utc) + timedelta(hours=1)
+    target_text = target.isoformat()
+    result = subprocess.run([str(WRAPPER), "--until", target_text, "--purpose", "github test", "--long-lease", "true", "--", "true"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 0
     args = _logged_args(log)
     assert args[args.index("--session") + 1] == "github:jhw7500/pim-check:1234:2"
-    assert args[args.index("--until") + 1] == "2026-08-25T09:00:00+09:00"
+    assert args[args.index("--until") + 1] == target_text
     assert args[args.index("--long-lease") + 1] == "true"
+    assert str(DEADLINE_SUPERVISOR) in args
+    deadline = int(args[args.index("--deadline-epoch") + 1])
+    assert int(target.timestamp()) - 1 <= deadline <= int(target.timestamp())
+
+
+def _run_deadline_supervisor(
+    deadline: float,
+    cleanup_margin: float,
+    term_grace: float,
+    command: list[str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(DEADLINE_SUPERVISOR),
+            "--deadline-epoch",
+            str(deadline),
+            "--cleanup-margin-seconds",
+            str(cleanup_margin),
+            "--term-grace-seconds",
+            str(term_grace),
+            "--",
+            *command,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+
+def test_deadline_supervisor_runs_teardown_and_returns_timeout_before_lease_expiry(
+    tmp_path: Path,
+) -> None:
+    started = tmp_path / "started"
+    teardown = tmp_path / "teardown"
+    deadline = time.time() + 1.2
+    child = """
+import signal
+import sys
+import time
+from pathlib import Path
+
+started = Path(sys.argv[1])
+teardown = Path(sys.argv[2])
+
+def on_term(_signum, _frame):
+    teardown.write_text("complete", encoding="utf-8")
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, on_term)
+started.write_text(str(__import__("os").getpid()), encoding="utf-8")
+time.sleep(60)
+"""
+
+    result = _run_deadline_supervisor(
+        deadline,
+        cleanup_margin=0.7,
+        term_grace=0.3,
+        command=[sys.executable, "-c", child, str(started), str(teardown)],
+    )
+
+    assert result.returncode == 124
+    assert started.exists()
+    assert teardown.read_text(encoding="utf-8") == "complete"
+    assert time.time() < deadline
+    assert "deadline" in result.stderr.lower()
+
+
+def test_deadline_supervisor_kills_and_reaps_hung_process_tree(tmp_path: Path) -> None:
+    parent_pid = tmp_path / "parent.pid"
+    descendant_pid = tmp_path / "descendant.pid"
+    deadline = time.time() + 1.4
+    descendant = """
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+time.sleep(60)
+"""
+    parent = """
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+subprocess.Popen([sys.executable, "-c", sys.argv[3], sys.argv[2]])
+time.sleep(60)
+"""
+
+    result = _run_deadline_supervisor(
+        deadline,
+        cleanup_margin=0.8,
+        term_grace=0.2,
+        command=[
+            sys.executable,
+            "-c",
+            parent,
+            str(parent_pid),
+            str(descendant_pid),
+            descendant,
+        ],
+    )
+
+    assert result.returncode == 124
+    pids = [
+        int(parent_pid.read_text(encoding="utf-8")),
+        int(descendant_pid.read_text(encoding="utf-8")),
+    ]
+    assert all(not Path(f"/proc/{pid}").exists() for pid in pids)
+    assert time.time() < deadline
+
+
+def test_deadline_supervisor_reaps_process_tree_when_wrapper_forwards_term(
+    tmp_path: Path,
+) -> None:
+    parent_pid = tmp_path / "signal-parent.pid"
+    descendant_pid = tmp_path / "signal-descendant.pid"
+    descendant = """
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+time.sleep(60)
+"""
+    parent = """
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+subprocess.Popen([sys.executable, "-c", sys.argv[3], sys.argv[2]])
+time.sleep(60)
+"""
+    command = [
+        sys.executable,
+        str(DEADLINE_SUPERVISOR),
+        "--deadline-epoch",
+        str(time.time() + 30),
+        "--cleanup-margin-seconds",
+        "5",
+        "--term-grace-seconds",
+        "0.2",
+        "--",
+        sys.executable,
+        "-c",
+        parent,
+        str(parent_pid),
+        str(descendant_pid),
+        descendant,
+    ]
+    supervisor = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    limit = time.time() + 2
+    while time.time() < limit and not descendant_pid.exists():
+        time.sleep(0.01)
+    assert parent_pid.exists() and descendant_pid.exists()
+
+    supervisor.terminate()
+    try:
+        _stdout, stderr = supervisor.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        process_group = int(parent_pid.read_text(encoding="utf-8"))
+        os.killpg(process_group, signal.SIGKILL)
+        supervisor.kill()
+        supervisor.wait(timeout=2)
+        pytest.fail("deadline supervisor did not react to forwarded SIGTERM")
+
+    assert supervisor.returncode == 128 + signal.SIGTERM
+    assert "received signal" in stderr.lower()
+    pids = [
+        int(parent_pid.read_text(encoding="utf-8")),
+        int(descendant_pid.read_text(encoding="utf-8")),
+    ]
+    assert all(not Path(f"/proc/{pid}").exists() for pid in pids)
+
+
+def test_deadline_supervisor_refuses_to_start_without_cleanup_budget(tmp_path: Path) -> None:
+    marker = tmp_path / "must-not-start"
+
+    result = _run_deadline_supervisor(
+        time.time() + 0.1,
+        cleanup_margin=0.5,
+        term_grace=0.1,
+        command=[sys.executable, "-c", "from pathlib import Path; Path(__import__('sys').argv[1]).touch()", str(marker)],
+    )
+
+    assert result.returncode == 124
+    assert not marker.exists()
+    assert "insufficient" in result.stderr.lower()
 
 
 def test_wrapper_derives_codex_then_local_session_fallbacks(tmp_path: Path) -> None:
@@ -166,6 +386,56 @@ def test_auto_chain_self_wraps_with_24_hour_long_lease(tmp_path: Path) -> None:
     assert "auto_chain" in args[args.index("--purpose") + 1]
 
 
+def _write_executable(path: Path, contents: str) -> None:
+    path.write_text(contents, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_auto_chain_fails_visibly_when_legacy_plan_is_running(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    automation = scripts / "auto_chain.sh"
+    shutil.copy2(ROOT / "scripts" / "auto_chain.sh", automation)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "pgrep-seen"
+    _write_executable(
+        fake_bin / "pgrep",
+        """#!/bin/sh
+if [ ! -e "$FAKE_PGREP_STATE" ]; then
+    touch "$FAKE_PGREP_STATE"
+    exit 0
+fi
+kill -TERM "$PPID"
+exit 1
+""",
+    )
+    _write_executable(fake_bin / "sleep", "#!/bin/sh\nexit 0\n")
+    env = os.environ.copy()
+    env.update(
+        {
+            "PIM_BOARD_LOCK_HELD": "1",
+            "FAKE_PGREP_STATE": str(state),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(automation)],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode == 75
+    assert "legacy" in result.stdout.lower()
+
+
 @pytest.mark.parametrize("script_name", ["auto_overnight.sh", "auto_weekend.sh"])
 def test_timed_automation_self_wraps_until_exact_deadline(script_name: str, tmp_path: Path) -> None:
     kst = timezone(timedelta(hours=9))
@@ -195,15 +465,37 @@ def _workflow(path: str) -> dict:
 
 
 @pytest.mark.parametrize(
-    "path, job_name, step_name, lease",
+    "path, job_name, step_name, lease, purpose",
     [
-        ("hw-verify.yml", "mixed-combo", "Run mixed_combo verification (4 tests × 10 channel registers)", "30m"),
-        ("hw-verify-comprehensive.yml", "comprehensive", "Run comprehensive verification (96 tests, ~2h)", "3h"),
-        ("hw-verify-plan.yml", "plan-run", "Run plan", "12h"),
+        (
+            "hw-verify.yml",
+            "mixed-combo",
+            "Run mixed_combo verification (4 tests × 10 channel registers)",
+            "30m",
+            "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}",
+        ),
+        (
+            "hw-verify-comprehensive.yml",
+            "comprehensive",
+            "Run comprehensive verification (96 tests, ~2h)",
+            "3h",
+            "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}",
+        ),
+        (
+            "hw-verify-plan.yml",
+            "plan-run",
+            "Run plan",
+            "12h",
+            "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:${{ inputs.plan }}",
+        ),
     ],
 )
 def test_hardware_workflow_uses_common_fail_fast_wrapper(
-    path: str, job_name: str, step_name: str, lease: str
+    path: str,
+    job_name: str,
+    step_name: str,
+    lease: str,
+    purpose: str,
 ) -> None:
     workflow = _workflow(path)
     assert workflow["concurrency"] == {"group": "pim-target-lock", "cancel-in-progress": False}
@@ -212,7 +504,8 @@ def test_hardware_workflow_uses_common_fail_fast_wrapper(
 
     assert command.count("scripts/with_pim_board.sh") == 1
     assert f"--for {lease}" in command
-    assert "--purpose" in command
+    assert f'--purpose "{purpose}"' in command
+    assert "--long-lease" not in command
     assert "board wait" not in command
     assert "|| true" not in command
 

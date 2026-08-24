@@ -19,6 +19,11 @@ HARDWARE_RUNNERS = {
 }
 SHELL_BREAKS = set(";&|\n")
 ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X", "--check-hash-based-pycs"}
+REMEDIATION = (
+    "run this command through scripts/with_pim_board.sh with --for/--until "
+    "and --purpose"
+)
 
 
 def _segments(command: str) -> Iterator[list[str]]:
@@ -49,8 +54,24 @@ def _skip_env_options(tokens: list[str], index: int) -> int:
             return index + 1
         if not token.startswith("-") or token == "-":
             return index
+        if token in {"-S", "--split-string"}:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{token} requires a split-string operand")
+            expanded = shlex.split(tokens[index + 1])
+            if not expanded:
+                raise ValueError(f"{token} split-string operand is empty")
+            tokens[index : index + 2] = expanded
+            continue
+        if token.startswith("--split-string="):
+            expanded = shlex.split(token.partition("=")[2])
+            if not expanded:
+                raise ValueError("--split-string operand is empty")
+            tokens[index : index + 1] = expanded
+            continue
         index += 1
-        if token in ENV_OPTIONS_WITH_VALUE and index < len(tokens):
+        if token in ENV_OPTIONS_WITH_VALUE:
+            if index >= len(tokens):
+                raise ValueError(f"{token} requires an operand")
             index += 1
     return index
 
@@ -96,12 +117,25 @@ def _command_index(tokens: list[str]) -> Optional[int]:
 def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str], list[str]]:
     index = command_index + 1
     while index < len(tokens) and tokens[index].startswith("-"):
-        if tokens[index] == "-c":
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-c":
+            if index + 1 >= len(tokens):
+                raise ValueError("-c requires a command operand")
             return None, []
-        if tokens[index] == "-m":
+        if token == "-m":
+            if index + 1 >= len(tokens):
+                raise ValueError("-m requires a module operand")
             if index + 1 < len(tokens) and tokens[index + 1] == "pim_check":
                 return "pim_check.py", tokens[index + 2 :]
             return None, []
+        if token in PYTHON_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{token} requires an operand")
+            index += 2
+            continue
         index += 1
     if index >= len(tokens):
         return None, []
@@ -143,13 +177,16 @@ def main() -> int:
         if not isinstance(command, str):
             raise TypeError("command must be a string")
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        print(f"PIM board guard: invalid hook input: {exc}", file=sys.stderr)
+        print(
+            f"PIM board guard: invalid hook input: {exc}; {REMEDIATION}.",
+            file=sys.stderr,
+        )
         return 2
 
     if command_is_blocked(command):
         print(
-            "PIM board guard: run this command through scripts/with_pim_board.sh "
-            "with --for/--until and --purpose; direct board plan execution is blocked.",
+            f"PIM board guard: {REMEDIATION}; "
+            "direct board plan execution is blocked.",
             file=sys.stderr,
         )
         return 2

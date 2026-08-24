@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+DEADLINE_SUPERVISOR="$SCRIPT_DIR/run_with_deadline.py"
+AUTOMATION_CLEANUP_MARGIN_SECONDS=300
+AUTOMATION_TERM_GRACE_SECONDS=240
+
 die() {
     printf 'with_pim_board: %s\n' "$*" >&2
     exit 64
@@ -92,4 +97,27 @@ if [[ "$long_lease" == "true" ]]; then
     lock_command+=(--long-lease true)
 fi
 
-exec "${lock_command[@]}" -- env PIM_BOARD_LOCK_HELD=1 "${child[@]}"
+lock_child=("${child[@]}")
+if [[ "$long_lease" == "true" ]]; then
+    [[ -x "$DEADLINE_SUPERVISOR" ]] || die \
+        "deadline supervisor is not executable: $DEADLINE_SUPERVISOR"
+    lease_deadline_epoch=0
+    if [[ "$lease_flag" == "--for" && "$lease_value" =~ ^([1-9][0-9]{0,4})([mh])$ ]]; then
+        lease_minutes="${BASH_REMATCH[1]}"
+        if [[ "${BASH_REMATCH[2]}" == "h" ]]; then
+            lease_minutes=$((lease_minutes * 60))
+        fi
+        lease_deadline_epoch=$(( $(date +%s) + lease_minutes * 60 ))
+    elif [[ "$lease_flag" == "--until" ]]; then
+        lease_deadline_epoch=$(date -d "$lease_value" +%s 2>/dev/null) || lease_deadline_epoch=0
+    fi
+    lock_child=(
+        "$DEADLINE_SUPERVISOR"
+        --deadline-epoch "$lease_deadline_epoch"
+        --cleanup-margin-seconds "$AUTOMATION_CLEANUP_MARGIN_SECONDS"
+        --term-grace-seconds "$AUTOMATION_TERM_GRACE_SECONDS"
+        -- "${child[@]}"
+    )
+fi
+
+exec "${lock_command[@]}" -- env PIM_BOARD_LOCK_HELD=1 "${lock_child[@]}"
