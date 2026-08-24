@@ -21,6 +21,7 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   FAILED    automation-state.attempt_status != success
   STALE     리뷰한 커밋 != PR HEAD → 지금 머지될 코드는 그 리뷰어가 못 봤다
   FINDINGS  지적이 있고, 그 이후 신뢰할 수 있는 구성원의 처분 코멘트가 없음
+            (PR 메인 대화 또는 인라인 스레드 답글)
 
 무엇을 판정하지 '않는가'
 ------------------------
@@ -260,6 +261,8 @@ def collect(payloads: Dict[str, Any]) -> Dict[str, Any]:
             "reviewed_commit": state.get("attempt_head") or state.get("successful_head"),
             "run_status": state.get("attempt_status"),
             "run_id": state.get("run_id"),
+            # Sticky comment 갱신은 새 리뷰 본문이므로 이전 처분보다 나중이면
+            # 다시 사람의 확인을 요구한다. created_at 만 쓰면 새 본문을 놓친다.
             "created_at": c.get("updated_at") or c.get("created_at"),
             "url": c.get("html_url"),
             "body": body,
@@ -330,11 +333,19 @@ def collect(payloads: Dict[str, Any]) -> Dict[str, Any]:
             ]
         entries[CODEX] = codex_entry
 
-    # 3) 처분 코멘트 — 저장소의 신뢰할 수 있는 사람이 남긴 최신 코멘트 시각.
-    human_times = [c.get("created_at") for c in issue_comments if _is_trusted_human_comment(c) and c.get("created_at")]
+    # 3) 처분 코멘트 — PR 메인 대화 또는 인라인 스레드에 저장소의
+    #    신뢰할 수 있는 사람이 남긴 최신 코멘트 시각. 다른 review comment는
+    #    새로운 지적일 수 있으므로 답글(in_reply_to_id)만 처분으로 본다.
+    disposition_comments = list(issue_comments)
+    disposition_comments += [c for c in review_comments if c.get("in_reply_to_id")]
+    human_times = [
+        c.get("created_at") for c in disposition_comments if _is_trusted_human_comment(c) and c.get("created_at")
+    ]
     latest_human = max(human_times) if human_times else None
 
     # 봇이 남긴 리뷰 산출물 중 가장 최신 시각 (처분이 그 이후여야 유효).
+    # Claude/Gemini sticky comment의 updated_at도 포함해 갱신된 본문을 예전 처분으로
+    # 통과시키지 않는다(fail closed).
     bot_times = [e["created_at"] for e in entries.values() if e.get("created_at")]
     bot_times += [f["created_at"] for e in entries.values() for f in e["findings"] if f.get("created_at")]
     latest_bot = max(bot_times) if bot_times else None
@@ -433,17 +444,19 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
     out.append(f"PR #{summary.get('number')} — {summary.get('title')}")
     out.append(f"HEAD {head[:10]}  state={summary.get('state')}")
     out.append("")
-    out.append(f"{'리뷰어':<8} {'상태':<10} {'리뷰 커밋':<12} {'지적':<5} 출처")
-    out.append("-" * 62)
+    out.append(f"{'리뷰어':<8} {'상태':<15} {'리뷰 커밋':<12} {'지적':<5} 출처")
+    out.append("-" * 67)
 
     entries = summary.get("entries") or {}
     for who in REVIEWERS:
         entry = entries.get(who)
         if entry is None:
-            out.append(f"{who:<8} {'MISSING':<10} {'-':<12} {'-':<5} -")
+            out.append(f"{who:<8} {'MISSING':<15} {'-':<12} {'-':<5} -")
             continue
         if _run_failed(who, entry):
             status = "FAILED"
+        elif not entry.get("fresh") and entry.get("findings"):
+            status = "STALE/FINDINGS"
         elif not entry.get("fresh"):
             status = "STALE"
         elif entry.get("findings"):
@@ -454,7 +467,7 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
             status = "OK"
         reviewed = (entry.get("reviewed_commit") or "-")[:10]
         n = len(entry.get("findings") or [])
-        out.append(f"{who:<8} {status:<10} {reviewed:<12} {n:<5} {entry.get('source')}")
+        out.append(f"{who:<8} {status:<15} {reviewed:<12} {n:<5} {entry.get('source')}")
 
     all_findings = [(who, f) for who, e in entries.items() for f in e.get("findings") or []]
     if all_findings:

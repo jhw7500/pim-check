@@ -392,6 +392,64 @@ class TestCollect(unittest.TestCase):
         )
         self.assertFalse(collect(p)["disposed"])
 
+    def test_trusted_inline_reply_can_dispose_findings(self):
+        p = payloads_pr103()
+        p["review_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "Codex 지적 검토 및 처분",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "inline-disposition",
+                "in_reply_to_id": 3840563292,
+            }
+        )
+        self.assertTrue(collect(p)["disposed"])
+
+    def test_outsider_inline_reply_cannot_dispose_findings(self):
+        p = payloads_pr103()
+        p["review_comments"].append(
+            {
+                "user": {"login": "untrusted-user", "type": "User"},
+                "author_association": "NONE",
+                "body": "처분했습니다",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "outsider-inline",
+                "in_reply_to_id": 3840563292,
+            }
+        )
+        self.assertFalse(collect(p)["disposed"])
+
+    def test_trusted_non_reply_review_comment_is_not_disposition(self):
+        p = payloads_pr103()
+        p["review_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "별도 인라인 리뷰 지적",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "new-human-finding",
+                "in_reply_to_id": None,
+            }
+        )
+        self.assertFalse(collect(p)["disposed"])
+
+    def test_sticky_review_update_after_disposition_requires_new_disposition(self):
+        p = payloads_pr103()
+        p["issue_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "지적 처분",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "disposition",
+            }
+        )
+        claude = next(c for c in p["issue_comments"] if "claude-code-review" in c["body"])
+        claude["updated_at"] = "2026-08-23T09:40:00Z"
+
+        self.assertFalse(collect(p)["disposed"])
+
     def test_human_comment_before_review_is_not_disposition(self):
         p = payloads_pr103()
         p["issue_comments"].insert(
@@ -495,6 +553,10 @@ class TestRender(unittest.TestCase):
         p["issue_comments"] = []
         s = collect(p)
         self.assertIn("MISSING", render(s, evaluate(s)))
+
+    def test_render_combines_stale_and_findings_status(self):
+        text = render(collect(payloads_pr103()), [])
+        self.assertRegex(text, r"(?m)^codex\s+STALE/FINDINGS\s+")
 
 
 class TestGhErrors(unittest.TestCase):
