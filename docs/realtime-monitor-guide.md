@@ -33,11 +33,15 @@ pim-check 의 실시간 테스트 진행 관측(이벤트 스트림 뷰어)과 �
 
 ```bash
 # 터미널 1 — 테스트 실행 (Producer)
-python3 pim_check.py --plan smoke --host 192.168.214.4 --user root --password root
+scripts/with_pim_board.sh --for 30m --purpose "realtime smoke" -- \
+  python3 pim_check.py --plan smoke --host 192.168.214.4 --user root --password root
 
 # 터미널 2 — 웹 뷰어 (관측)
 python3 pim_web_viewer.py            # http://localhost:8077
 ```
+
+보드 점유로 인한 exit 4는 의도된 동작이다. lease를 우회해 재시도하지 말고
+`jhw-control board status pim`으로 상태를 확인한다.
 
 ### 2-B. 웹 제어판에서 직접 시작 (CLI 불필요)
 

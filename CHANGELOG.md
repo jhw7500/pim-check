@@ -2,6 +2,19 @@
 
 ## Unreleased (2026-08-24)
 
+### CI·로컬 PIM 보드 점유 직렬화 (pim-check#108)
+
+- GitHub `concurrency`만으로는 로컬 실행과 점유를 조율할 수 없었다. 공통
+  exclusive wrapper가 mode-600 host config를 로드하고 사용자 로컬 CLI의 절대 경로로
+  `jhw-control`을 호출해 CI와 수동/자동 실행을 같은 lease로 묶는다.
+- busy acquisition은 기다리거나 건너뛰지 않고 즉시 exit 4로 실패한다. CI lease는
+  mixed-combo 30m, comprehensive 3h, plan 12h이며, 로컬 자동화는 24h 또는 정확한
+  종료 deadline을 쓰고 long lease opt-in을 명시한다.
+- Claude에 커밋한 command hook은 직접 실행을 막는 defense in depth일 뿐 보안 경계가
+  아니다. `SIGKILL`/OOM과 영구 실행되는 web dashboard, Docker runner, non-plan CLI
+  entry point는 여전히 명시적 한계로 남는다.
+- 테스트는 fake control executable만 사용하며 실제 보드를 acquire하지 않는다.
+
 ### PR 자동리뷰 3종 집계 + 머지 게이트 (scripts/pr_reviews.py)
 
 - **문제**: 세 리뷰어가 서로 다른 API 경로에 결과를 남긴다 — Claude·Gemini 는

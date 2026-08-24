@@ -108,6 +108,11 @@ baseline 파일이 mtime 30일 초과면 lint/runtime에서 WARN 출력 (실행 
   from plan import load_plan
   load_plan("profiles/plans/{name}.yaml")  # ValueError 발생 시 에러 메시지 검토
   ```
+- lint를 통과한 뒤 실제 plan을 실행해야 하면 반드시 board lease 래퍼를 사용:
+  ```bash
+  scripts/with_pim_board.sh --for 30m --purpose "manual smoke" -- \
+    python3 pim_check.py --plan smoke
+  ```
 - `comprehensive.yaml`은 `run_comprehensive_verify.py`의 1:1 마이그레이션 결과 — 임의로 case 추가/제거하지 말고 동등성 검증(`scripts/equivalence_check.py`)을 통과한 상태로 유지.
 
 ### Testing Requirements

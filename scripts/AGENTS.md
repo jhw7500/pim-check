@@ -29,6 +29,16 @@
 | `equivalence_check.py` | run_*.py 결과 vs plan-driven 결과 동등성 비교 (binary). MATCHED / MISMATCHED / LEFT_ONLY / RIGHT_ONLY 카테고리 분류. `--mapping` JSON 옵션으로 도메인 case_name 매핑 지원. |
 | `generate_comprehensive_mapping.py` | run_comprehensive_verify의 96 scenario를 8 mandatory multi case로 자동 매핑 JSON 생성. `profiles/plans/comprehensive_mapping.json` 출력. |
 
+### PIM 보드 점유 도구 (Shell/Python)
+
+| File | Description |
+|------|-------------|
+| `with_pim_board.sh` | 공통 exclusive lease 래퍼. mode-600 control 환경을 로드하고 사용자 로컬 `jhw-control` 절대 경로로 자식 하드웨어 명령을 실행한다. |
+| `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. 직접 plan/standalone runner 실행을 차단하고 래퍼 사용을 요구한다. 방어 심화용이며 보안 경계는 아니다. |
+| `auto_chain.sh` | `smoke → comprehensive → release_next → nightly` 자동 체인. 실행 상태 생성 전 24시간 long lease로 자신을 래핑한다. |
+| `auto_overnight.sh` | 다음 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
+| `auto_weekend.sh` | 월요일 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
+
 ### 개발 워크플로 도구 (Python)
 
 | File | Description |
@@ -41,6 +51,27 @@
 - **Windows 스크립트** (.ps1/.bat): `.bat` 파일은 `.ps1`의 단순 래퍼 — 로직 수정은 `.ps1`에서. 줄바꿈은 CRLF 유지. 실행 권한(+x) 확인 불필요.
 - **Python 도구**: shebang `#!/usr/bin/env python3` + 실행 권한(+x). `from __future__ import annotations` 사용. 단위 테스트는 `tests/test_{module}.py`.
 - 두 카테고리는 다른 OS 환경 — 하나 수정해도 다른 쪽 영향 없음.
+
+### PIM 보드 lease 사용
+
+실제 plan 또는 standalone hardware runner는 반드시 공통 래퍼로 실행한다.
+
+```bash
+scripts/with_pim_board.sh --for 30m --purpose "manual smoke" -- \
+  python3 pim_check.py --plan smoke
+```
+
+| 실행 주체/범위 | Lease | 비고 |
+|---|---|---|
+| CI mixed-combo | 30m | `hw-verify.yml` |
+| CI comprehensive | 3h | `hw-verify-comprehensive.yml` |
+| CI plan | 12h | `hw-verify-plan.yml` |
+| 로컬 `auto_chain.sh` | 24h | `--long-lease true` 필요 |
+| 로컬 overnight/weekend 자동화 | 정확한 종료 deadline (`--until`) | `--long-lease true` 필요 |
+
+보드가 busy이면 exit 4로 즉시 실패한다. `board wait`, 재시도 루프, `|| true`, 직접
+`jhw-control board acquire`는 사용하지 않는다. lease는 advisory이며 #108은 persistent
+web dashboard, Docker runner, non-plan CLI 모드를 소급 적용하지 않는다.
 
 ### Plan 도구 사용 패턴
 

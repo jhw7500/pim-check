@@ -89,3 +89,14 @@ CLI (pim_check.py)
 - `paramiko` — SSH 클라이언트 (필수, 전 platform). persistent transport 재사용으로 DUT sshd 부하 감소. 부수 패키지(`cryptography`, `bcrypt`, `cffi`, `pynacl`) ~10MB 설치 증가 trade-off — 매 호출 새 connect 의 누적 부담을 제거하는 게 우선.
 
 <!-- MANUAL: -->
+
+## PIM Board Lease
+
+- `pim_check.py --plan` and standalone hardware runners must execute through
+  `scripts/with_pim_board.sh` with an explicit `--for`/`--until` and `--purpose`.
+- Do not use `board wait`, retry loops, `|| true`, or direct `jhw-control board
+  acquire`; a busy board is a visible failure (exit 4).
+- Read-only commands such as `--list-plans`, history/report rendering, lint, and
+  result comparison do not need the board lease.
+- The lease is advisory and issue #108 does not retrofit the persistent web
+  dashboard, Docker runner, or non-plan CLI modes.
