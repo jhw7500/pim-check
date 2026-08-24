@@ -174,6 +174,12 @@ computed deadline exceeds it fails clearly instead of silently running with an
 insufficient lease. The intended Friday-to-Monday weekend window fits within
 that ceiling.
 
+The long-lease deadline supervisor starts cleanup 31 minutes before lease
+expiry. It gives the child process group 30 minutes after `SIGTERM` to finish
+teardown, covering both 600-second boot polling windows around one recovery
+attempt plus restore and stabilization work. A final 60 seconds remains to
+kill and reap a stuck process group before the lease expires.
+
 `auto_chain.sh` may retain its existing process check after acquiring the
 lease as migration defense against an already-running legacy, unwrapped
 `pim_check.py`. It is not a lock substitute and does not turn a board-lock

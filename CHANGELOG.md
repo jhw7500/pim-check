@@ -10,9 +10,10 @@
 - busy acquisition은 기다리거나 건너뛰지 않고 즉시 exit 4로 실패한다. CI lease는
   mixed-combo 30m, comprehensive 3h, plan 12h이며, 로컬 자동화는 24h 또는 정확한
   종료 deadline을 쓰고 long lease opt-in을 명시한다.
-- long-lease 자동화의 grant 시각은 실행 deadline으로도 적용한다. 종료 5분 전
-  process group에 TERM을 보내 teardown을 허용하고, 남은 프로세스는 deadline 전에
-  KILL·회수하며 timeout은 exit 124로 드러낸다. legacy plan 감지는 기다리지 않고
+- long-lease 자동화의 grant 시각은 실행 deadline으로도 적용한다. 종료 31분 전
+  process group에 TERM을 보내 teardown에 30분을 허용한다. 이는 네트워크 복구 전후의
+  600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
+  KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 직접 실행을 막는 defense in depth일 뿐 보안 경계가
   아니다. `SIGKILL`/OOM과 영구 실행되는 web dashboard, Docker runner, non-plan CLI

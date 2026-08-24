@@ -69,6 +69,9 @@ scripts/with_pim_board.sh --for 30m --purpose "manual smoke" -- \
 | 로컬 `auto_chain.sh` | 24h | `--long-lease true` 필요 |
 | 로컬 overnight/weekend 자동화 | 정확한 종료 deadline (`--until`) | `--long-lease true` 필요 |
 
+long lease는 만료 31분 전에 정리를 시작한다. 자식 프로세스에는 teardown용 30분을
+주고, 마지막 60초는 강제 종료와 lease 해제에 남긴다.
+
 보드가 busy이면 exit 4로 즉시 실패한다. `board wait`, 재시도 루프, `|| true`, 직접
 `jhw-control board acquire`는 사용하지 않는다. lease는 advisory이며 #108은 persistent
 web dashboard, Docker runner, non-plan CLI 모드를 소급 적용하지 않는다.

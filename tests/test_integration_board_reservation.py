@@ -15,10 +15,17 @@ from typing import Optional
 import pytest
 import yaml
 
+from setup import DEFAULT_REBOOT_TIMEOUT
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "scripts" / "with_pim_board.sh"
 DEADLINE_SUPERVISOR = ROOT / "scripts" / "run_with_deadline.py"
+MIN_AUTOMATION_TERM_GRACE_SECONDS = max(
+    30 * 60,
+    2 * DEFAULT_REBOOT_TIMEOUT + 5 * 60,
+)
+MIN_LEASE_RELEASE_MARGIN_SECONDS = 60
 
 FAKE_CONTROL = """#!/usr/bin/env bash
 set -u
@@ -84,6 +91,37 @@ def test_wrapper_derives_github_session_and_passes_long_lease(tmp_path: Path) ->
     assert str(DEADLINE_SUPERVISOR) in args
     deadline = int(args[args.index("--deadline-epoch") + 1])
     assert int(target.timestamp()) - 1 <= deadline <= int(target.timestamp())
+
+
+def test_wrapper_reserves_worst_case_teardown_before_lease_expiry(tmp_path: Path) -> None:
+    env, log = _control_env(tmp_path)
+    target = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--until",
+            target.isoformat(),
+            "--purpose",
+            "teardown budget test",
+            "--long-lease",
+            "true",
+            "--",
+            "true",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    args = _logged_args(log)
+    cleanup_margin = int(args[args.index("--cleanup-margin-seconds") + 1])
+    term_grace = int(args[args.index("--term-grace-seconds") + 1])
+    assert term_grace >= MIN_AUTOMATION_TERM_GRACE_SECONDS
+    assert cleanup_margin - term_grace >= MIN_LEASE_RELEASE_MARGIN_SECONDS
 
 
 def _run_deadline_supervisor(
