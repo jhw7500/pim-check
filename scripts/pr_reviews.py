@@ -21,7 +21,7 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   FAILED    automation-state.attempt_status != success
   STALE     리뷰한 커밋 != PR HEAD → 지금 머지될 코드는 그 리뷰어가 못 봤다
   FINDINGS  지적이 있고, 그 이후 신뢰할 수 있는 구성원의 처분 코멘트가 없음
-            (PR 메인 대화 또는 인라인 스레드 답글)
+            (PR 메인 대화는 전체, 인라인 답글은 해당 finding 1건에 적용)
 
 무엇을 판정하지 '않는가'
 ------------------------
@@ -87,6 +87,7 @@ STATE_RE = re.compile(r"<!--\s*automation-state:(\{.*?\})\s*-->", re.DOTALL)
 CODEX_COMMIT_RE = re.compile(r"Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`")
 CODEX_BADGE_RE = re.compile(r"badge/(P\d)-")
 CODEX_TITLE_RE = re.compile(r"</sub></sub>\s*(.+?)\*\*")
+CODEX_REVIEW_TRIGGER_RE = re.compile(r"@codex\s+review\b", re.IGNORECASE)
 CODEX_NO_FINDINGS = "Didn't find any major issues"
 TRUSTED_HUMAN_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -196,6 +197,7 @@ def parse_codex_finding(comment: Dict[str, Any]) -> Dict[str, Any]:
     else:  # 배지 없는 형태 — 첫 비어있지 않은 줄로 폴백
         text = next((ln.strip().strip("*") for ln in body.splitlines() if ln.strip()), "")
     return {
+        "comment_id": comment.get("id"),
         "severity": badge.group(1) if badge else "?",
         "title": text,
         "path": comment.get("path"),
@@ -230,6 +232,12 @@ def _is_actions_bot(user: Dict[str, Any]) -> bool:
 def _is_trusted_human_comment(comment: Dict[str, Any]) -> bool:
     """지적을 처분할 권한이 있는 사람의 코멘트인가."""
     return not _is_bot(comment.get("user") or {}) and comment.get("author_association") in TRUSTED_HUMAN_ASSOCIATIONS
+
+
+def _is_global_disposition_comment(comment: Dict[str, Any]) -> bool:
+    """PR 메인 대화의 전역 처분인가. 재리뷰 트리거는 처분이 아니다."""
+    body = comment.get("body") or ""
+    return _is_trusted_human_comment(comment) and not CODEX_REVIEW_TRIGGER_RE.search(body)
 
 
 # --- 집계 ------------------------------------------------------------------
@@ -333,22 +341,44 @@ def collect(payloads: Dict[str, Any]) -> Dict[str, Any]:
             ]
         entries[CODEX] = codex_entry
 
-    # 3) 처분 코멘트 — PR 메인 대화 또는 인라인 스레드에 저장소의
-    #    신뢰할 수 있는 사람이 남긴 최신 코멘트 시각. 다른 review comment는
-    #    새로운 지적일 수 있으므로 답글(in_reply_to_id)만 처분으로 본다.
-    disposition_comments = list(issue_comments)
-    disposition_comments += [c for c in review_comments if c.get("in_reply_to_id")]
-    human_times = [
-        c.get("created_at") for c in disposition_comments if _is_trusted_human_comment(c) and c.get("created_at")
+    # 3) 처분 — PR 메인 코멘트는 전체 지적에 적용하고, 인라인 답글은
+    #    in_reply_to_id 가 정확히 가리키는 finding 1건에만 적용한다.
+    global_human_times = [
+        c.get("created_at") for c in issue_comments if _is_global_disposition_comment(c) and c.get("created_at")
     ]
-    latest_human = max(human_times) if human_times else None
+    latest_global_human = max(global_human_times) if global_human_times else None
+    trusted_replies = [
+        c for c in review_comments if c.get("in_reply_to_id") and _is_trusted_human_comment(c) and c.get("created_at")
+    ]
 
-    # 봇이 남긴 리뷰 산출물 중 가장 최신 시각 (처분이 그 이후여야 유효).
+    # 봇이 남긴 리뷰 산출물 중 가장 최신 시각 (전역 처분이 그 이후여야 유효).
     # Claude/Gemini sticky comment의 updated_at도 포함해 갱신된 본문을 예전 처분으로
     # 통과시키지 않는다(fail closed).
     bot_times = [e["created_at"] for e in entries.values() if e.get("created_at")]
     bot_times += [f["created_at"] for e in entries.values() for f in e["findings"] if f.get("created_at")]
     latest_bot = max(bot_times) if bot_times else None
+    global_disposed = bool(latest_global_human and latest_bot and latest_global_human > latest_bot)
+
+    relevant_inline_times: List[str] = []
+    all_findings = [f for entry in entries.values() for f in entry.get("findings") or []]
+    for finding in all_findings:
+        reply_times = [c["created_at"] for c in trusted_replies if c.get("in_reply_to_id") == finding.get("comment_id")]
+        latest_reply = max(reply_times) if reply_times else None
+        inline_disposed = bool(latest_reply and finding.get("created_at") and latest_reply > finding["created_at"])
+        if inline_disposed:
+            relevant_inline_times.append(latest_reply)
+        if global_disposed:
+            finding["disposed"] = True
+            finding["disposition_at"] = latest_global_human
+            finding["disposition_source"] = "issues/comments"
+        else:
+            finding["disposed"] = inline_disposed
+            finding["disposition_at"] = latest_reply if inline_disposed else None
+            finding["disposition_source"] = "pulls/comments/reply" if inline_disposed else None
+
+    human_times = ([latest_global_human] if global_disposed else []) + relevant_inline_times
+    latest_human = max(human_times) if human_times else None
+    all_findings_disposed = bool(all_findings) and all(f.get("disposed") for f in all_findings)
 
     for entry in entries.values():
         entry["fresh"] = commits_match(entry.get("reviewed_commit"), head)
@@ -361,7 +391,8 @@ def collect(payloads: Dict[str, Any]) -> Dict[str, Any]:
         "entries": entries,
         "latest_human_comment": latest_human,
         "latest_bot_artifact": latest_bot,
-        "disposed": bool(latest_human and latest_bot and latest_human > latest_bot),
+        "global_disposed": global_disposed,
+        "disposed": global_disposed or all_findings_disposed,
     }
 
 
@@ -415,16 +446,17 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
             )
 
     findings = [(who, f) for who, e in entries.items() for f in e.get("findings") or []]
-    if findings and not summary.get("disposed"):
-        for who, f in findings:
-            violations.append(
-                {
-                    "reviewer": who,
-                    "kind": "FINDINGS",
-                    "detail": f"{f['severity']} {f['title']} ({f.get('path')}:{f.get('line')})",
-                    "remedy": "지적을 반영하거나, 신뢰할 수 있는 구성원이 PR 에 처분 근거를 기록한다",
-                }
-            )
+    for who, f in findings:
+        if f.get("disposed"):
+            continue
+        violations.append(
+            {
+                "reviewer": who,
+                "kind": "FINDINGS",
+                "detail": f"{f['severity']} {f['title']} ({f.get('path')}:{f.get('line')})",
+                "remedy": "지적을 반영하거나, 신뢰할 수 있는 구성원이 PR 에 처분 근거를 기록한다",
+            }
+        )
     return violations
 
 
@@ -478,8 +510,11 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
             out.append(f"        {f.get('path')}:{f.get('line')}  {f.get('url')}")
 
     out.append("")
-    if summary.get("disposed"):
+    disposed_count = sum(bool(f.get("disposed")) for _, f in all_findings)
+    if all_findings and disposed_count == len(all_findings):
         out.append(f"처분 코멘트: 있음 ({summary.get('latest_human_comment')})")
+    elif disposed_count:
+        out.append(f"처분 코멘트: 일부 ({disposed_count}/{len(all_findings)}) — 나머지 지적은 미처분")
     elif all_findings:
         out.append("처분 코멘트: 없음 — 지적 이후 신뢰할 수 있는 구성원의 판단 기록이 없다")
 

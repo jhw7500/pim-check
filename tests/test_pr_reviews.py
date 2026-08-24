@@ -10,6 +10,7 @@ tests/test_pr_reviews.py — scripts/pr_reviews.py 단위 테스트.
   - Codex 의 `Reviewed commit` 은 축약 sha 라 접두 비교해야 한다는 것
   - 리뷰 대상 커밋이 HEAD 와 다르면 STALE 로 잡힌다는 것 — 실제로 최근 8개 PR
     중 7개가 이 상태로 머지됐다
+  - PR 메인 처분은 전체 finding에, 인라인 답글은 해당 finding 1건에만 적용된다
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from pr_reviews import (  # type: ignore[import-not-found]
 HEAD_103 = "91f1c09a3b33b53a8f0eb627f2a9451a582783d1"
 OLD_103 = "f2c09be682"
 CODEX_REVIEW_ID_103 = 5002092897
+CODEX_COMMENT_ID_103 = 3838184187
 
 GEMINI_BODY = (
     "## \U0001f50e Gemini Code Review\n"
@@ -93,6 +95,7 @@ def payloads_pr103():
         ],
         "review_comments": [
             {
+                "id": CODEX_COMMENT_ID_103,
                 "user": CODEX_USER,
                 "body": CODEX_INLINE_BODY,
                 "path": "setup.py",
@@ -401,7 +404,7 @@ class TestCollect(unittest.TestCase):
                 "body": "Codex 지적 검토 및 처분",
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "inline-disposition",
-                "in_reply_to_id": 3840563292,
+                "in_reply_to_id": CODEX_COMMENT_ID_103,
             }
         )
         self.assertTrue(collect(p)["disposed"])
@@ -430,6 +433,105 @@ class TestCollect(unittest.TestCase):
                 "created_at": "2026-08-23T09:38:03Z",
                 "html_url": "new-human-finding",
                 "in_reply_to_id": None,
+            }
+        )
+        self.assertFalse(collect(p)["disposed"])
+
+    def test_inline_reply_disposes_only_the_finding_it_answers(self):
+        p = payloads_pr103()
+        second_comment_id = 3838184999
+        second_body = CODEX_INLINE_BODY.replace(
+            "Honor the profile's cam-state readiness settings",
+            "Keep the second finding blocked",
+        )
+        p["review_comments"].extend(
+            [
+                {
+                    "id": second_comment_id,
+                    "user": CODEX_USER,
+                    "body": second_body,
+                    "path": "engine.py",
+                    "line": 10,
+                    "created_at": "2026-08-23T09:21:00Z",
+                    "html_url": "second-finding",
+                    "in_reply_to_id": None,
+                    "pull_request_review_id": CODEX_REVIEW_ID_103,
+                },
+                {
+                    "user": HUMAN,
+                    "author_association": "OWNER",
+                    "body": "첫 번째 지적만 처분",
+                    "created_at": "2026-08-23T09:38:03Z",
+                    "html_url": "first-reply",
+                    "in_reply_to_id": CODEX_COMMENT_ID_103,
+                },
+            ]
+        )
+
+        summary = collect(p)
+        violations = [v for v in evaluate(summary) if v["kind"] == "FINDINGS"]
+
+        self.assertFalse(summary["disposed"])
+        self.assertEqual(len(violations), 1)
+        self.assertIn("Keep the second finding blocked", violations[0]["detail"])
+
+    def test_pr_level_disposition_applies_to_all_findings(self):
+        p = payloads_pr103()
+        p["review_comments"].append(
+            {
+                "id": 3838184999,
+                "user": CODEX_USER,
+                "body": CODEX_INLINE_BODY.replace(
+                    "Honor the profile's cam-state readiness settings",
+                    "Second finding",
+                ),
+                "path": "engine.py",
+                "line": 10,
+                "created_at": "2026-08-23T09:21:00Z",
+                "html_url": "second-finding",
+                "in_reply_to_id": None,
+                "pull_request_review_id": CODEX_REVIEW_ID_103,
+            }
+        )
+        p["issue_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "모든 자동리뷰 지적 처분 요약",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "global-disposition",
+            }
+        )
+
+        summary = collect(p)
+
+        self.assertTrue(summary["global_disposed"])
+        self.assertTrue(all(f["disposed"] for f in summary["entries"][CODEX]["findings"]))
+        self.assertNotIn("FINDINGS", {v["kind"] for v in evaluate(summary)})
+
+    def test_reply_to_unrelated_thread_cannot_dispose_codex_finding(self):
+        p = payloads_pr103()
+        p["review_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "다른 스레드 답글",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "unrelated-reply",
+                "in_reply_to_id": 9999999999,
+            }
+        )
+        self.assertFalse(collect(p)["disposed"])
+
+    def test_codex_review_trigger_comment_is_not_disposition(self):
+        p = payloads_pr103()
+        p["issue_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "재검토 부탁: @codex review",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "trigger",
             }
         )
         self.assertFalse(collect(p)["disposed"])
@@ -557,6 +659,21 @@ class TestRender(unittest.TestCase):
     def test_render_combines_stale_and_findings_status(self):
         text = render(collect(payloads_pr103()), [])
         self.assertRegex(text, r"(?m)^codex\s+STALE/FINDINGS\s+")
+
+    def test_render_reports_partial_inline_disposition(self):
+        summary = collect(payloads_pr103())
+        first = summary["entries"][CODEX]["findings"][0]
+        first["disposed"] = True
+        summary["entries"][CODEX]["findings"].append(
+            {
+                **first,
+                "title": "Still unresolved",
+                "disposed": False,
+            }
+        )
+        summary["disposed"] = False
+
+        self.assertIn("처분 코멘트: 일부 (1/2)", render(summary, []))
 
 
 class TestGhErrors(unittest.TestCase):
