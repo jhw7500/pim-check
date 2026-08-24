@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,3 +182,43 @@ def test_automation_uses_its_own_checkout_before_run_state(script_name: str) -> 
 
     assert "PROJECT=/home/jhw/ai/opencode/projects/pim-check" not in text
     assert text.index("with_pim_board.sh") < text.index("SESSION_TS=")
+
+
+def _workflow(path: str) -> dict:
+    return yaml.safe_load((ROOT / ".github" / "workflows" / path).read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "path, job_name, step_name, lease",
+    [
+        ("hw-verify.yml", "mixed-combo", "Run mixed_combo verification (4 tests × 10 channel registers)", "30m"),
+        ("hw-verify-comprehensive.yml", "comprehensive", "Run comprehensive verification (96 tests, ~2h)", "3h"),
+        ("hw-verify-plan.yml", "plan-run", "Run plan", "12h"),
+    ],
+)
+def test_hardware_workflow_uses_common_fail_fast_wrapper(
+    path: str, job_name: str, step_name: str, lease: str
+) -> None:
+    workflow = _workflow(path)
+    assert workflow["concurrency"] == {"group": "pim-target-lock", "cancel-in-progress": False}
+    step = next(item for item in workflow["jobs"][job_name]["steps"] if item.get("name") == step_name)
+    command = step["run"]
+
+    assert command.count("scripts/with_pim_board.sh") == 1
+    assert f"--for {lease}" in command
+    assert "--purpose" in command
+    assert "board wait" not in command
+    assert "|| true" not in command
+
+
+def test_release_plan_wraps_selected_command_and_keeps_warn_policy() -> None:
+    workflow = _workflow("hw-verify-plan.yml")
+    step = next(item for item in workflow["jobs"]["plan-run"]["steps"] if item.get("name") == "Run plan")
+    command = step["run"]
+
+    assert "PLAN_COMMAND=(python3 run_mixed_combo_verify.py)" in command
+    assert "PLAN_COMMAND=(python3 run_bps_quick.py)" in command
+    assert 'PLAN_COMMAND=(python3 pim_check.py --plan "${{ inputs.plan }}" --host "${{ env.TARGET_HOST }}")' in command
+    assert '"${PLAN_COMMAND[@]}"' in command
+    assert "if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then" in command
+    assert "exit $rc" in command

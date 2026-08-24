@@ -62,7 +62,11 @@ jobs:
         run: rm -f comprehensive_results.json comprehensive*.log
 
       - name: Run comprehensive verification (96 tests, ~2h)
-        run: python3 run_comprehensive_verify.py
+        run: |
+          scripts/with_pim_board.sh \
+            --for 3h \
+            --purpose "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}" \
+            -- python3 run_comprehensive_verify.py
 
       - name: Upload results (always)
         if: always()

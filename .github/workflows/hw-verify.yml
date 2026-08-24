@@ -93,7 +93,11 @@ jobs:
           echo "Target reachable, SSH OK"
 
       - name: Run mixed_combo verification (4 tests × 10 channel registers)
-        run: python3 run_mixed_combo_verify.py
+        run: |
+          scripts/with_pim_board.sh \
+            --for 30m \
+            --purpose "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}" \
+            -- python3 run_mixed_combo_verify.py
 
       - name: Upload results (always)
         if: always()

@@ -109,16 +109,19 @@ jobs:
           set +e
           case "${{ inputs.plan }}" in
             mixed_combo)
-              python3 run_mixed_combo_verify.py
+              PLAN_COMMAND=(python3 run_mixed_combo_verify.py)
               ;;
             bps_quick)
-              python3 run_bps_quick.py
+              PLAN_COMMAND=(python3 run_bps_quick.py)
               ;;
             *)
-              python3 pim_check.py --plan ${{ inputs.plan }} \
-                  --host ${{ env.TARGET_HOST }}
+              PLAN_COMMAND=(python3 pim_check.py --plan "${{ inputs.plan }}" --host "${{ env.TARGET_HOST }}")
               ;;
           esac
+          scripts/with_pim_board.sh \
+            --for 12h \
+            --purpose "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:${{ inputs.plan }}" \
+            -- "${PLAN_COMMAND[@]}"
           rc=$?
           echo "exit_code=$rc" >> $GITHUB_OUTPUT
           # PASS/WARN(known_issue)는 success, FAIL/plan_err는 실패
