@@ -20,6 +20,7 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   MISSING   리뷰어가 아무 것도 남기지 않음 (워크플로 미실행/실패)
   FAILED    automation-state.attempt_status != success
   STALE     리뷰한 커밋 != PR HEAD → 지금 머지될 코드는 그 리뷰어가 못 봤다
+  NON_CLEAR Claude/Gemini 본문에 독립 상태 줄의 무지적 선언이 없음 → 사람이 읽고 처분
   FINDINGS  지적이 있고, 그 이후 신뢰할 수 있는 구성원의 처분 코멘트가 없음
             (PR 메인 대화는 전체, 인라인 답글은 해당 finding 1건에 적용)
 
@@ -29,9 +30,9 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
     (실측 2026-08-24: 머지된 PR #97~#103 의 codex 스레드가 전부
      isResolved=false. #103 은 지적이 반영됐는데도 isOutdated=false)
     따라서 "해결됨" 을 자동 추정하지 않는다.
-  - Claude/Gemini 의 지적 심각도는 산문이라 파싱하지 않는다. 본문에 명시적
-    무지적 문구("차단 이슈 없음" / "No blocking issues found")가 있으면
-    '자기신고 무지적' 으로만 표시하고, 판단은 사람에게 넘긴다.
+  - Claude/Gemini 의 지적 심각도는 산문이라 파싱하지 않는다. 대신 본문에 독립
+    상태 줄로 된 무지적 문구("차단 이슈 없음" / "No blocking issues found" 등)가 없으면
+    NON_CLEAR 로 차단한다. 사람이 `--full` 로 읽고 PR 메인 처분을 남겨야 통과한다.
 
 STALE 이 왜 중요한가 (실측)
 ---------------------------
@@ -50,7 +51,7 @@ Codex 가 지적한 P1/P2 를 고친 `(#N 자동리뷰)` 커밋을 정작 Codex 
 
 Exit code:
   0 = 통과 (--gate 없이 실행한 경우도 0)
-  1 = 차단 (--gate 에서 MISSING/FAILED/STALE/미처분 FINDINGS 발견)
+  1 = 차단 (--gate 에서 MISSING/FAILED/STALE/NON_CLEAR/미처분 FINDINGS 발견)
   3 = 입력·환경 에러 (gh 미설치·미인증, PR 없음 등)
 """
 
@@ -88,13 +89,15 @@ CODEX_COMMIT_RE = re.compile(r"Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`")
 CODEX_BADGE_RE = re.compile(r"badge/(P\d)-")
 CODEX_TITLE_RE = re.compile(r"</sub></sub>\s*(.+?)\*\*")
 CODEX_REVIEW_TRIGGER_RE = re.compile(r"@codex\s+review\b", re.IGNORECASE)
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 CODEX_NO_FINDINGS = "Didn't find any major issues"
 TRUSTED_HUMAN_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
-# Claude/Gemini 가 스스로 "지적 없음" 을 선언하는 문구. 판정 근거가 아니라
-# 표시용 힌트다 — 산문이라 형태가 바뀔 수 있다.
+# Claude/Gemini 가 스스로 "지적 없음" 을 선언하는 독립 상태 줄.
 CLEAR_PHRASES = (
     "차단 이슈 없음",
+    "차단할 이슈 없음",
     "No blocking issues found",
     "블로킹 이슈 없음",
 )
@@ -216,8 +219,35 @@ def commits_match(reviewed: Optional[str], head: Optional[str]) -> bool:
 
 
 def has_clear_phrase(body: str) -> bool:
-    """Claude/Gemini 가 명시적으로 무지적을 선언했는가 (자기신고)."""
-    return any(p in (body or "") for p in CLEAR_PHRASES)
+    """Claude/Gemini 가 인용·코드가 아닌 독립 줄에서 무지적을 선언했는가."""
+    allowed = {phrase.casefold() for phrase in CLEAR_PHRASES}
+    fence: Optional[tuple[str, int]] = None
+
+    for raw_line in (body or "").splitlines():
+        stripped = raw_line.strip()
+
+        if fence:
+            closing = FENCE_CLOSE_RE.match(raw_line)
+            if closing:
+                marker = closing.group(1)
+                if marker[0] == fence[0] and len(marker) >= fence[1]:
+                    fence = None
+            continue
+
+        opening = FENCE_OPEN_RE.match(raw_line)
+        if opening:
+            marker = opening.group(1)
+            fence = (marker[0], len(marker))
+            continue
+
+        if raw_line.startswith(("    ", "\t")) or stripped.startswith(">"):
+            continue
+
+        normalized = stripped.rstrip(".!。").strip().casefold()
+        if normalized in allowed:
+            return True
+
+    return False
 
 
 def _is_bot(user: Dict[str, Any]) -> bool:
@@ -444,6 +474,21 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
                     "remedy": _remedy(who),
                 }
             )
+        if (
+            who in (CLAUDE, GEMINI)
+            and not _run_failed(who, entry)
+            and entry.get("fresh")
+            and not entry.get("self_reported_clear")
+            and not summary.get("global_disposed")
+        ):
+            violations.append(
+                {
+                    "reviewer": who,
+                    "kind": "NON_CLEAR",
+                    "detail": "본문에 명시적 무지적 선언이 없어 자동 통과할 수 없다",
+                    "remedy": "--full 로 본문을 읽고 PR 메인 대화에 처분 근거를 기록한다",
+                }
+            )
 
     findings = [(who, f) for who, e in entries.items() for f in e.get("findings") or []]
     for who, f in findings:
@@ -491,6 +536,8 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
             status = "STALE/FINDINGS"
         elif not entry.get("fresh"):
             status = "STALE"
+        elif who in (CLAUDE, GEMINI) and not entry.get("self_reported_clear"):
+            status = "NON_CLEAR"
         elif entry.get("findings"):
             status = "FINDINGS"
         elif entry.get("self_reported_clear"):
@@ -517,6 +564,8 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
         out.append(f"처분 코멘트: 일부 ({disposed_count}/{len(all_findings)}) — 나머지 지적은 미처분")
     elif all_findings:
         out.append("처분 코멘트: 없음 — 지적 이후 신뢰할 수 있는 구성원의 판단 기록이 없다")
+    elif summary.get("global_disposed"):
+        out.append(f"처분 코멘트: 있음 ({summary.get('latest_human_comment')})")
 
     if full:
         for who in REVIEWERS:

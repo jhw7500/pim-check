@@ -11,6 +11,7 @@ tests/test_pr_reviews.py — scripts/pr_reviews.py 단위 테스트.
   - 리뷰 대상 커밋이 HEAD 와 다르면 STALE 로 잡힌다는 것 — 실제로 최근 8개 PR
     중 7개가 이 상태로 머지됐다
   - PR 메인 처분은 전체 finding에, 인라인 답글은 해당 finding 1건에만 적용된다
+  - Claude/Gemini가 독립 상태 줄에서 무지적을 선언하지 않으면 사람 처분 전까지 NON_CLEAR다
 """
 
 from __future__ import annotations
@@ -202,7 +203,32 @@ class TestClearPhrase(unittest.TestCase):
     def test_self_reported_clear(self):
         self.assertTrue(has_clear_phrase(CLAUDE_BODY))  # "차단 이슈 없음"
         self.assertTrue(has_clear_phrase(GEMINI_BODY))  # "No blocking issues found"
+        self.assertTrue(has_clear_phrase("차단할 이슈 없음."))
         self.assertFalse(has_clear_phrase("P1 결함이 있다"))
+
+    def test_clear_phrase_must_be_unquoted_standalone_status_line(self):
+        phrases = (
+            "차단 이슈 없음",
+            "차단할 이슈 없음",
+            "블로킹 이슈 없음",
+            "No blocking issues found",
+        )
+        for phrase in phrases:
+            bodies = (
+                f"이전 리뷰는 '{phrase}'라고 했지만 지금은 P1이다.",
+                f"> {phrase}.",
+                f"```text\n{phrase}.\n```",
+                f"{phrase}라는 판정은 틀렸다.",
+            )
+            for body in bodies:
+                self.assertFalse(has_clear_phrase(body), body)
+
+        fenced_bodies = (
+            "````text\n```\nNo blocking issues found.\n````",
+            "~~~text\n```\nNo blocking issues found.\n~~~",
+        )
+        for body in fenced_bodies:
+            self.assertFalse(has_clear_phrase(body), body)
 
 
 class TestCollect(unittest.TestCase):
@@ -599,6 +625,49 @@ class TestEvaluate(unittest.TestCase):
         v = evaluate(collect(p))
         self.assertIn(("claude", "FAILED"), {(x["reviewer"], x["kind"]) for x in v})
 
+    def test_successful_non_clear_automation_review_requires_human_review(self):
+        p = payloads_pr103()
+        p["issue_comments"][1]["body"] = CLAUDE_BODY.replace("차단 이슈 없음.", "P1 결함이 있다.")
+
+        violations = evaluate(collect(p))
+
+        self.assertIn(("claude", "NON_CLEAR"), {(v["reviewer"], v["kind"]) for v in violations})
+
+    def test_global_disposition_clears_non_clear_automation_review(self):
+        p = payloads_pr103()
+        p["issue_comments"][1]["body"] = CLAUDE_BODY.replace("차단 이슈 없음.", "P1 결함이 있다.")
+        p["issue_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "Claude 본문 검토 후 처분",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "global-disposition",
+            }
+        )
+
+        violations = evaluate(collect(p))
+
+        self.assertNotIn(("claude", "NON_CLEAR"), {(v["reviewer"], v["kind"]) for v in violations})
+
+    def test_inline_codex_disposition_does_not_clear_non_clear_automation_review(self):
+        p = payloads_pr103()
+        p["issue_comments"][1]["body"] = CLAUDE_BODY.replace("차단 이슈 없음.", "P1 결함이 있다.")
+        p["review_comments"].append(
+            {
+                "user": HUMAN,
+                "author_association": "OWNER",
+                "body": "Codex 지적만 처분",
+                "created_at": "2026-08-23T09:38:03Z",
+                "html_url": "inline-disposition",
+                "in_reply_to_id": CODEX_COMMENT_ID_103,
+            }
+        )
+
+        violations = evaluate(collect(p))
+
+        self.assertIn(("claude", "NON_CLEAR"), {(v["reviewer"], v["kind"]) for v in violations})
+
     def test_findings_without_disposition_are_blocked(self):
         v = evaluate(collect(payloads_pr103()))
         self.assertIn("FINDINGS", {x["kind"] for x in v})
@@ -659,6 +728,12 @@ class TestRender(unittest.TestCase):
     def test_render_combines_stale_and_findings_status(self):
         text = render(collect(payloads_pr103()), [])
         self.assertRegex(text, r"(?m)^codex\s+STALE/FINDINGS\s+")
+
+    def test_render_labels_non_clear_automation_review(self):
+        p = payloads_pr103()
+        p["issue_comments"][1]["body"] = CLAUDE_BODY.replace("차단 이슈 없음.", "P1 결함이 있다.")
+
+        self.assertRegex(render(collect(p), []), r"(?m)^claude\s+NON_CLEAR\s+")
 
     def test_render_reports_partial_inline_disposition(self):
         summary = collect(payloads_pr103())

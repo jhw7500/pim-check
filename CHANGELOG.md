@@ -15,7 +15,8 @@
   위반 시 exit 1.
 - **게이트는 객관 신호만 판정**: `MISSING`(산출물 없음) · `FAILED`
   (`automation-state.attempt_status != success`) · `STALE`(리뷰 대상 커밋 != HEAD)
-  · `FINDINGS`(지적이 있는데 그 이후 OWNER/MEMBER/COLLABORATOR의 처분
+  · `NON_CLEAR`(Claude/Gemini의 독립 상태 줄 무지적 선언 없음) · `FINDINGS`(지적이
+  있는데 그 이후 OWNER/MEMBER/COLLABORATOR의 처분
   코멘트가 없음).
 - **resolve 상태는 신호로 쓰지 않는다**(실측 2026-08-24): 머지된 PR #97~#103 의
   codex 스레드가 전부 `isResolved=false` 이고, #103 은 지적이 반영됐는데도
@@ -27,7 +28,7 @@
   Codex 는 PR open 시 한 번만 리뷰하므로, 정작 Codex 가 지적한 P1/P2 를 고친
   `(#N 자동리뷰)` 커밋을 Codex 는 한 번도 다시 보지 않은 채 머지돼 왔다.
   재리뷰는 PR 에 `@codex review` 코멘트로 트리거된다(도구가 remedy 로 안내).
-- 가드: `tests/test_pr_reviews.py` 49건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
+- 가드: `tests/test_pr_reviews.py` 54건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
   것이라 봇 출력 형식이 바뀌면 테스트가 먼저 깨진다. Codex 의 `Reviewed commit`
   이 축약 sha 라 접두 비교해야 하는 것, 답글(`in_reply_to_id`)은 지적으로 세지
   않는 것, 처분 코멘트가 봇 산출물보다 나중이어야 하는 것을 각각 못박는다.
@@ -40,6 +41,8 @@
   `@codex review` 트리거는 처분이 아니다. PR 메인 처분 요약만 전체 finding에 적용한다.
   Sticky 리뷰가 처분 후 갱신되면 새 본문 확인을 위해 예전 전역 처분을 무효화하고,
   STALE과 FINDINGS가 겹치면 표에 두 상태를 함께 표시하며 일부만 처분된 경우 건수를 보여준다.
+  Claude/Gemini의 산문 심각도는 추측하지 않되, 인용·코드가 아닌 독립 상태 줄에 무지적 선언이 없으면
+  `NON_CLEAR`로 fail-closed하여 사람의 `--full` 검토+전역 처분을 요구한다.
 
 ### 테스트 파일명 규약 보완 + 개명 4건 (pim-check#94)
 
