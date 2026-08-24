@@ -90,7 +90,7 @@ HUMAN = {"login": "jhw7500", "type": "User"}
 
 
 def disposition(text: str) -> str:
-    return f"{DISPOSITION_MARKER}\n{text}"
+    return f"{DISPOSITION_MARKER}\nDecision: {text}"
 
 
 def payloads_pr103():
@@ -299,6 +299,7 @@ class TestClearPhrase(unittest.TestCase):
                 f"이전 리뷰는 '{phrase}'라고 했지만 지금은 P1이다.",
                 f"> {phrase}.",
                 f"```text\n{phrase}.\n```",
+                f"<!--\n{phrase}.\n-->",
                 f"{phrase}라는 판정은 틀렸다.",
             )
             for body in bodies:
@@ -494,6 +495,9 @@ class TestCollect(unittest.TestCase):
         bodies = (
             "수정 커밋을 푸시했습니다.",
             marker,
+            f"{marker}\n<!-- 검토 완료 -->",
+            f"{marker}\n-",
+            f"{marker}\nDecision: -",
             f"> {marker}\n지적을 검토하고 처분했습니다.",
             f"```text\n{marker}\n```\n지적을 검토하고 처분했습니다.",
         )

@@ -37,7 +37,8 @@
   가로질러 최신 산출물만 고르며 해당 review id의 지적만 집계하도록 가드한다.
   Claude·Gemini는 정확한 `github-actions[bot]`+마커 일치, Codex는 정확한 REST Bot
   신원을 요구하고, 외부 계정이나 평범한 질문·진행 코멘트가 지적을 처분한 것처럼
-  위조하지 못하게 한다. 처분에는 독립 줄 `<!-- pr-review-disposition -->`과 판단 근거가 필요하다.
+  위조하지 못하게 한다. 처분에는 독립 줄 `<!-- pr-review-disposition -->`과 영숫자
+  근거를 포함한 `Decision: <근거>`(또는 `판단:`/`처분 근거:`) 줄이 필요하다.
   신뢰 구성원의 Codex 인라인 답글도 처분으로 인정하되, `in_reply_to_id`가
   가리키는 finding 1건에만 적용한다. 다른 review comment·무관한 스레드 답글·
   `@codex review` 트리거는 처분이 아니다. PR 메인 처분 요약만 전체 finding에 적용한다.

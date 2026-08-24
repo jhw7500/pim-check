@@ -34,7 +34,8 @@ pass/fail 만 보여주므로 지적 내용을 알려주지 않는다. 이 스�
   - Claude/Gemini 의 지적 심각도는 산문이라 파싱하지 않는다. 대신 본문에 독립
     상태 줄로 된 무지적 문구("차단 이슈 없음" / "No blocking issues found" 등)가 없으면
     NON_CLEAR 로 차단한다. 사람이 `--full` 로 읽고 PR 메인 처분을 남겨야 통과한다.
-    처분에는 독립 줄 `<!-- pr-review-disposition -->` 과 판단 근거가 모두 필요하다.
+    처분에는 독립 줄 `<!-- pr-review-disposition -->` 과 영숫자 근거가 있는
+    `Decision: <근거>`(또는 `판단:`/`처분 근거:`) 줄이 모두 필요하다.
 
 STALE 이 왜 중요한가 (실측)
 ---------------------------
@@ -93,8 +94,13 @@ CODEX_TITLE_RE = re.compile(r"</sub></sub>\s*(.+?)\*\*")
 CODEX_REVIEW_TRIGGER_RE = re.compile(r"@codex\s+review\b", re.IGNORECASE)
 FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+DISPOSITION_LINE_RE = re.compile(r"(?m)^([ \t]*)<!-- pr-review-disposition -->[ \t]*$")
+DISPOSITION_REASON_RE = re.compile(r"^(?:Decision|판단|처분 근거)\s*:\s*(.*)$", re.IGNORECASE)
+HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
+HTML_ENTITY_RE = re.compile(r"&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);", re.IGNORECASE)
 CODEX_NO_FINDINGS = "Didn't find any major issues"
 DISPOSITION_MARKER = "<!-- pr-review-disposition -->"
+DISPOSITION_SENTINEL = "\0pr-review-disposition\0"
 TRUSTED_HUMAN_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 # Claude/Gemini 가 스스로 "지적 없음" 을 선언하는 독립 상태 줄.
@@ -261,11 +267,28 @@ def commits_match(reviewed: Optional[str], head: Optional[str]) -> bool:
     return long_.startswith(short)
 
 
+def _without_html_comments(body: str) -> str:
+    """HTML 주석을 제거하되 줄 경계는 보존한다. 닫히지 않은 주석은 EOF까지 제거."""
+    chunks = []
+    position = 0
+    while position < len(body or ""):
+        start = body.find("<!--", position)
+        if start < 0:
+            chunks.append(body[position:])
+            break
+        chunks.append(body[position:start])
+        end = body.find("-->", start + 4)
+        comment_end = len(body) if end < 0 else end + 3
+        chunks.append("\n" * body[start:comment_end].count("\n"))
+        position = comment_end
+    return "".join(chunks)
+
+
 def _plain_markdown_lines(body: str) -> Iterator[str]:
     """인용문과 코드 블록을 제외한 Markdown 줄을 정규화해 순회한다."""
     fence: Optional[tuple[str, int]] = None
 
-    for raw_line in (body or "").splitlines():
+    for raw_line in _without_html_comments(body or "").splitlines():
         stripped = raw_line.strip()
 
         if fence:
@@ -295,13 +318,20 @@ def has_clear_phrase(body: str) -> bool:
 
 
 def has_disposition_intent(body: str) -> bool:
-    """명시적 처분 마커와 판단 근거가 인용·코드 밖에 함께 있는가."""
-    lines = list(_plain_markdown_lines(body))
-    return (
-        DISPOSITION_MARKER in lines
-        and any(line and line != DISPOSITION_MARKER for line in lines)
-        and not CODEX_REVIEW_TRIGGER_RE.search(body or "")
-    )
+    """명시적 처분 마커와 substantive Decision 줄이 인용·코드 밖에 있는가."""
+    marked_body = DISPOSITION_LINE_RE.sub(lambda match: f"{match.group(1)}{DISPOSITION_SENTINEL}", body or "")
+    lines = list(_plain_markdown_lines(marked_body))
+    if DISPOSITION_SENTINEL not in lines or CODEX_REVIEW_TRIGGER_RE.search(body or ""):
+        return False
+
+    for line in lines:
+        reason = DISPOSITION_REASON_RE.match(line)
+        if not reason:
+            continue
+        visible = HTML_ENTITY_RE.sub("", HTML_TAG_RE.sub("", reason.group(1)))
+        if any(character.isalnum() for character in visible):
+            return True
+    return False
 
 
 def _is_bot(user: Dict[str, Any]) -> bool:
@@ -583,7 +613,9 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
                     "reviewer": who,
                     "kind": "NON_CLEAR",
                     "detail": "본문에 명시적 무지적 선언이 없어 자동 통과할 수 없다",
-                    "remedy": (f"--full 로 본문을 읽고 PR 메인 대화에 {DISPOSITION_MARKER} + 처분 근거를 기록한다"),
+                    "remedy": (
+                        f"--full 로 본문을 읽고 PR 메인 대화에 {DISPOSITION_MARKER} + Decision: <근거>를 기록한다"
+                    ),
                 }
             )
 
@@ -597,7 +629,8 @@ def evaluate(summary: Dict[str, Any]) -> List[Dict[str, str]]:
                 "kind": "FINDINGS",
                 "detail": f"{f['severity']} {f['title']} ({f.get('path')}:{f.get('line')})",
                 "remedy": (
-                    f"지적을 반영하거나, 신뢰할 수 있는 구성원이 PR 에 {DISPOSITION_MARKER} + 처분 근거를 기록한다"
+                    f"지적을 반영하거나, 신뢰할 수 있는 구성원이 PR 에 {DISPOSITION_MARKER} + "
+                    "Decision: <근거>를 기록한다"
                 ),
             }
         )
