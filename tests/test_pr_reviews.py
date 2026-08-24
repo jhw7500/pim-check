@@ -866,6 +866,11 @@ class TestRender(unittest.TestCase):
 
         self.assertRegex(render(collect(p), []), r"(?m)^claude\s+NON_CLEAR\s+")
 
+    def test_full_render_includes_codex_inline_finding_body(self):
+        text = render(collect(payloads_pr103()), [], full=True)
+
+        self.assertIn(CODEX_INLINE_BODY, text)
+
     def test_render_reports_partial_inline_disposition(self):
         summary = collect(payloads_pr103())
         first = summary["entries"][CODEX]["findings"][0]

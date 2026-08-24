@@ -48,7 +48,7 @@ Codex 가 지적한 P1/P2 를 고친 `(#N 자동리뷰)` 커밋을 정작 Codex 
 사용법
 ------
   python3 scripts/pr_reviews.py 103            # 집계 표 출력
-  python3 scripts/pr_reviews.py 103 --full     # 리뷰 본문 전체 포함
+  python3 scripts/pr_reviews.py 103 --full     # parent + Codex 인라인 지적 본문 전체 포함
   python3 scripts/pr_reviews.py 103 --gate     # 게이트 판정 (exit code 로 차단)
   python3 scripts/pr_reviews.py 103 --json     # 기계 판독 출력
 
@@ -252,6 +252,7 @@ def parse_codex_finding(comment: Dict[str, Any]) -> Dict[str, Any]:
         "comment_id": comment.get("id"),
         "severity": badge.group(1) if badge else "?",
         "title": text,
+        "body": body,
         "path": comment.get("path"),
         "line": comment.get("line"),
         "url": comment.get("html_url"),
@@ -720,6 +721,11 @@ def render(summary: Dict[str, Any], violations: List[Dict[str, str]], full: bool
             out.append("")
             out.append(f"===== {who} 본문 ({entry.get('url')})")
             out.append(entry.get("body") or "")
+            if who == CODEX:
+                for index, finding in enumerate(entry.get("findings") or [], 1):
+                    out.append("")
+                    out.append(f"----- codex finding {index} 본문 ({finding.get('url')})")
+                    out.append(finding.get("body") or "")
 
     out.append("")
     if violations:

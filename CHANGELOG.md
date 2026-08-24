@@ -29,7 +29,7 @@
   Codex 는 PR open 시 한 번만 리뷰하므로, 정작 Codex 가 지적한 P1/P2 를 고친
   `(#N 자동리뷰)` 커밋을 Codex 는 한 번도 다시 보지 않은 채 머지돼 왔다.
   재리뷰는 PR 에 `@codex review` 코멘트로 트리거된다(도구가 remedy 로 안내).
-- 가드: `tests/test_pr_reviews.py` 60건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
+- 가드: `tests/test_pr_reviews.py` 61건(+ subtest 3건). 픽스처는 실제 PR 페이로드에서 잘라온
   것이라 봇 출력 형식이 바뀌면 테스트가 먼저 깨진다. Codex 의 `Reviewed commit`
   이 축약 sha 라 접두 비교해야 하는 것, 답글(`in_reply_to_id`)은 지적으로 세지
   않는 것, 처분 코멘트가 봇 산출물보다 나중이어야 하는 것을 각각 못박는다.
@@ -49,6 +49,7 @@
   issue 코멘트와 Codex review→인라인 코멘트를 두 라운드 조회해 목록 안정성과
   review id 참조를 검증하고 마지막에 읽은 PR HEAD를 freshness 권위로 쓴다.
   중간 sticky 갱신·publish·push로 확정할 수 없는 스냅샷은 `INCOMPLETE`로 fail-closed한다.
+  `--full`은 Codex parent review뿐 아니라 선택된 인라인 finding 원문도 함께 출력한다.
 
 ### 테스트 파일명 규약 보완 + 개명 4건 (pim-check#94)
 
