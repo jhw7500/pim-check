@@ -1,6 +1,6 @@
 # PIM Board Lock Integration Design
 
-**Status:** Draft for review  
+**Status:** Approved  
 **Date:** 2026-08-24  
 **Task:** `tsk-01a03249-be8c-7759-bd5e-f2fa18918799`  
 **Issue:** [#108](https://github.com/jhw7500/pim-check/issues/108)
@@ -16,7 +16,7 @@ That overlap can invalidate both runs and, more importantly, cause one run to
 restore configuration over another run's active test state. The existing
 Project Control board registry already provides an advisory, cross-process
 exclusive lease for board `pim`; pim-check needs to adopt that lease at every
-known board-mutating entry point.
+CI and local plan entry point enumerated in issue #108.
 
 The self-hosted runner adds two deployment constraints:
 
@@ -27,7 +27,7 @@ The self-hosted runner adds two deployment constraints:
 
 ## Goals
 
-- Serialize CI and supported local board-mutating runs through the same
+- Serialize CI and the issue-scoped local plan/automation runs through the same
   exclusive `pim` board lease.
 - Fail a CI run immediately when the board is busy; do not wait, skip, or turn
   the conflict into success.
@@ -45,6 +45,9 @@ The self-hosted runner adds two deployment constraints:
 - Changing Project Control's lock, wait, reservation, or lease semantics.
 - Locking read-only CI preparation such as dependency installation,
   reachability probes, artifact upload, or summary rendering.
+- Retrofitting the legacy web dashboard, Docker runner, or non-plan CLI modes;
+  those need a separate per-run lease design because wrapping a persistent
+  server would reserve the board while it is idle.
 
 ## Approaches Considered
 
@@ -177,9 +180,10 @@ lease as migration defense against an already-running legacy, unwrapped
 conflict into a wait: a compliant existing holder still causes immediate
 acquisition failure.
 
-Manual board-mutating commands use the same wrapper. Repository agent guidance
-and the existing README command examples will identify it as the canonical
-entry point instead of continuing to advertise direct plan execution.
+Manual `pim_check.py --plan` and named standalone hardware-runner commands use
+the same wrapper. Repository agent guidance and the existing README command
+examples will identify it as the canonical entry point instead of continuing
+to advertise direct plan execution.
 
 ## Claude Command Guard
 
@@ -239,6 +243,7 @@ with the wrapper, hook, workflow, and tests. Existing CI concurrency is retained
 throughout rollout. No external Project Control state or `jhw-notion` source is
 changed by this task.
 
-The feature is complete when every known CI and local board-mutating entry point
-is covered, busy-board behavior is proven fail-fast, child exit semantics remain
-compatible, and the full local test suite passes without a target board.
+The feature is complete when all CI and local plan/automation entry points named
+in issue #108 are covered, busy-board behavior is proven fail-fast, child exit
+semantics remain compatible, and the full local test suite passes without a
+target board.
