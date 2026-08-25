@@ -81,6 +81,20 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "stdbuf -i0 -oL -e0 python3 run_comprehensive_verify.py",
         "stdbuf -oL -- python3 pim_check.py --plan smoke",
         "nice -n 5 stdbuf -oL python3 pim_check.py --plan smoke",
+        "xargs python3 pim_check.py --plan smoke </dev/null",
+        "xargs -0r python3 pim_check.py --plan smoke",
+        "xargs -a /dev/null python3 run_comprehensive_verify.py",
+        "xargs -n1 python3 pim_check.py --plan smoke",
+        "xargs --max-args=1 python3 pim_check.py --plan smoke",
+        "xargs --max-args 1 python3 pim_check.py --plan smoke",
+        "xargs -iITEM python3 -m pim_check --plan smoke",
+        "xargs -ri python3 -m pim_check --plan smoke",
+        "xargs --replace=ITEM python3 -m pim_check --plan smoke",
+        "xargs --replace python3 -m pim_check --plan smoke",
+        "xargs --show-limits python3 pim_check.py --plan smoke",
+        "xargs -- python3 pim_check.py --plan smoke",
+        "xargs -I{} python3 -m pim_check --plan smoke",
+        "stdbuf -oL xargs -n1 python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -132,10 +146,23 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "stdbuf -oL pytest -q tests/test_plan_load.py",
         "stdbuf --help",
         "stdbuf --version",
+        "xargs printf %s </dev/null",
+        "xargs -r printf %s",
+        "xargs",
+        "xargs -r",
+        "xargs --help",
+        "xargs --version",
+        "xargs -a run_comprehensive_verify.py printf %s",
+        "xargs -arun_comprehensive_verify.py printf %s",
+        "xargs --arg-file run_comprehensive_verify.py printf %s",
+        "xargs -I{} printf %s",
+        "xargs --replace={} printf %s",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "nice python3 pim_check.py --plan smoke",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "stdbuf -oL python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "xargs python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -173,6 +200,12 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "stdbuf --output=",
         "stdbuf -x true",
         "stdbuf -oL",
+        "xargs -a",
+        "xargs --arg-file",
+        "xargs --max-args=",
+        "xargs -z true",
+        "xargs -0z true",
+        "xargs --unknown true",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:

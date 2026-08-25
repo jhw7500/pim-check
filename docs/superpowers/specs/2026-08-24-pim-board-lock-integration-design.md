@@ -206,8 +206,8 @@ unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps `exec`,
-`nice`, `stdbuf`, `timeout`, and `nohup` command operands, reparses `eval`
-arguments as a command string, and reparses command strings passed to
+`nice`, `stdbuf`, `xargs`, `timeout`, and `nohup` command operands, reparses
+`eval` arguments as a command string, and reparses command strings passed to
 `bash`, `dash`, `sh`, or `zsh` with `-c`. Unknown or malformed launcher options
 fail closed. Launcher inspection is recursive and fails closed after a bounded
 nesting depth; a recognized board wrapper ends inspection because that child

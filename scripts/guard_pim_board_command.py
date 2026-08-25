@@ -42,6 +42,28 @@ TIMEOUT_OPTIONS_WITH_VALUE = {"-k", "--kill-after", "-s", "--signal"}
 TIMEOUT_OPTIONS = {"--foreground", "--preserve-status", "--verbose", "-v"}
 STDBUF_SHORT_OPTIONS = {"i", "o", "e"}
 STDBUF_LONG_OPTIONS = {"--input", "--output", "--error"}
+XARGS_SHORT_OPTIONS = {"0", "o", "p", "r", "t", "x"}
+XARGS_SHORT_OPTIONS_WITH_VALUE = {"a", "d", "E", "I", "L", "n", "P", "s"}
+XARGS_SHORT_OPTIONS_WITH_OPTIONAL_VALUE = {"e", "i", "l"}
+XARGS_LONG_OPTIONS = {
+    "--null",
+    "--open-tty",
+    "--interactive",
+    "--no-run-if-empty",
+    "--show-limits",
+    "--verbose",
+    "--exit",
+}
+XARGS_LONG_OPTIONS_WITH_VALUE = {
+    "--arg-file",
+    "--delimiter",
+    "--max-lines",
+    "--max-args",
+    "--max-procs",
+    "--max-chars",
+    "--process-slot-var",
+}
+XARGS_LONG_OPTIONS_WITH_OPTIONAL_VALUE = {"--eof", "--replace"}
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 MAX_LAUNCHER_DEPTH = 8
@@ -55,7 +77,7 @@ REMEDIATION = (
 
 
 def _segments(command: str) -> Iterator[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|(){}\n")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -473,6 +495,65 @@ def _stdbuf_command_index(
     return index
 
 
+def _skip_xargs_short_options(tokens: list[str], index: int) -> int:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in XARGS_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option in XARGS_SHORT_OPTIONS_WITH_VALUE:
+            if cluster[position + 1 :]:
+                return index + 1
+            if index + 1 >= len(tokens):
+                raise ValueError(f"xargs -{option} requires an operand")
+            return index + 2
+        if option in XARGS_SHORT_OPTIONS_WITH_OPTIONAL_VALUE:
+            return index + 1
+        raise ValueError(f"unsupported xargs option: -{option}")
+    return index + 1
+
+
+def _xargs_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in {"--help", "--version"}:
+            return None
+        if not token.startswith("--"):
+            index = _skip_xargs_short_options(tokens, index)
+            continue
+        if token in XARGS_LONG_OPTIONS:
+            index += 1
+            continue
+        option, separator, operand = token.partition("=")
+        if option in XARGS_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens):
+                    raise ValueError(f"{option} requires an operand")
+                index += 2
+            continue
+        if option in XARGS_LONG_OPTIONS_WITH_OPTIONAL_VALUE:
+            index += 1
+            continue
+        raise ValueError(f"unsupported xargs option: {token}")
+    if index >= len(tokens):
+        return None
+    return index
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -562,6 +643,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "stdbuf":
         child_index = _stdbuf_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "xargs":
+        child_index = _xargs_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )
