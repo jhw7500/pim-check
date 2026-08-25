@@ -213,6 +213,12 @@ fail closed. Launcher inspection is recursive and fails closed after a bounded
 nesting depth; a recognized board wrapper ends inspection because that child
 already executes under the lease.
 
+Shell invocations that read commands from standard input (`-s`, no script,
+`-`, input redirections, or canonical fd-zero script paths) fail closed instead
+of attempting to reconstruct stdin. Terminal `--help` and `--version` modes
+remain allowed; `-c` strings and positional scripts retain their existing
+recursive or inventory-based classification.
+
 Outer-shell-active `$()` and backtick command substitutions are extracted from
 the raw command with quote context intact and passed through the same bounded
 classifier before a board wrapper is exempted. Single-quoted or escaped

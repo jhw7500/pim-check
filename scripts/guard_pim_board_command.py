@@ -66,6 +66,11 @@ XARGS_LONG_OPTIONS_WITH_VALUE = {
 XARGS_LONG_OPTIONS_WITH_OPTIONAL_VALUE = {"--eof", "--replace"}
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
+SHELL_TERMINAL_OPTIONS = {"--help", "--version"}
+SHELL_STDIN_SCRIPTS = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+SHELL_REDIRECTION = re.compile(
+    r"^(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})?[<>]"
+)
 MAX_LAUNCHER_DEPTH = 8
 SHELL_COMMAND_PREFIXES = {"if", "then", "elif", "else", "while", "until", "do", "!"}
 SHELL_CLOSING_WORDS = {"fi", "done", "esac"}
@@ -564,6 +569,12 @@ def _shell_child(
         if token == "--":
             index += 1
             break
+        if token in SHELL_TERMINAL_OPTIONS:
+            return None, None
+        if token == "-":
+            reads_stdin = True
+            index += 1
+            break
         if not token.startswith(("-", "+")):
             break
         if token == "-c" or (
@@ -583,8 +594,15 @@ def _shell_child(
             continue
         index += 1
     if reads_stdin or index >= len(tokens):
-        return None, None
-    return None, _basename(tokens[index])
+        raise ValueError(
+            f"{_basename(tokens[command_index])} reads commands from stdin"
+        )
+    script = tokens[index]
+    if script in SHELL_STDIN_SCRIPTS or SHELL_REDIRECTION.match(script):
+        raise ValueError(
+            f"{_basename(tokens[command_index])} reads commands from stdin"
+        )
+    return None, _basename(script)
 
 
 def _shell_command_tokens(tokens: list[str]) -> list[str]:

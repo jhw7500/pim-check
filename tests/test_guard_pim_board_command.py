@@ -120,6 +120,9 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "pytest -q tests/test_plan_load.py",
         "timeout 30m scripts/with_pim_board.sh --for 30m --purpose safe -- true",
         'bash -c "pytest -q tests/test_plan_load.py"',
+        "bash --help",
+        "bash --version",
+        "sh --help",
         "nohup rg run_comprehensive_verify.py README.md",
         "(scripts/with_pim_board.sh --for 30m --purpose safe -- true)",
         "{ pytest -q tests/test_plan_load.py; }",
@@ -170,6 +173,36 @@ def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
 
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -s <<< 'python3 pim_check.py --plan smoke'",
+        "bash <<< 'python3 pim_check.py --plan smoke'",
+        "printf 'python3 pim_check.py --plan smoke\\n' | bash",
+        "printf 'printf safe\\n' | bash",
+        "bash",
+        "bash -s",
+        "bash -",
+        "bash --",
+        "bash </dev/null",
+        "bash 0<<<'printf safe'",
+        "sh",
+        "dash -s",
+        "zsh -s",
+        "bash /dev/stdin <<< 'python3 pim_check.py --plan smoke'",
+        "sh /dev/fd/0 <<< './scripts/test_vflip_frame_compare.sh'",
+        "dash /proc/self/fd/0 <<< 'python3 -m pim_check --plan smoke'",
+    ],
+)
+def test_guard_fails_closed_on_shell_commands_read_from_stdin(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
 
 
 def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() -> None:
