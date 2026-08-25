@@ -206,7 +206,7 @@ unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
-`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `setsid`, `sudo`,
+`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `chrt`, `setsid`, `sudo`,
 `timeout`, and `nohup` command operands, reparses `eval` arguments as a command string, and
 reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
@@ -227,6 +227,14 @@ skips the CPU mask or list and recursively classifies the following command,
 while `--pid`/`-p` query and update forms have no child command. Unknown
 options, missing operands, and extra PID-mode operands fail closed; terminal
 help/version forms remain allowed.
+`source` and `.` skip one optional `--` terminator before classifying the
+sourced filename, so standalone hardware runners remain blocked through the
+documented builtin form.
+Util-linux `chrt` policy and scheduling options are parsed before its
+operands. Execution mode skips the priority and recursively classifies the
+following command, while `--pid`/`-p` query and update forms have no child.
+Unknown options, missing option values or operands, and extra PID-mode
+operands fail closed; max/help/version forms remain allowed.
 Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
 before that recursive classification. ANSI-C escape sequences and unterminated
 forms fail closed instead of approximating Bash decoding; quoted or escaped

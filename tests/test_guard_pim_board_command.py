@@ -139,6 +139,38 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "source -- scripts/test_vflip_frame_compare.sh",
+        ". -- scripts/test_vflip_frame_compare.sh",
+        "builtin source -- scripts/test_vflip_frame_compare.sh",
+        "builtin . -- scripts/test_vflip_frame_compare.sh",
+    ],
+)
+def test_guard_blocks_sourced_board_runners_after_option_terminator(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "source -- /home/jhw/.config/jhw-control/control.env",
+        ". -- /home/jhw/.config/jhw-control/control.env",
+    ],
+)
+def test_guard_allows_safe_source_after_option_terminator(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -c $'python3 pim_check.py --plan smoke'",
         "nohup bash -c $'python3 run_comprehensive_verify.py'",
     ],
@@ -234,6 +266,28 @@ def test_guard_blocks_board_commands_launched_by_watch(command: str) -> None:
     ],
 )
 def test_guard_blocks_board_commands_launched_by_taskset(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "chrt --other 0 python3 pim_check.py --plan smoke",
+        "chrt -o 0 python3 run_comprehensive_verify.py",
+        "chrt --fifo 1 scripts/test_vflip_frame_compare.sh",
+        "chrt -rR 1 python3 pim_check.py --plan=smoke",
+        "chrt -dT1000000 -P 1000000 -D1000000 0 "
+        "python3 run_comprehensive_verify.py",
+        "chrt --deadline --sched-runtime=1000000 --sched-period 1000000 "
+        "--sched-deadline=1000000 0 python3 pim_check.py --plan smoke",
+        "chrt -- 0 python3 pim_check.py --plan smoke",
+        "timeout 30m chrt --batch 0 python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_chrt(command: str) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2
@@ -425,6 +479,33 @@ def test_guard_allows_safe_taskset_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "chrt --other 0 printf %s safe",
+        "chrt -o 0 pytest -q tests/test_plan_load.py",
+        "chrt -p 123",
+        "chrt -p 0 123",
+        "chrt --pid 0 123",
+        "chrt -ap 123",
+        "chrt -vap 0 123",
+        "chrt -m",
+        "chrt --max",
+        "chrt --help",
+        "chrt --version",
+        "chrt -h",
+        "chrt -V",
+        "chrt 0 scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_allows_safe_chrt_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -567,6 +648,29 @@ def test_guard_fails_closed_on_malformed_watch_commands(command: str) -> None:
     ],
 )
 def test_guard_fails_closed_on_malformed_taskset_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "chrt",
+        "chrt --",
+        "chrt 0",
+        "chrt -T",
+        "chrt --sched-runtime",
+        "chrt --sched-runtime=",
+        "chrt -p",
+        "chrt --pid --",
+        "chrt -p 0 123 extra",
+        "chrt -x 0 true",
+        "chrt --unknown 0 true",
+    ],
+)
+def test_guard_fails_closed_on_malformed_chrt_commands(command: str) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2

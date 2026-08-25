@@ -91,6 +91,26 @@ TASKSET_SHORT_OPTIONS = {"a", "c"}
 TASKSET_LONG_OPTIONS = {"--all-tasks", "--cpu-list"}
 TASKSET_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 TASKSET_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+CHRT_SHORT_OPTIONS = {"a", "b", "d", "f", "i", "o", "r", "R", "v"}
+CHRT_SHORT_OPTIONS_WITH_VALUE = {"D", "P", "T"}
+CHRT_LONG_OPTIONS = {
+    "--all-tasks",
+    "--batch",
+    "--deadline",
+    "--fifo",
+    "--idle",
+    "--other",
+    "--reset-on-fork",
+    "--rr",
+    "--verbose",
+}
+CHRT_LONG_OPTIONS_WITH_VALUE = {
+    "--sched-deadline",
+    "--sched-period",
+    "--sched-runtime",
+}
+CHRT_TERMINAL_SHORT_OPTIONS = {"h", "m", "V"}
+CHRT_TERMINAL_LONG_OPTIONS = {"--help", "--max", "--version"}
 SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
 SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
@@ -866,6 +886,82 @@ def _taskset_command_index(
     return index + 1
 
 
+def _skip_chrt_short_options(
+    tokens: list[str], index: int, pid_mode: bool
+) -> tuple[int, bool, bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in CHRT_TERMINAL_SHORT_OPTIONS:
+            return index + 1, pid_mode, True
+        if option in CHRT_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option == "p":
+            pid_mode = True
+            position += 1
+            continue
+        if option in CHRT_SHORT_OPTIONS_WITH_VALUE:
+            attached = cluster[position + 1 :]
+            if attached:
+                return index + 1, pid_mode, False
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError(f"chrt -{option} requires an operand")
+            return index + 2, pid_mode, False
+        raise ValueError(f"unsupported chrt option: -{option}")
+    return index + 1, pid_mode, False
+
+
+def _chrt_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    pid_mode = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in CHRT_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in CHRT_LONG_OPTIONS:
+            index += 1
+            continue
+        if token == "--pid":
+            pid_mode = True
+            index += 1
+            continue
+        option, separator, operand = token.partition("=")
+        if option in CHRT_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                index += 2
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported chrt option: {token}")
+        index, pid_mode, terminal = _skip_chrt_short_options(
+            tokens, index, pid_mode
+        )
+        if terminal:
+            return None
+    operand_count = len(tokens) - index
+    if pid_mode:
+        if operand_count not in {1, 2}:
+            raise ValueError("chrt --pid requires a pid and optional priority")
+        return None
+    if operand_count < 2:
+        raise ValueError("chrt requires a priority and command")
+    return index + 1
+
+
 def _builtin_command_index(
     tokens: list[str], command_index: int
 ) -> Optional[int]:
@@ -1071,9 +1167,12 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
             return False
         raise ValueError("non-canonical PIM board wrapper path")
     if executable == "source" or tokens[command_index] == ".":
-        if command_index + 1 >= len(tokens):
+        script_index = command_index + 1
+        if script_index < len(tokens) and tokens[script_index] == "--":
+            script_index += 1
+        if script_index >= len(tokens):
             return False
-        return _basename(tokens[command_index + 1]) in HARDWARE_RUNNERS
+        return _basename(tokens[script_index]) in HARDWARE_RUNNERS
     if executable == "eval":
         if command_index + 1 >= len(tokens):
             return False
@@ -1139,6 +1238,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "taskset":
         child_index = _taskset_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "chrt":
+        child_index = _chrt_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )
