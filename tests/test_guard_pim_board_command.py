@@ -74,6 +74,13 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "nice -n5 python3 pim_check.py --plan smoke",
         "nice --adjustment=5 python3 pim_check.py --plan smoke",
         "nice -10 python3 pim_check.py --plan smoke",
+        "stdbuf -oL python3 pim_check.py --plan smoke",
+        "stdbuf -o L python3 pim_check.py --plan smoke",
+        "stdbuf --output=L python3 pim_check.py --plan smoke",
+        "stdbuf --output L python3 pim_check.py --plan smoke",
+        "stdbuf -i0 -oL -e0 python3 run_comprehensive_verify.py",
+        "stdbuf -oL -- python3 pim_check.py --plan smoke",
+        "nice -n 5 stdbuf -oL python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -122,8 +129,13 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "source scripts/test_vflip_frame_compare.sh",
         "nice pytest -q tests/test_plan_load.py",
         "nice --help",
+        "stdbuf -oL pytest -q tests/test_plan_load.py",
+        "stdbuf --help",
+        "stdbuf --version",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "nice python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "stdbuf -oL python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -155,6 +167,12 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "nice -n",
         "nice --adjustment=",
         "nice -x true",
+        "stdbuf",
+        "stdbuf true",
+        "stdbuf -o",
+        "stdbuf --output=",
+        "stdbuf -x true",
+        "stdbuf -oL",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:

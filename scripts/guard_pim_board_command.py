@@ -40,6 +40,8 @@ EXEC_SHORT_OPTIONS = {"c", "l"}
 PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X", "--check-hash-based-pycs"}
 TIMEOUT_OPTIONS_WITH_VALUE = {"-k", "--kill-after", "-s", "--signal"}
 TIMEOUT_OPTIONS = {"--foreground", "--preserve-status", "--verbose", "-v"}
+STDBUF_SHORT_OPTIONS = {"i", "o", "e"}
+STDBUF_LONG_OPTIONS = {"--input", "--output", "--error"}
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 MAX_LAUNCHER_DEPTH = 8
@@ -424,6 +426,53 @@ def _nice_command_index(tokens: list[str], command_index: int) -> Optional[int]:
     return index
 
 
+def _stdbuf_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    saw_mode = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in {"--help", "--version"}:
+            return None
+        if token.startswith("--"):
+            option, separator, mode = token.partition("=")
+            if option not in STDBUF_LONG_OPTIONS:
+                raise ValueError(f"unsupported stdbuf option: {token}")
+            if not separator:
+                if index + 1 >= len(tokens):
+                    raise ValueError(f"{option} requires an operand")
+                mode = tokens[index + 1]
+                index += 2
+            else:
+                index += 1
+        else:
+            option = token[1:2]
+            if option not in STDBUF_SHORT_OPTIONS:
+                raise ValueError(f"unsupported stdbuf option: {token}")
+            mode = token[2:]
+            if not mode:
+                if index + 1 >= len(tokens):
+                    raise ValueError(f"-{option} requires an operand")
+                mode = tokens[index + 1]
+                index += 2
+            else:
+                index += 1
+        if not mode:
+            raise ValueError("stdbuf mode must not be empty")
+        saw_mode = True
+    if not saw_mode:
+        raise ValueError("stdbuf requires a buffering mode option")
+    if index >= len(tokens):
+        raise ValueError("stdbuf requires a command")
+    return index
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -508,6 +557,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "nice":
         child_index = _nice_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "stdbuf":
+        child_index = _stdbuf_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )
