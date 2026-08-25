@@ -205,13 +205,15 @@ Claude blocks the tool call before execution. Unrelated shell commands pass
 unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
-`env` short-option clusters (including split-string operands), unwraps `builtin`, `exec`,
-`nice`, `stdbuf`, `xargs`, `setsid`, `timeout`, and `nohup` command operands, reparses
-`eval` arguments as a command string, and reparses command strings passed to
-`bash`, `dash`, `sh`, or `zsh` with `-c`. Unknown or malformed launcher options
-fail closed. Launcher inspection is recursive and fails closed after a bounded
-nesting depth; a recognized board wrapper ends inspection because that child
-already executes under the lease.
+`env` short-option clusters (including split-string operands), unwraps
+`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `setsid`, `sudo`, `timeout`, and
+`nohup` command operands, reparses `eval` arguments as a command string, and
+reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+Unknown or malformed launcher options fail closed. Launcher inspection is
+recursive and fails closed after a bounded nesting depth. Only
+`scripts/with_pim_board.sh`, `./scripts/with_pim_board.sh`, and the resolved
+repository-absolute wrapper path end inspection; basename lookalikes fail
+closed.
 
 Shell invocations that read commands from standard input (`-s`, no script,
 `-`, input redirections, or canonical fd-zero script paths) fail closed instead

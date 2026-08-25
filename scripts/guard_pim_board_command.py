@@ -6,7 +6,7 @@ import json
 import re
 import shlex
 import sys
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Iterator, Optional
 
 
@@ -68,6 +68,47 @@ SETSID_SHORT_OPTIONS = {"c", "f", "w"}
 SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
 SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 SETSID_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
+SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
+SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
+SUDO_LONG_OPTIONS = {
+    "--askpass",
+    "--background",
+    "--bell",
+    "--login",
+    "--non-interactive",
+    "--preserve-env",
+    "--preserve-groups",
+    "--reset-timestamp",
+    "--set-home",
+    "--shell",
+    "--stdin",
+}
+SUDO_LONG_OPTIONS_WITH_VALUE = {
+    "--chdir",
+    "--chroot",
+    "--close-from",
+    "--command-timeout",
+    "--group",
+    "--host",
+    "--other-user",
+    "--prompt",
+    "--role",
+    "--type",
+    "--user",
+}
+SUDO_TERMINAL_LONG_OPTIONS = {
+    "--help",
+    "--list",
+    "--remove-timestamp",
+    "--validate",
+    "--version",
+}
+CANONICAL_BOARD_WRAPPERS = {
+    "scripts/with_pim_board.sh",
+    "./scripts/with_pim_board.sh",
+    Path(__file__).resolve().with_name("with_pim_board.sh").as_posix(),
+}
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 SHELL_TERMINAL_OPTIONS = {"--help", "--version"}
@@ -177,6 +218,10 @@ def _shell_substitutions(command: str) -> Iterator[str]:
 
 def _basename(token: str) -> str:
     return PurePosixPath(token).name
+
+
+def _is_canonical_board_wrapper(token: str) -> bool:
+    return token in CANONICAL_BOARD_WRAPPERS
 
 
 def _expand_env_split_string(
@@ -611,6 +656,84 @@ def _builtin_command_index(
     return index
 
 
+def _sudo_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    reset_timestamp = False
+    shell_mode = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in SUDO_TERMINAL_LONG_OPTIONS:
+            return None
+        if token == "--edit":
+            raise ValueError("sudo edit mode does not identify an executed command")
+        option, separator, operand = token.partition("=")
+        if option == "--preserve-env":
+            if separator and not operand:
+                raise ValueError("--preserve-env requires a non-empty list")
+            index += 1
+            continue
+        if token in SUDO_LONG_OPTIONS:
+            reset_timestamp = reset_timestamp or token == "--reset-timestamp"
+            shell_mode = shell_mode or token in {"--login", "--shell"}
+            index += 1
+            continue
+        if option in SUDO_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                index += 2
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported sudo option: {token}")
+        if token == "-h" and index + 1 >= len(tokens):
+            return None
+        cluster = token[1:]
+        position = 0
+        while position < len(cluster):
+            short_option = cluster[position]
+            if short_option in SUDO_TERMINAL_SHORT_OPTIONS:
+                return None
+            if short_option == "e":
+                raise ValueError(
+                    "sudo edit mode does not identify an executed command"
+                )
+            if short_option in SUDO_SHORT_OPTIONS:
+                reset_timestamp = reset_timestamp or short_option == "k"
+                shell_mode = shell_mode or short_option in {"i", "s"}
+                position += 1
+                continue
+            if short_option in SUDO_SHORT_OPTIONS_WITH_VALUE or short_option == "h":
+                attached = cluster[position + 1 :]
+                if attached:
+                    position = len(cluster)
+                    continue
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"sudo -{short_option} requires an operand")
+                index += 1
+                position = len(cluster)
+                continue
+            raise ValueError(f"unsupported sudo option: -{short_option}")
+        index += 1
+    while index < len(tokens) and ASSIGNMENT.match(tokens[index]):
+        index += 1
+    if index >= len(tokens):
+        if reset_timestamp and not shell_mode:
+            return None
+        raise ValueError("sudo requires a command")
+    return index
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -682,7 +805,9 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         return False
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
-        return False
+        if _is_canonical_board_wrapper(tokens[command_index]):
+            return False
+        raise ValueError("non-canonical PIM board wrapper path")
     if executable == "source" or tokens[command_index] == ".":
         if command_index + 1 >= len(tokens):
             return False
@@ -728,6 +853,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "builtin":
         child_index = _builtin_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "sudo":
+        child_index = _sudo_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )

@@ -110,6 +110,23 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "builtin builtin exec python3 run_comprehensive_verify.py",
         "builtin -- exec python3 pim_check.py --plan smoke",
         "nohup builtin exec python3 pim_check.py --plan smoke",
+        "sudo python3 pim_check.py --plan smoke",
+        "sudo -n python3 run_comprehensive_verify.py",
+        "sudo -u root python3 pim_check.py --plan smoke",
+        "sudo -uroot python3 run_comprehensive_verify.py",
+        "sudo --user=root python3 pim_check.py --plan smoke",
+        "sudo -nE -D /tmp python3 pim_check.py --plan smoke",
+        "sudo --chdir=/tmp --user root python3 pim_check.py --plan smoke",
+        "sudo VAR=value python3 pim_check.py --plan smoke",
+        "sudo -- python3 pim_check.py --plan smoke",
+        "sudo -i python3 pim_check.py --plan smoke",
+        "sudo -s python3 run_comprehensive_verify.py",
+        "sudo -k python3 pim_check.py --plan smoke",
+        "sudo -h localhost python3 pim_check.py --plan smoke",
+        "nohup sudo -n python3 pim_check.py --plan smoke",
+        "/tmp/with_pim_board.sh -- python3 pim_check.py --plan smoke",
+        "with_pim_board.sh -- python3 pim_check.py --plan smoke",
+        "other/scripts/with_pim_board.sh -- python3 run_comprehensive_verify.py",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -196,6 +213,25 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "builtin -- printf %s safe",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "builtin exec python3 pim_check.py --plan smoke",
+        "sudo pytest -q tests/test_plan_load.py",
+        "sudo -n printf %s safe",
+        "sudo -C3 -uroot printf %s safe",
+        "sudo --preserve-env=PATH printf %s safe",
+        "sudo --help",
+        "sudo -h",
+        "sudo --version",
+        "sudo -V",
+        "sudo -l python3 pim_check.py --plan smoke",
+        "sudo --list python3 run_comprehensive_verify.py",
+        "sudo -v",
+        "sudo -K",
+        "sudo -k",
+        "./scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke",
+        f"{ROOT / 'scripts' / 'with_pim_board.sh'} --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "sudo python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -276,6 +312,16 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "setsid --unknown true",
         "builtin -x printf %s safe",
         "builtin --help",
+        "sudo",
+        "sudo -n",
+        "sudo -s",
+        "sudo -i",
+        "sudo -u",
+        "sudo --user=",
+        "sudo -C",
+        "sudo -x true",
+        "sudo --unknown true",
+        "sudo -e run_comprehensive_verify.py",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:
