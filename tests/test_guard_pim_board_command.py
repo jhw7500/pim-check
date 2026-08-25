@@ -356,6 +356,37 @@ def test_guard_blocks_board_commands_launched_by_script(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "prlimit -- python3 pim_check.py --plan smoke",
+        "prlimit python3 pim_check.py --plan smoke",
+        "prlimit --nofile=1024:2048 python3 run_comprehensive_verify.py",
+        "prlimit --nofile python3 pim_check.py --plan=smoke",
+        "prlimit -n1024:2048 scripts/test_vflip_frame_compare.sh",
+        "prlimit -n scripts/test_vflip_frame_compare.sh",
+        "prlimit --core=:unlimited --cpu=10 -- "
+        "python3 pim_check.py --plan smoke",
+        "prlimit --noheadings --raw --verbose --output RESOURCE,SOFT -- "
+        "python3 run_comprehensive_verify.py",
+        "prlimit --noheadings --raw --verbose -oRESOURCE,SOFT "
+        "python3 pim_check.py --plan smoke",
+        "timeout 30m prlimit -- python3 pim_check.py --plan smoke",
+        "prlimit -- bash -c 'python3 pim_check.py --plan smoke'",
+        "cd /tmp && prlimit -- scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+        "prlimit --core --data --nice --fsize --sigpending --memlock "
+        "--rss --nofile --msgqueue --rtprio --stack --cpu --nproc "
+        "--as --locks --rttime -- python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_prlimit(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "script",
         "script -q /dev/null",
         "script --quiet -- /dev/null",
@@ -644,6 +675,45 @@ def test_guard_allows_safe_script_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "prlimit",
+        "prlimit --",
+        "prlimit --nofile",
+        "prlimit --nofile=1024:2048",
+        "prlimit -n1024:2048",
+        "prlimit --pid 123",
+        "prlimit --pid=123 --rss --nofile=1024:4095",
+        "prlimit -p123 -m -n1024:4095",
+        "prlimit --noheadings --raw --verbose --output RESOURCE,SOFT "
+        "--pid 123",
+        "prlimit --noheadings --raw --verbose -oRESOURCE,SOFT -p123",
+        "prlimit printf %s safe",
+        "prlimit -- pytest -q tests/test_plan_load.py",
+        "prlimit -c -d -e -f -i -l -m -n -q -r -s -t -u -v -x -y "
+        "-- printf %s safe",
+        "prlimit --core --data --nice --fsize --sigpending --memlock "
+        "--rss --nofile --msgqueue --rtprio --stack --cpu --nproc "
+        "--as --locks --rttime -- printf %s safe",
+        "prlimit --output run_comprehensive_verify.py -- printf %s safe",
+        "prlimit -- scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke",
+        f"cd /tmp && prlimit -- {ROOT / 'scripts' / 'with_pim_board.sh'} "
+        "--for 30m --purpose safe -- python3 pim_check.py --plan smoke",
+        "prlimit --help",
+        "prlimit --version",
+        "prlimit -h",
+        "prlimit -V",
+    ],
+)
+def test_guard_allows_safe_prlimit_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -890,6 +960,35 @@ def test_guard_fails_closed_on_malformed_ionice_commands(command: str) -> None:
     ],
 )
 def test_guard_fails_closed_on_malformed_script_commands(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "prlimit -p",
+        "prlimit --pid",
+        "prlimit --pid=",
+        "prlimit --pid --",
+        "prlimit -o",
+        "prlimit --output",
+        "prlimit --output=",
+        "prlimit --output --pid 123",
+        "prlimit -z true",
+        "prlimit --unknown true",
+        "prlimit --pid 123 printf %s safe",
+        "prlimit -p123 printf %s safe",
+        "prlimit --pid 123 -- printf %s safe",
+        "prlimit --pid 123 --pid 456",
+        "prlimit --nofile=",
+    ],
+)
+def test_guard_fails_closed_on_malformed_prlimit_commands(
     command: str,
 ) -> None:
     result = _run_guard(command)

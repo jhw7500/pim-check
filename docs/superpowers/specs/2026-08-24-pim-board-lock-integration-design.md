@@ -211,9 +211,9 @@ unchanged.
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `chrt`,
-`ionice`, `script`, `setsid`, `sudo`, `timeout`, and `nohup` command operands,
-reparses `eval` arguments as a command string, and reparses command strings
-passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+`ionice`, `script`, `prlimit`, `setsid`, `sudo`, `timeout`, and `nohup`
+command operands, reparses `eval` arguments as a command string, and reparses
+command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
 scanned in order and each child command is classified recursively. Escaped
 semicolon terminators and exact `{}` placeholders remain data tokens during
@@ -251,6 +251,12 @@ classified, while its optional positional operand remains an output file.
 Forms without a command start an interactive shell and therefore fail closed,
 as do duplicate commands, unknown options, missing values, and extra output
 files; help/version and canonical wrapped command strings remain allowed.
+Util-linux `prlimit` resource and output options are parsed before its command
+operand, whose argv is recursively classified. PID target forms and forms
+without a command have no execution child. PID forms with trailing command
+tokens, duplicate PID options, unknown options, and missing or empty required
+values fail closed; help/version, queries, and canonical wrapped children
+remain allowed.
 Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
 before that recursive classification. ANSI-C escape sequences and unterminated
 forms fail closed instead of approximating Bash decoding; quoted or escaped

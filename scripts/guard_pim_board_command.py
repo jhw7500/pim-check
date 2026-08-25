@@ -139,6 +139,28 @@ SCRIPT_LONG_OPTIONS_WITH_VALUE = {
 }
 SCRIPT_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 SCRIPT_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+PRLIMIT_RESOURCE_SHORT_OPTIONS = set("cdefilmnqrstuvxy")
+PRLIMIT_RESOURCE_LONG_OPTIONS = {
+    "--as",
+    "--core",
+    "--cpu",
+    "--data",
+    "--fsize",
+    "--locks",
+    "--memlock",
+    "--msgqueue",
+    "--nice",
+    "--nofile",
+    "--nproc",
+    "--rss",
+    "--rtprio",
+    "--rttime",
+    "--sigpending",
+    "--stack",
+}
+PRLIMIT_LONG_OPTIONS = {"--noheadings", "--raw", "--verbose"}
+PRLIMIT_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+PRLIMIT_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
 SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
@@ -1147,6 +1169,87 @@ def _script_child_command(
     return child_command
 
 
+def _prlimit_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    pid_mode = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in PRLIMIT_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in PRLIMIT_LONG_OPTIONS:
+            index += 1
+            continue
+        option, separator, operand = token.partition("=")
+        if option in PRLIMIT_RESOURCE_LONG_OPTIONS:
+            if separator and not operand:
+                raise ValueError(f"{option} has an empty limit")
+            index += 1
+            continue
+        if option in {"--output", "--pid"}:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if (
+                    index + 1 >= len(tokens)
+                    or not tokens[index + 1]
+                    or tokens[index + 1].startswith("-")
+                ):
+                    raise ValueError(f"{option} requires an operand")
+                operand = tokens[index + 1]
+                index += 2
+            if option == "--pid":
+                if pid_mode:
+                    raise ValueError("prlimit pid option is duplicated")
+                pid_mode = True
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported prlimit option: {token}")
+        cluster = token[1:]
+        short_option = cluster[0]
+        if short_option in PRLIMIT_TERMINAL_SHORT_OPTIONS:
+            return None
+        if short_option in PRLIMIT_RESOURCE_SHORT_OPTIONS:
+            index += 1
+            continue
+        if short_option in {"o", "p"}:
+            operand = cluster[1:]
+            if operand:
+                index += 1
+            else:
+                if (
+                    index + 1 >= len(tokens)
+                    or not tokens[index + 1]
+                    or tokens[index + 1].startswith("-")
+                ):
+                    raise ValueError(
+                        f"prlimit -{short_option} requires an operand"
+                    )
+                operand = tokens[index + 1]
+                index += 2
+            if short_option == "p":
+                if pid_mode:
+                    raise ValueError("prlimit pid option is duplicated")
+                pid_mode = True
+            continue
+        raise ValueError(f"unsupported prlimit option: {token}")
+    if pid_mode:
+        if index < len(tokens):
+            raise ValueError("prlimit --pid does not accept a command")
+        return None
+    if index >= len(tokens):
+        return None
+    return index
+
+
 def _builtin_command_index(
     tokens: list[str], command_index: int
 ) -> Optional[int]:
@@ -1481,6 +1584,11 @@ def _segment_is_blocked(
         child_command = _script_child_command(tokens, command_index)
         return child_command is not None and _command_is_blocked(
             child_command, depth + 1, relative_wrapper_allowed
+        )
+    if executable == "prlimit":
+        child_index = _prlimit_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable in SHELLS:
         child_command, child_script = _shell_child(tokens, command_index)
