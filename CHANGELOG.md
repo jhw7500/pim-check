@@ -20,7 +20,7 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`taskset`·`chrt`·`ionice`·`setsid`·`sudo`·`timeout`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`setsid`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -39,6 +39,9 @@
   util-linux `ionice`는 class·classdata·ignore 옵션을 파싱하고 실행 모드 자식을 재귀
   검사하며, PID·PGID·UID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다. 누락된
   옵션 값과 미지원 옵션은 fail-closed 처리한다.
+  util-linux `script`는 `-c`/`--command` 문자열을 shell 분류기로 재귀 검사하고,
+  logging·timing 옵션과 출력 파일은 데이터로 구분한다. command가 없는 대화형 shell,
+  중복 command, 누락된 옵션 값과 미지원 옵션은 fail-closed 처리한다.
   앞선 `cd`·`pushd`·`popd`가 현재 디렉터리를 바꿀 수 있으면 이후 상대 wrapper
   경로는 정본으로 보지 않고 fail-closed하며, 저장소 wrapper의 절대 경로만 허용한다.
   single quote·escape로 보호돼 lease 획득 후

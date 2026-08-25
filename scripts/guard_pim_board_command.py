@@ -119,6 +119,26 @@ IONICE_LONG_OPTIONS_WITH_VALUE = {"--class", "--classdata"}
 IONICE_TARGET_LONG_OPTIONS_WITH_VALUE = {"--pid", "--pgid", "--uid"}
 IONICE_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 IONICE_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+SCRIPT_SHORT_OPTIONS = {"a", "e", "f", "q"}
+SCRIPT_SHORT_OPTIONS_WITH_VALUE = {"B", "E", "I", "O", "T", "m", "o"}
+SCRIPT_LONG_OPTIONS = {
+    "--append",
+    "--flush",
+    "--force",
+    "--quiet",
+    "--return",
+}
+SCRIPT_LONG_OPTIONS_WITH_VALUE = {
+    "--echo",
+    "--log-in",
+    "--log-io",
+    "--log-out",
+    "--log-timing",
+    "--logging-format",
+    "--output-limit",
+}
+SCRIPT_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+SCRIPT_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
 SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
@@ -1044,6 +1064,89 @@ def _ionice_command_index(
     return index
 
 
+def _skip_script_short_options(
+    tokens: list[str], index: int, child_command: Optional[str]
+) -> tuple[int, Optional[str], bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in SCRIPT_TERMINAL_SHORT_OPTIONS:
+            return index + 1, child_command, True
+        if option in SCRIPT_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option == "t":
+            return index + 1, child_command, False
+        if option == "c" or option in SCRIPT_SHORT_OPTIONS_WITH_VALUE:
+            attached = cluster[position + 1 :]
+            if attached:
+                operand = attached
+                next_index = index + 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"script -{option} requires an operand")
+                operand = tokens[index + 1]
+                next_index = index + 2
+            if option == "c":
+                if child_command is not None:
+                    raise ValueError("script command option is duplicated")
+                child_command = operand
+            return next_index, child_command, False
+        raise ValueError(f"unsupported script option: -{option}")
+    return index + 1, child_command, False
+
+
+def _script_child_command(
+    tokens: list[str], command_index: int
+) -> Optional[str]:
+    index = command_index + 1
+    child_command: Optional[str] = None
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in SCRIPT_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in SCRIPT_LONG_OPTIONS:
+            index += 1
+            continue
+        option, separator, operand = token.partition("=")
+        if option == "--timing":
+            index += 1
+            continue
+        if option == "--command" or option in SCRIPT_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                operand = tokens[index + 1]
+                index += 2
+            if option == "--command":
+                if child_command is not None:
+                    raise ValueError("script command option is duplicated")
+                child_command = operand
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported script option: {token}")
+        index, child_command, terminal = _skip_script_short_options(
+            tokens, index, child_command
+        )
+        if terminal:
+            return None
+    if len(tokens) - index > 1:
+        raise ValueError("script accepts at most one output file")
+    if child_command is None:
+        raise ValueError("script starts an interactive shell")
+    return child_command
+
+
 def _builtin_command_index(
     tokens: list[str], command_index: int
 ) -> Optional[int]:
@@ -1373,6 +1476,11 @@ def _segment_is_blocked(
         child_index = _ionice_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "script":
+        child_command = _script_child_command(tokens, command_index)
+        return child_command is not None and _command_is_blocked(
+            child_command, depth + 1, relative_wrapper_allowed
         )
     if executable in SHELLS:
         child_command, child_script = _shell_child(tokens, command_index)

@@ -317,6 +317,64 @@ def test_guard_blocks_board_commands_launched_by_ionice(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "script -q -c 'python3 pim_check.py --plan smoke' /dev/null",
+        "script -q -c'python3 pim_check.py --plan smoke' /dev/null",
+        "script --quiet --command 'python3 run_comprehensive_verify.py' "
+        "/dev/null",
+        "script --command='python3 pim_check.py --plan=smoke' /dev/null",
+        "script -qec 'scripts/test_vflip_frame_compare.sh' /dev/null",
+        "script -aefq -E auto -B /tmp/io -I /tmp/in -O /tmp/out "
+        "-T /tmp/time -m advanced -o 1M -c "
+        "'python3 pim_check.py --plan smoke' /dev/null",
+        "script --append --return --flush --force --quiet --echo=auto "
+        "--log-io=/tmp/io --log-in /tmp/in --log-out=/tmp/out "
+        "--log-timing /tmp/time --logging-format=advanced "
+        "--output-limit 1M --command "
+        "'python3 run_comprehensive_verify.py' /dev/null",
+        "script -qt/tmp/time -c 'python3 pim_check.py --plan smoke' "
+        "/dev/null",
+        "script --timing=/tmp/time --command "
+        "'python3 pim_check.py --plan smoke' /dev/null",
+        "script -q -c 'timeout 30m python3 pim_check.py --plan smoke' "
+        "/dev/null",
+        "timeout 30m script -q -c "
+        "'python3 pim_check.py --plan smoke' /dev/null",
+        "script -q -c 'bash -c \"python3 pim_check.py --plan smoke\"' "
+        "/dev/null",
+        "cd /tmp && script -q -c "
+        "'scripts/with_pim_board.sh --for 30m --purpose unsafe -- "
+        "python3 pim_check.py --plan smoke' /dev/null",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_script(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "script",
+        "script -q /dev/null",
+        "script --quiet -- /dev/null",
+        "printf 'python3 pim_check.py --plan smoke\\n' | script -q /dev/null",
+        "script -q /dev/null <<< 'python3 pim_check.py --plan smoke'",
+    ],
+)
+def test_guard_fails_closed_on_interactive_script_commands(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "scripts/with_pim_board.sh --for 30m --purpose manual -- python3 pim_check.py --plan smoke",
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
@@ -554,6 +612,38 @@ def test_guard_allows_safe_ionice_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "script -q -c 'printf %s safe' /dev/null",
+        "script --command 'pytest -q tests/test_plan_load.py' /dev/null",
+        "script --command='printf %s safe' /dev/null",
+        "script -q -c 'printf %s safe' run_comprehensive_verify.py",
+        "script -aefq -E never -B /tmp/io -I /tmp/in -O /tmp/out "
+        "-T /tmp/time -m classic -o 1M -c 'printf %s safe' /dev/null",
+        "script -qt/tmp/time -c 'printf %s safe' /dev/null",
+        "script --timing=/tmp/time --command 'printf %s safe' /dev/null",
+        "script -t -c 'printf %s safe' /dev/null",
+        "script --timing -c 'printf %s safe' /dev/null",
+        "script -q -c 'scripts/with_pim_board.sh --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke' /dev/null",
+        f"cd /tmp && script -q -c '{ROOT / 'scripts' / 'with_pim_board.sh'} "
+        "--for 30m --purpose safe -- python3 pim_check.py --plan smoke' "
+        "/dev/null",
+        "script -c 'printf %s safe' -- /dev/null",
+        "script --help",
+        "script --version",
+        "script -h",
+        "script -V",
+    ],
+)
+def test_guard_allows_safe_script_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -765,6 +855,43 @@ def test_guard_fails_closed_on_malformed_chrt_commands(command: str) -> None:
     ],
 )
 def test_guard_fails_closed_on_malformed_ionice_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "script -c",
+        "script -c '' /dev/null",
+        "script --command",
+        "script --command= /dev/null",
+        "script -E",
+        "script --echo",
+        "script --echo=",
+        "script -B",
+        "script --log-io=",
+        "script -I",
+        "script --log-in=",
+        "script -O",
+        "script --log-out=",
+        "script -T",
+        "script --log-timing=",
+        "script -m",
+        "script --logging-format=",
+        "script -o",
+        "script --output-limit=",
+        "script -x -c 'printf %s safe' /dev/null",
+        "script --unknown -c 'printf %s safe' /dev/null",
+        "script -c 'printf %s safe' /tmp/one /tmp/two",
+        "script -c 'printf %s safe' --command 'printf %s safe' /dev/null",
+    ],
+)
+def test_guard_fails_closed_on_malformed_script_commands(
+    command: str,
+) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2
