@@ -64,6 +64,10 @@ XARGS_LONG_OPTIONS_WITH_VALUE = {
     "--process-slot-var",
 }
 XARGS_LONG_OPTIONS_WITH_OPTIONAL_VALUE = {"--eof", "--replace"}
+SETSID_SHORT_OPTIONS = {"c", "f", "w"}
+SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
+SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+SETSID_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 SHELL_TERMINAL_OPTIONS = {"--help", "--version"}
@@ -559,6 +563,40 @@ def _xargs_command_index(
     return index
 
 
+def _setsid_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in SETSID_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in SETSID_LONG_OPTIONS:
+            index += 1
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported setsid option: {token}")
+        terminal = False
+        for option in token[1:]:
+            if option in SETSID_SHORT_OPTIONS:
+                continue
+            if option in SETSID_TERMINAL_SHORT_OPTIONS:
+                terminal = True
+                continue
+            raise ValueError(f"unsupported setsid option: -{option}")
+        if terminal:
+            return None
+        index += 1
+    if index >= len(tokens):
+        raise ValueError("setsid requires a program")
+    return index
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -666,6 +704,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "xargs":
         child_index = _xargs_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "setsid":
+        child_index = _setsid_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )

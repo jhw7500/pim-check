@@ -95,6 +95,13 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "xargs -- python3 pim_check.py --plan smoke",
         "xargs -I{} python3 -m pim_check --plan smoke",
         "stdbuf -oL xargs -n1 python3 pim_check.py --plan smoke",
+        "setsid python3 pim_check.py --plan smoke",
+        "setsid -f python3 run_comprehensive_verify.py",
+        "setsid -cfw python3 pim_check.py --plan smoke",
+        "setsid --fork python3 pim_check.py --plan smoke",
+        "setsid --wait --ctty python3 run_comprehensive_verify.py",
+        "setsid -- python3 pim_check.py --plan smoke",
+        "nohup setsid -f python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -166,6 +173,14 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "stdbuf -oL python3 pim_check.py --plan smoke",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "xargs python3 pim_check.py --plan smoke",
+        "setsid pytest -q tests/test_plan_load.py",
+        "setsid -f printf %s safe",
+        "setsid -h",
+        "setsid -V",
+        "setsid --help",
+        "setsid --version",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "setsid python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -239,6 +254,11 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "xargs -z true",
         "xargs -0z true",
         "xargs --unknown true",
+        "setsid",
+        "setsid -f",
+        "setsid --",
+        "setsid -x true",
+        "setsid --unknown true",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:
