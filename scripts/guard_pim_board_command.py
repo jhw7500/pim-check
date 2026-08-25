@@ -110,14 +110,32 @@ def _backtick_substitution(command: str, start: int) -> tuple[str, int]:
     raise ValueError("unterminated shell command substitution")
 
 
-def _shell_substitutions(tokens: list[str]) -> Iterator[str]:
-    command = " ".join(tokens)
+def _shell_substitutions(command: str) -> Iterator[str]:
+    quote: Optional[str] = None
+    escaped = False
     index = 0
     while index < len(command):
-        if command.startswith("$(", index):
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+        elif char == "\\" and quote != "'":
+            escaped = True
+            index += 1
+        elif quote == "'":
+            if char == "'":
+                quote = None
+            index += 1
+        elif char == "'" and quote is None:
+            quote = "'"
+            index += 1
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+            index += 1
+        elif command.startswith("$(", index):
             substitution, index = _dollar_substitution(command, index + 2)
             yield substitution
-        elif command[index] == "`":
+        elif char == "`":
             substitution, index = _backtick_substitution(command, index + 1)
             yield substitution
         else:
@@ -429,11 +447,6 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
         return False
-    if any(
-        _command_is_blocked(substitution, depth + 1)
-        for substitution in _shell_substitutions(tokens)
-    ):
-        return True
     if executable == "exec":
         child_index = _exec_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
@@ -467,6 +480,13 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
 
 
 def _command_is_blocked(command: str, depth: int = 0) -> bool:
+    if depth > MAX_LAUNCHER_DEPTH:
+        raise ValueError("launcher nesting is too deep")
+    if any(
+        _command_is_blocked(substitution, depth + 1)
+        for substitution in _shell_substitutions(command)
+    ):
+        return True
     return any(
         _segment_is_blocked(segment, depth) for segment in _segments(command)
     )

@@ -61,6 +61,8 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "env - python3 pim_check.py --plan smoke",
         'echo "$(python3 pim_check.py --plan smoke)"',
         "echo `python3 pim_check.py --plan smoke`",
+        "scripts/with_pim_board.sh --for 30m --purpose x -- "
+        'echo "$(python3 pim_check.py --plan smoke)"',
         "./scripts/test_vflip_frame_compare.sh",
         "bash scripts/test_vflip_frame_compare.sh",
     ],
@@ -98,6 +100,8 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "env - printf %s safe",
         'echo "$(date +%s)"',
         "echo `date +%s`",
+        "echo '$(python3 pim_check.py --plan smoke)'",
+        r'echo "\$(python3 pim_check.py --plan smoke)"',
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "bash -c 'echo \"$(python3 pim_check.py --plan smoke)\"'",
     ],
