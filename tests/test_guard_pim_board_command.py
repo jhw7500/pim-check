@@ -243,6 +243,53 @@ def test_guard_fails_closed_on_shell_c_positional_operands(
 @pytest.mark.parametrize(
     "command",
     [
+        'runner=pim_check.py; python3 "$runner" --plan smoke',
+        'runner=pim-check; "$runner" --plan smoke',
+        "script=run_comprehensive_verify.py; timeout 30m "
+        'python3 "${script}"',
+        'module=pim_check; python3 -m "$module" --plan smoke',
+        "script=scripts/test_vflip_frame_compare.sh; "
+        'bash "$script"',
+        "script=scripts/test_vflip_frame_compare.sh; "
+        'source "$script"',
+        "python3 `printf pim_check.py` --plan smoke",
+        "python3 $(printf pim_check.py) --plan smoke",
+        "python3 pim_check.* --plan smoke",
+        "python3 pim_{check,other}.py --plan smoke",
+    ],
+)
+def test_guard_fails_closed_on_dynamic_execution_targets(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'flag=--plan; python3 pim_check.py "$flag" smoke',
+        "flags='--plan smoke'; python3 pim_check.py $flags",
+        'flag=--plan; python3 -m pim_check "$flag" smoke',
+        'flag=--plan; pim-check "$flag" smoke',
+        "python3 pim_check.py --{pl,other}an smoke",
+        'case=smoke; python3 pim_check.py --case "$case"',
+    ],
+)
+def test_guard_fails_closed_on_dynamic_pim_check_arguments(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         r"bash -c $'python3\x20pim_check.py\x20--plan\x20smoke'",
         r"printf %s $'safe\n'",
     ],
@@ -611,6 +658,26 @@ def test_guard_allows_safe_commands_after_leading_redirections(
     ],
 )
 def test_guard_allows_safe_or_literal_bash_ansi_c_quotes(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo "$HOME"',
+        "printf '%s\\n' '*.py'",
+        'python3 helper.py "$HOME" "*.yaml"',
+        'python3 -c \'print("$HOME")\'',
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        'python3 "$runner" "$flag"',
+    ],
+)
+def test_guard_allows_expansions_in_unrelated_data_arguments(
+    command: str,
+) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 0

@@ -42,7 +42,9 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 
 `guard_pim_board_command.py`는 `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤
 positional operand를 해석하지 않고 모두 fail-closed 처리한다. operand가 없는
-`-c` 문자열만 기존 재귀 분류를 유지한다.
+`-c` 문자열만 기존 재귀 분류를 유지한다. executable, Python script/module,
+shell positional/source script 및 `pim_check.py` 인자에 셸 확장 표식이 있으면
+fail-closed하며, 무관한 데이터 인자와 정본 wrapper 뒤 자식 인자는 검사하지 않는다.
 
 ### 개발 워크플로 도구 (Python)
 

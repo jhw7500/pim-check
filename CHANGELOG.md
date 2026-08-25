@@ -42,6 +42,10 @@
   `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤 positional operand는 `$0`·`$@`·`$*`
   확장을 흉내 내지 않고 모두 fail-closed 처리한다. operand가 없는 `-c` 문자열은 기존
   재귀 분류를 유지한다.
+  executable, Python script/module, shell positional/source script와 `pim_check.py`의
+  인자처럼 실행 의미를 바꾸는 토큰에 `$`·백틱·glob·brace 확장 표식이 남아 있으면
+  실제 확장을 추측하지 않고 fail-closed 처리한다. 무관한 명령의 데이터 인자와 정본
+  wrapper 뒤 자식 인자는 그대로 허용한다.
   util-linux `script`는 `-c`/`--command` 문자열을 shell 분류기로 재귀 검사하고,
   logging·timing 옵션과 출력 파일은 데이터로 구분한다. command가 없는 대화형 shell,
   중복 command, 누락된 옵션 값과 미지원 옵션은 fail-closed 처리한다.

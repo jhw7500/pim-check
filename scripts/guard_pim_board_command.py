@@ -207,6 +207,7 @@ SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 SHELL_TERMINAL_OPTIONS = {"--help", "--version"}
 SHELL_STDIN_SCRIPTS = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+SHELL_EXPANSION_MARKERS = frozenset("$`*?[{")
 SHELL_REDIRECTION = re.compile(
     r"^(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})?"
     r"(?P<operator><<<|<<-?|<>|>>|>\||<|>)"
@@ -427,6 +428,12 @@ def _basename(token: str) -> str:
     return PurePosixPath(token).name
 
 
+def _require_static_token(token: str, description: str) -> str:
+    if any(marker in token for marker in SHELL_EXPANSION_MARKERS):
+        raise ValueError(f"{description} requires shell expansion")
+    return token
+
+
 def _is_canonical_board_wrapper(token: str) -> bool:
     return token in CANONICAL_BOARD_WRAPPERS
 
@@ -591,6 +598,7 @@ def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str]
             else:
                 module = token[2:]
                 arguments = tokens[index + 1 :]
+            _require_static_token(module, "Python module operand")
             if module == "pim_check":
                 return "pim_check.py", arguments
             return None, []
@@ -602,7 +610,17 @@ def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str]
         index += 1
     if index >= len(tokens):
         return None, []
-    return _basename(tokens[index]), tokens[index + 1 :]
+    script = _require_static_token(tokens[index], "Python script operand")
+    return _basename(script), tokens[index + 1 :]
+
+
+def _pim_check_arguments_are_blocked(arguments: list[str]) -> bool:
+    for argument in arguments:
+        _require_static_token(argument, "pim-check argument")
+    return any(
+        argument == "--plan" or argument.startswith("--plan=")
+        for argument in arguments
+    )
 
 
 def _skip_exec_short_options(
@@ -1450,6 +1468,7 @@ def _shell_child(
         raise ValueError(
             f"{_basename(tokens[command_index])} reads commands from stdin"
         )
+    script = _require_static_token(script, "shell script operand")
     return None, _basename(script)
 
 
@@ -1538,7 +1557,10 @@ def _segment_is_blocked(
     command_index = _command_index(tokens)
     if command_index is None:
         return False
-    executable = _basename(tokens[command_index])
+    executable_token = _require_static_token(
+        tokens[command_index], "command executable"
+    )
+    executable = _basename(executable_token)
     if executable == "with_pim_board.sh":
         if _is_canonical_board_wrapper(tokens[command_index]):
             if (
@@ -1556,7 +1578,10 @@ def _segment_is_blocked(
             script_index += 1
         if script_index >= len(tokens):
             return False
-        return _basename(tokens[script_index]) in HARDWARE_RUNNERS
+        script = _require_static_token(
+            tokens[script_index], "source script operand"
+        )
+        return _basename(script) in HARDWARE_RUNNERS
     if executable == "eval":
         if command_index + 1 >= len(tokens):
             return False
@@ -1665,14 +1690,14 @@ def _segment_is_blocked(
     if executable in HARDWARE_RUNNERS:
         return True
     if executable in {"pim_check.py", "pim-check"}:
-        return any(arg == "--plan" or arg.startswith("--plan=") for arg in tokens[command_index + 1 :])
+        return _pim_check_arguments_are_blocked(tokens[command_index + 1 :])
     if not PYTHON.match(executable):
         return False
     script, arguments = _python_script(tokens, command_index)
     if script in HARDWARE_RUNNERS:
         return True
-    return script == "pim_check.py" and any(
-        arg == "--plan" or arg.startswith("--plan=") for arg in arguments
+    return script == "pim_check.py" and _pim_check_arguments_are_blocked(
+        arguments
     )
 
 

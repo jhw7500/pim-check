@@ -282,6 +282,16 @@ instead of approximating shell-specific `$0`, `$@`, `$*`, numbered, or indirect
 expansion behavior. Positional scripts retain their inventory-based
 classification.
 
+Command-bearing tokens are also static-only where expansion could change the
+guard's classification: the executable, Python script or module, shell
+positional or sourced script, and every argument to `pim_check.py`/`pim-check`.
+A remaining `$`, backtick, glob (`*`, `?`, `[`), or brace-expansion marker in
+one of those positions fails closed instead of predicting shell expansion.
+Because quote context is removed during tokenization, quoted or escaped marker
+literals in those positions receive the same conservative treatment. Expansion
+markers in unrelated data arguments remain allowed, as do child arguments after
+the literal canonical board wrapper has established the lease boundary.
+
 Outer-shell-active `$()` and backtick command substitutions are extracted from
 the raw command with quote context intact and passed through the same bounded
 classifier before a board wrapper is exempted. Single-quoted or escaped
