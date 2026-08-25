@@ -353,10 +353,11 @@ recursive and fails closed after a bounded nesting depth. Only
 repository-absolute wrapper path end inspection; basename lookalikes fail
 closed.
 
-Shell invocations that read commands from standard input (`-s`, no script,
-`-`, input redirections, or canonical fd-zero script paths) fail closed instead
-of attempting to reconstruct stdin. Terminal `--help` and `--version` modes
-remain allowed. A `-c` command string without trailing operands retains its
+Shell invocations that read commands from runtime input (`-s`, no script, `-`,
+input redirections, or normalized `/dev/stdin`, `/dev/fd/*`, and
+`/proc/*/fd/*` positional-script paths) fail closed instead of attempting to
+reconstruct the content. Terminal `--help` and `--version` modes remain allowed.
+A `-c` command string without trailing operands retains its
 recursive classification. Any positional operand after that string fails closed
 instead of approximating shell-specific `$0`, `$@`, `$*`, numbered, or indirect
 expansion behavior. Positional scripts retain their inventory-based

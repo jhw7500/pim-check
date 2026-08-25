@@ -55,7 +55,8 @@
   옵션 값과 미지원 옵션은 fail-closed 처리한다.
   `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤 positional operand는 `$0`·`$@`·`$*`
   확장을 흉내 내지 않고 모두 fail-closed 처리한다. operand가 없는 `-c` 문자열은 기존
-  재귀 분류를 유지한다.
+  재귀 분류를 유지한다. shell positional script도 source와 같은 정규화된 runtime-FD
+  의사경로 전체를 fail-closed 처리하며 일반 파일과 정본 wrapper 내부 실행은 허용한다.
   executable, Python script/module, shell positional/source script와 `pim_check.py`의
   인자처럼 실행 의미를 바꾸는 토큰에 `$`·백틱·glob·brace 확장 표식이 남아 있으면
   실제 확장을 추측하지 않고 fail-closed 처리한다. 무관한 명령의 데이터 인자와 정본

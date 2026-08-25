@@ -428,7 +428,6 @@ CANONICAL_BOARD_WRAPPERS = {
 SHELLS = {"bash", "dash", "sh", "zsh"}
 SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 SHELL_TERMINAL_OPTIONS = {"--help", "--version"}
-SHELL_STDIN_SCRIPTS = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
 SHELL_EXPANSION_MARKERS = frozenset("$`*?[{")
 SHELL_REDIRECTION = re.compile(
     r"^(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})?"
@@ -660,7 +659,7 @@ def _is_canonical_board_wrapper(token: str) -> bool:
     return token in CANONICAL_BOARD_WRAPPERS
 
 
-def _source_operand_reads_runtime_fd(token: str) -> bool:
+def _operand_reads_runtime_fd(token: str) -> bool:
     path = posixpath.normpath(token)
     if token.startswith("/"):
         path = f"/{path.lstrip('/')}"
@@ -2315,9 +2314,13 @@ def _shell_child(
             f"{_basename(tokens[command_index])} reads commands from stdin"
         )
     script = tokens[index]
-    if script in SHELL_STDIN_SCRIPTS or SHELL_REDIRECTION.match(script):
+    if (
+        script == "-"
+        or _operand_reads_runtime_fd(script)
+        or SHELL_REDIRECTION.match(script)
+    ):
         raise ValueError(
-            f"{_basename(tokens[command_index])} reads commands from stdin"
+            f"{_basename(tokens[command_index])} reads commands from runtime input"
         )
     script = _require_static_token(script, "shell script operand")
     return None, _basename(script)
@@ -2500,7 +2503,7 @@ def _segment_is_blocked(
         script = _require_static_token(
             tokens[script_index], "source script operand"
         )
-        if _source_operand_reads_runtime_fd(script):
+        if _operand_reads_runtime_fd(script):
             raise ValueError("source operand reads from a runtime file descriptor")
         return _basename(script) in HARDWARE_RUNNERS
     if executable == "eval":

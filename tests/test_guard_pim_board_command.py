@@ -1164,6 +1164,45 @@ def test_guard_fails_closed_on_shell_commands_read_from_stdin(
     assert "scripts/with_pim_board.sh" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash /dev/fd/3",
+        "bash /dev/fd/3 3<<<'python3 pim_check.py --plan smoke'",
+        "sh /proc/self/fd/4",
+        "dash /proc/thread-self/fd/5",
+        "zsh /proc/123/fd/6",
+        "bash /proc/self/fd/../fd/7",
+        "sh //dev/fd/8",
+        "timeout 30m bash /dev/fd/9",
+        "env -i bash /proc/self/fd/10",
+    ],
+)
+def test_guard_fails_closed_on_runtime_fd_shell_scripts(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash /tmp/fd/3",
+        "bash -- /tmp/fd/3",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "bash /dev/fd/3",
+    ],
+)
+def test_guard_allows_ordinary_or_wrapped_shell_scripts(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
 def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() -> None:
     result = _run_guard(
         "scripts/with_pim_board.sh --for 30m --purpose safe -- true; "
