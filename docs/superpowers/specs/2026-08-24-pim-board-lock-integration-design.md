@@ -242,6 +242,12 @@ Before classifying a non-Python command as unrelated, the guard parses GNU
 reparses `eval` arguments as a command string, and reparses command strings
 passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 
+GNU `env -C`/`--chdir` changes only its descendant command's working-directory
+context. The guard therefore removes the relative-wrapper exemption through
+split-string expansion, nested `env`, and recursively inspected launchers while
+continuing to permit the repository-absolute wrapper. That child-only state is
+not carried into a later segment of the parent shell command.
+
 For util-linux `flock`, direct command argv is classified recursively and the
 `-c`/`--command` form is reparsed as a shell command string. A sole numeric file
 descriptor is the documented non-launching form and remains allowed; missing,

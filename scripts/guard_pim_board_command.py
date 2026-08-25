@@ -649,7 +649,9 @@ def _expand_env_split_string(
     return index
 
 
-def _skip_env_short_options(tokens: list[str], index: int) -> int:
+def _skip_env_short_options(
+    tokens: list[str], index: int
+) -> tuple[int, bool]:
     cluster = tokens[index][1:]
     position = 0
     while position < len(cluster):
@@ -669,26 +671,35 @@ def _skip_env_short_options(tokens: list[str], index: int) -> int:
             operand = tokens[index + 1]
             consumed = 2
         if option == "S":
-            return _expand_env_split_string(tokens, index, operand, consumed)
-        return index + consumed
-    return index + 1
+            return (
+                _expand_env_split_string(tokens, index, operand, consumed),
+                False,
+            )
+        return index + consumed, option == "C"
+    return index + 1, False
 
 
-def _skip_env_options(tokens: list[str], index: int) -> int:
+def _skip_env_options(tokens: list[str], index: int) -> tuple[int, bool]:
+    changes_directory = False
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
-            return index + 1
+            return index + 1, changes_directory
         if token == "-":
             index += 1
             continue
         if not token.startswith("-"):
-            return index
+            return index, changes_directory
         if not token.startswith("--"):
-            index = _skip_env_short_options(tokens, index)
+            index, short_changes_directory = _skip_env_short_options(
+                tokens, index
+            )
+            changes_directory = (
+                changes_directory or short_changes_directory
+            )
             continue
         if token in {"--help", "--version"}:
-            return len(tokens)
+            return len(tokens), changes_directory
         if token in ENV_LONG_OPTIONS:
             index += 1
             continue
@@ -707,13 +718,15 @@ def _skip_env_options(tokens: list[str], index: int) -> int:
                     tokens, index, operand, consumed
                 )
             else:
+                if option == "--chdir":
+                    changes_directory = True
                 index += consumed
             continue
         if option in ENV_LONG_OPTIONS_WITH_OPTIONAL_VALUE:
             index += 1
             continue
         raise ValueError(f"unsupported env option: {token}")
-    return index
+    return index, changes_directory
 
 
 def _skip_command_options(tokens: list[str], index: int) -> Optional[int]:
@@ -748,9 +761,10 @@ def _skip_leading_redirections(tokens: list[str], index: int) -> int:
     return index
 
 
-def _command_index(tokens: list[str]) -> Optional[int]:
+def _command_context(tokens: list[str]) -> tuple[Optional[int], bool]:
     index = 0
     allow_assignments = True
+    changes_directory = False
     while index < len(tokens):
         if allow_assignments:
             while index < len(tokens):
@@ -762,21 +776,28 @@ def _command_index(tokens: list[str]) -> Optional[int]:
                     break
                 index = redirected_index
         if index >= len(tokens):
-            return None
+            return None, changes_directory
         executable = _basename(tokens[index])
         if executable == "env":
-            index = _skip_env_options(tokens, index + 1)
+            index, env_changes_directory = _skip_env_options(
+                tokens, index + 1
+            )
+            changes_directory = changes_directory or env_changes_directory
             allow_assignments = True
             continue
         if executable == "command":
             command_index = _skip_command_options(tokens, index + 1)
             if command_index is None:
-                return None
+                return None, changes_directory
             index = command_index
             allow_assignments = False
             continue
-        return index
-    return None
+        return index, changes_directory
+    return None, changes_directory
+
+
+def _command_index(tokens: list[str]) -> Optional[int]:
+    return _command_context(tokens)[0]
 
 
 def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str], list[str]]:
@@ -2322,9 +2343,12 @@ def _segment_is_blocked(
     tokens = _shell_command_tokens(tokens)
     if not tokens:
         return False
-    command_index = _command_index(tokens)
+    command_index, env_changes_directory = _command_context(tokens)
     if command_index is None:
         return False
+    relative_wrapper_allowed = (
+        relative_wrapper_allowed and not env_changes_directory
+    )
     executable_token = _require_static_token(
         tokens[command_index], "command executable"
     )

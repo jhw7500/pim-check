@@ -34,6 +34,10 @@
   분류기로 검증해 동적 실행 대상 우회를 막되, `printf`·pytest의 데이터 인자와 정식
   wrapper 내부 placeholder는 허용한다. ANSI-C escape나 미종결 인용, 종료자가 없는
   `find` 실행 action은 정확한 shell 해석을 추측하지 않고 fail-closed 처리한다.
+  GNU `env -C`/`--chdir`가 자식의 작업 디렉터리를 바꾸면 중첩 launcher 아래까지
+  상대 wrapper 면제를 제거하고 저장소 절대 경로만 허용한다. 이 변경은 `env -S`
+  확장과 중첩 `env`에도 누적되지만, 부모 shell의 후속 명령 세그먼트에는 전파되지
+  않는다.
   procps-ng `watch`는 `-x`의 직접 exec 자식과 기본 `sh -c` 명령 문자열을 각각 기존
   재귀 분류기로 검사하며, 미지원 옵션·값 또는 자식 누락은 fail-closed 처리한다.
   util-linux `taskset`은 CPU mask/list 뒤 실행 자식을 재귀 검사하고, `--pid`/`-p`

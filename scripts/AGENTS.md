@@ -40,6 +40,11 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 | `auto_overnight.sh` | 다음 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
 | `auto_weekend.sh` | 월요일 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
 
+`env -C`/`--chdir`는 그 자식 실행 문맥에서만 상대 wrapper 면제를 제거한다.
+이 상태는 `env -S`, 중첩 `env`, 다른 launcher의 자식까지 전달되며 저장소 절대
+wrapper는 계속 허용한다. `env`가 끝난 뒤 부모 shell의 다음 세그먼트에는 전달하지
+않는다.
+
 `guard_pim_board_command.py`는 `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤
 positional operand를 해석하지 않고 모두 fail-closed 처리한다. operand가 없는
 `-c` 문자열만 기존 재귀 분류를 유지한다. executable, Python script/module,

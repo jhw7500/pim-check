@@ -1111,6 +1111,62 @@ def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "env -C /tmp scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "env -C/tmp scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "env -iC /tmp timeout 30m scripts/with_pim_board.sh --for 30m "
+        "--purpose x -- python3 pim_check.py --plan smoke",
+        "env --chdir /tmp scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "env --chdir=/tmp scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "command env -C /tmp scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "timeout 30m env --chdir=/tmp scripts/with_pim_board.sh --for 30m "
+        "--purpose x -- python3 pim_check.py --plan smoke",
+        "env -S'-C /tmp scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke'",
+        "env -C /tmp env -i scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_blocks_relative_wrapper_after_env_directory_change(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"env -C /tmp {ROOT / 'scripts' / 'with_pim_board.sh'} "
+        "--for 30m --purpose x -- python3 pim_check.py --plan smoke",
+        f"env --chdir=/tmp timeout 30m "
+        f"{ROOT / 'scripts' / 'with_pim_board.sh'} --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "env -C /tmp /bin/printf %s safe",
+        "env -i scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke",
+        "env -C /tmp /bin/true && scripts/with_pim_board.sh --for 30m "
+        "--purpose x -- python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "env -C /tmp python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_allows_safe_env_directory_contexts(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "timeout 30m",
         "nohup",
         "bash -c",
