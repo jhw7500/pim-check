@@ -16,7 +16,7 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`setsid`·`sudo`·`timeout`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`taskset`·`setsid`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -26,6 +26,9 @@
   `find` 실행 action은 정확한 shell 해석을 추측하지 않고 fail-closed 처리한다.
   procps-ng `watch`는 `-x`의 직접 exec 자식과 기본 `sh -c` 명령 문자열을 각각 기존
   재귀 분류기로 검사하며, 미지원 옵션·값 또는 자식 누락은 fail-closed 처리한다.
+  util-linux `taskset`은 CPU mask/list 뒤 실행 자식을 재귀 검사하고, `--pid`/`-p`
+  조회·변경 모드는 실행 자식이 없는 형태로 구분한다. 미지원 옵션과 잘못된 피연산자
+  개수는 fail-closed 처리한다.
   single quote·escape로 보호돼 lease 획득 후
   자식에게 전달되는 치환은 허용한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을
   수행하는 standalone `test_vflip_frame_compare.sh`도 직접 실행을 막는다. 축약할 수

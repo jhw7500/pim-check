@@ -206,7 +206,7 @@ unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
-`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `setsid`, `sudo`,
+`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `setsid`, `sudo`,
 `timeout`, and `nohup` command operands, reparses `eval` arguments as a command string, and
 reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
@@ -222,6 +222,11 @@ Procps-ng `watch` options are parsed before its child is classified. Direct
 children are rejoined and passed through shell-command classification to match
 `watch`'s `sh -c` behavior. Unsupported options and missing values or children
 fail closed; help/version and canonical wrapped children remain allowed.
+Util-linux `taskset` options are parsed before its operands. Execution mode
+skips the CPU mask or list and recursively classifies the following command,
+while `--pid`/`-p` query and update forms have no child command. Unknown
+options, missing operands, and extra PID-mode operands fail closed; terminal
+help/version forms remain allowed.
 Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
 before that recursive classification. ANSI-C escape sequences and unterminated
 forms fail closed instead of approximating Bash decoding; quoted or escaped

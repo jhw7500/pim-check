@@ -224,6 +224,25 @@ def test_guard_blocks_board_commands_launched_by_watch(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "taskset 0x1 python3 pim_check.py --plan smoke",
+        "taskset -c 0 python3 run_comprehensive_verify.py",
+        "taskset --cpu-list 0 python3 pim_check.py --plan=smoke",
+        "taskset -ac 0 python3 run_comprehensive_verify.py",
+        "taskset -- 0x1 python3 pim_check.py --plan smoke",
+        "taskset 0x1 scripts/test_vflip_frame_compare.sh",
+        "timeout 30m taskset 0x1 python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_taskset(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "scripts/with_pim_board.sh --for 30m --purpose manual -- python3 pim_check.py --plan smoke",
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
@@ -382,6 +401,30 @@ def test_guard_allows_safe_watch_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "taskset 0x1 printf %s safe",
+        "taskset -c 0 pytest -q tests/test_plan_load.py",
+        "taskset -p 123",
+        "taskset -p 0x1 123",
+        "taskset -pc 0 123",
+        "taskset --pid --cpu-list 0 123",
+        "taskset --help",
+        "taskset --version",
+        "taskset -h",
+        "taskset -V",
+        "taskset 0x1 scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_allows_safe_taskset_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -502,6 +545,28 @@ def test_guard_fails_closed_on_malformed_find_execution_actions(
     ],
 )
 def test_guard_fails_closed_on_malformed_watch_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "taskset",
+        "taskset --",
+        "taskset 0x1",
+        "taskset -c",
+        "taskset --cpu-list",
+        "taskset -p",
+        "taskset --pid --",
+        "taskset -p 0x1 123 extra",
+        "taskset -x 0x1 true",
+        "taskset --unknown 0x1 true",
+    ],
+)
+def test_guard_fails_closed_on_malformed_taskset_commands(command: str) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2

@@ -87,6 +87,10 @@ WATCH_LONG_OPTIONS = {
 }
 WATCH_TERMINAL_SHORT_OPTIONS = {"h", "v"}
 WATCH_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+TASKSET_SHORT_OPTIONS = {"a", "c"}
+TASKSET_LONG_OPTIONS = {"--all-tasks", "--cpu-list"}
+TASKSET_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+TASKSET_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
 SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
@@ -815,6 +819,53 @@ def _watch_command_index(
     return index, exec_direct
 
 
+def _taskset_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    pid_mode = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in TASKSET_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in TASKSET_LONG_OPTIONS:
+            index += 1
+            continue
+        if token == "--pid":
+            pid_mode = True
+            index += 1
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported taskset option: {token}")
+        terminal = False
+        for option in token[1:]:
+            if option in TASKSET_SHORT_OPTIONS:
+                continue
+            if option == "p":
+                pid_mode = True
+                continue
+            if option in TASKSET_TERMINAL_SHORT_OPTIONS:
+                terminal = True
+                continue
+            raise ValueError(f"unsupported taskset option: -{option}")
+        if terminal:
+            return None
+        index += 1
+    operand_count = len(tokens) - index
+    if pid_mode:
+        if operand_count not in {1, 2}:
+            raise ValueError("taskset --pid requires a pid and optional affinity")
+        return None
+    if operand_count < 2:
+        raise ValueError("taskset requires an affinity and command")
+    return index + 1
+
+
 def _builtin_command_index(
     tokens: list[str], command_index: int
 ) -> Optional[int]:
@@ -1085,6 +1136,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
             return _segment_is_blocked(tokens[child_index:], depth + 1)
         return _command_is_blocked(
             " ".join(tokens[child_index:]), depth + 1
+        )
+    if executable == "taskset":
+        child_index = _taskset_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
         )
     if executable in SHELLS:
         child_command, child_script = _shell_child(tokens, command_index)
