@@ -67,6 +67,8 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "bash scripts/test_vflip_frame_compare.sh",
         "eval 'python3 pim_check.py --plan smoke'",
         "eval python3 pim_check.py --plan smoke",
+        "source scripts/test_vflip_frame_compare.sh",
+        ". scripts/test_vflip_frame_compare.sh",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -109,6 +111,10 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "eval 'printf %s safe'",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "eval 'python3 pim_check.py --plan smoke'",
+        "source /home/jhw/.config/jhw-control/control.env",
+        ". /home/jhw/.config/jhw-control/control.env",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "source scripts/test_vflip_frame_compare.sh",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:

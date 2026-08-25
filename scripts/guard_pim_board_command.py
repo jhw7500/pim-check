@@ -447,6 +447,10 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
         return False
+    if executable == "source" or tokens[command_index] == ".":
+        if command_index + 1 >= len(tokens):
+            return False
+        return _basename(tokens[command_index + 1]) in HARDWARE_RUNNERS
     if executable == "eval":
         if command_index + 1 >= len(tokens):
             return False

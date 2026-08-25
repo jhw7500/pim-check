@@ -219,8 +219,8 @@ classifier before a board wrapper is exempted. Single-quoted or escaped
 substitutions intentionally passed to the wrapped child remain valid, while a
 wrapper argument expanded before lease acquisition cannot bypass the guard. The
 standalone runner inventory also includes `test_vflip_frame_compare.sh`; both
-direct execution and a shell positional-script invocation require the lease
-wrapper.
+direct execution, a shell positional-script invocation, and `source`/`.` of the
+runner require the lease wrapper.
 
 Shell grouping tokens (`()`, `{}`) are command boundaries, and command-bearing
 control prefixes such as `if`, `then`, `while`, and `do` are reduced before the
