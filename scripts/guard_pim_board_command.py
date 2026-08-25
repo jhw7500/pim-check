@@ -1114,6 +1114,22 @@ def _shell_command_tokens(tokens: list[str]) -> list[str]:
     return tokens
 
 
+def _segment_changes_directory(tokens: list[str]) -> bool:
+    tokens = _shell_command_tokens(tokens)
+    if not tokens:
+        return False
+    command_index = _command_index(tokens)
+    if command_index is None:
+        return False
+    executable = _basename(tokens[command_index])
+    if executable == "builtin":
+        child_index = _builtin_command_index(tokens, command_index)
+        if child_index is None:
+            return False
+        executable = _basename(tokens[child_index])
+    return executable in {"cd", "pushd", "popd"}
+
+
 def _find_child_commands(
     tokens: list[str], command_index: int
 ) -> Iterator[list[str]]:
@@ -1139,20 +1155,28 @@ def _find_child_commands(
         index = command_end + 1
 
 
-def _find_child_is_blocked(tokens: list[str], depth: int) -> bool:
-    if _segment_is_blocked(tokens, depth):
+def _find_child_is_blocked(
+    tokens: list[str], depth: int, relative_wrapper_allowed: bool
+) -> bool:
+    if _segment_is_blocked(tokens, depth, relative_wrapper_allowed):
         return True
     if not any("{}" in token for token in tokens):
         return False
     return any(
         _segment_is_blocked(
-            [token.replace("{}", target) for token in tokens], depth
+            [token.replace("{}", target) for token in tokens],
+            depth,
+            relative_wrapper_allowed,
         )
         for target in FIND_PLACEHOLDER_EXECUTION_TARGETS
     )
 
 
-def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
+def _segment_is_blocked(
+    tokens: list[str],
+    depth: int = 0,
+    relative_wrapper_allowed: bool = True,
+) -> bool:
     if depth > MAX_LAUNCHER_DEPTH:
         raise ValueError("launcher nesting is too deep")
     tokens = _shell_command_tokens(tokens)
@@ -1164,6 +1188,13 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
         if _is_canonical_board_wrapper(tokens[command_index]):
+            if (
+                not relative_wrapper_allowed
+                and not PurePosixPath(tokens[command_index]).is_absolute()
+            ):
+                raise ValueError(
+                    "relative PIM board wrapper path after directory change"
+                )
             return False
         raise ValueError("non-canonical PIM board wrapper path")
     if executable == "source" or tokens[command_index] == ".":
@@ -1177,54 +1208,60 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         if command_index + 1 >= len(tokens):
             return False
         return _command_is_blocked(
-            " ".join(tokens[command_index + 1 :]), depth + 1
+            " ".join(tokens[command_index + 1 :]),
+            depth + 1,
+            relative_wrapper_allowed,
         )
     if executable == "exec":
         child_index = _exec_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "timeout":
         child_index = _timeout_command_index(tokens, command_index)
-        return _segment_is_blocked(tokens[child_index:], depth + 1)
+        return _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
     if executable == "nohup":
         child_index = _nohup_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "nice":
         child_index = _nice_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "stdbuf":
         child_index = _stdbuf_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "xargs":
         child_index = _xargs_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "setsid":
         child_index = _setsid_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "builtin":
         child_index = _builtin_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "sudo":
         child_index = _sudo_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "find":
         return any(
-            _find_child_is_blocked(child, depth + 1)
+            _find_child_is_blocked(
+                child, depth + 1, relative_wrapper_allowed
+            )
             for child in _find_child_commands(tokens, command_index)
         )
     if executable == "watch":
@@ -1232,24 +1269,30 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         if child_index is None:
             return False
         if exec_direct:
-            return _segment_is_blocked(tokens[child_index:], depth + 1)
+            return _segment_is_blocked(
+                tokens[child_index:], depth + 1, relative_wrapper_allowed
+            )
         return _command_is_blocked(
-            " ".join(tokens[child_index:]), depth + 1
+            " ".join(tokens[child_index:]),
+            depth + 1,
+            relative_wrapper_allowed,
         )
     if executable == "taskset":
         child_index = _taskset_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "chrt":
         child_index = _chrt_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable in SHELLS:
         child_command, child_script = _shell_child(tokens, command_index)
         if child_command is not None:
-            return _command_is_blocked(child_command, depth + 1)
+            return _command_is_blocked(
+                child_command, depth + 1, relative_wrapper_allowed
+            )
         return child_script in HARDWARE_RUNNERS
     if executable in HARDWARE_RUNNERS:
         return True
@@ -1265,18 +1308,33 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     )
 
 
-def _command_is_blocked(command: str, depth: int = 0) -> bool:
+def _command_is_blocked(
+    command: str,
+    depth: int = 0,
+    relative_wrapper_allowed: bool = True,
+) -> bool:
     if depth > MAX_LAUNCHER_DEPTH:
         raise ValueError("launcher nesting is too deep")
     command = _normalize_ansi_c_quotes(command)
+    segments = list(_segments(command))
+    substitutions_allow_relative = relative_wrapper_allowed and not any(
+        _segment_changes_directory(segment) for segment in segments
+    )
     if any(
-        _command_is_blocked(substitution, depth + 1)
+        _command_is_blocked(
+            substitution, depth + 1, substitutions_allow_relative
+        )
         for substitution in _shell_substitutions(command)
     ):
         return True
-    return any(
-        _segment_is_blocked(segment, depth) for segment in _segments(command)
-    )
+    for segment in segments:
+        if _segment_is_blocked(
+            segment, depth, relative_wrapper_allowed
+        ):
+            return True
+        if _segment_changes_directory(segment):
+            relative_wrapper_allowed = False
+    return False
 
 
 def command_is_blocked(command: str) -> bool:

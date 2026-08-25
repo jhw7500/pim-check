@@ -29,6 +29,12 @@ MIN_LEASE_RELEASE_MARGIN_SECONDS = 60
 
 FAKE_CONTROL = """#!/usr/bin/env bash
 set -u
+if [[ "${1:-}" == "board" && "${2:-}" == "status" ]]; then
+    [[ -r "$FAKE_JHW_ACTIVE" ]] || exit 3
+    IFS= read -r active_session < "$FAKE_JHW_ACTIVE"
+    printf '{"command":"board status","result":{"boards":[{"board_id":"%s","holders":[{"holder_id":"hold-test","session":"%s","mode":"exclusive","purpose":"test","acquired_at":"2026-08-25T00:00:00.000Z","granted_until":"2026-08-26T00:00:00.000Z","liveness":"alive","expired":false,"overstay":false,"extended_after_expiry":false}],"reservations":[]}]}}\\n' "$3" "$active_session"
+    exit 0
+fi
 {
     printf 'CONFIG=%s\\n' "${FAKE_CONFIG_LOADED:-}"
     printf 'ARG=%s\\n' "$@"
@@ -36,12 +42,25 @@ set -u
 if [[ -n "${FAKE_CONTROL_EXIT:-}" ]]; then
     exit "$FAKE_CONTROL_EXIT"
 fi
+active_session=""
+arguments=("$@")
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+    if [[ "${arguments[$index]}" == "--session" ]]; then
+        active_session="${arguments[$((index + 1))]}"
+        break
+    fi
+done
+[[ -n "$active_session" ]] || exit 96
+printf '%s\\n' "$active_session" > "$FAKE_JHW_ACTIVE"
 while [[ $# -gt 0 && "$1" != "--" ]]; do
     shift
 done
 [[ "${1:-}" == "--" ]] || exit 97
 shift
-exec "$@"
+"$@"
+child_exit=$?
+rm -f -- "$FAKE_JHW_ACTIVE"
+exit "$child_exit"
 """
 
 
@@ -53,9 +72,29 @@ def _control_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     config.write_text("FAKE_CONFIG_LOADED=from-config\n", encoding="utf-8")
     log = tmp_path / "control-args.log"
     env = os.environ.copy()
-    for key in ("PIM_BOARD_LOCK_HELD", "PIM_BOARD_SESSION", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_REPOSITORY", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
+    for key in (
+        "PIM_BOARD_LOCK_HELD",
+        "PIM_BOARD_LOCK_OWNER_PID",
+        "PIM_BOARD_LOCK_SESSION",
+        "PIM_BOARD_LOCK_BOARD_ID",
+        "PIM_BOARD_SESSION",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_REPOSITORY",
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+    ):
         env.pop(key, None)
-    env.update({"HOME": str(tmp_path), "USER": "pytest-user", "JHW_CONTROL_BIN": str(control), "JHW_CONTROL_ENV": str(config), "FAKE_JHW_LOG": str(log)})
+    env.update(
+        {
+            "HOME": str(tmp_path),
+            "USER": "pytest-user",
+            "JHW_CONTROL_BIN": str(control),
+            "JHW_CONTROL_ENV": str(config),
+            "FAKE_JHW_LOG": str(log),
+            "FAKE_JHW_ACTIVE": str(tmp_path / "active-session"),
+        }
+    )
     return env, log
 
 
@@ -66,7 +105,27 @@ def _logged_args(log: Path) -> list[str]:
 def test_wrapper_loads_config_acquires_exclusive_and_preserves_child_exit(tmp_path: Path) -> None:
     env, log = _control_env(tmp_path)
     env["PIM_BOARD_SESSION"] = "pytest-session"
-    result = subprocess.run([str(WRAPPER), "--for", "30m", "--purpose", "pytest wrapper", "--", "sh", "-c", 'test "$PIM_BOARD_LOCK_HELD" = 1; exit 7'], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--for",
+            "30m",
+            "--purpose",
+            "pytest wrapper",
+            "--",
+            "sh",
+            "-c",
+            'set -u; test "$PIM_BOARD_LOCK_HELD" = 1; '
+            'test -n "$PIM_BOARD_LOCK_OWNER_PID"; '
+            'test "$PIM_BOARD_LOCK_SESSION" = pytest-session; '
+            'test "$PIM_BOARD_LOCK_BOARD_ID" = pim; exit 7',
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 7
     assert log.read_text(encoding="utf-8").splitlines()[0] == "CONFIG=from-config"
     args = _logged_args(log)
@@ -74,7 +133,15 @@ def test_wrapper_loads_config_acquires_exclusive_and_preserves_child_exit(tmp_pa
     assert args[args.index("--for") + 1] == "30m"
     assert args[args.index("--session") + 1] == "pytest-session"
     assert args[args.index("--purpose") + 1] == "pytest wrapper"
-    assert args[-6:] == ["--", "env", "PIM_BOARD_LOCK_HELD=1", "sh", "-c", 'test "$PIM_BOARD_LOCK_HELD" = 1; exit 7']
+    child_index = args.index("--")
+    child = args[child_index + 1 :]
+    assert child[:2] == ["env", "PIM_BOARD_LOCK_HELD=1"]
+    assert re.fullmatch(r"PIM_BOARD_LOCK_OWNER_PID=\d+", child[2])
+    assert child[3:5] == [
+        "PIM_BOARD_LOCK_SESSION=pytest-session",
+        "PIM_BOARD_LOCK_BOARD_ID=pim",
+    ]
+    assert child[5:7] == ["sh", "-c"]
 
 
 def test_wrapper_derives_github_session_and_passes_long_lease(tmp_path: Path) -> None:
@@ -511,11 +578,64 @@ def test_wrapper_propagates_board_busy_without_starting_child(tmp_path: Path) ->
     assert not marker.exists()
 
 
-def test_wrapper_reuses_existing_marker_without_control_files(tmp_path: Path) -> None:
+def test_wrapper_does_not_trust_a_caller_supplied_marker(tmp_path: Path) -> None:
+    child_started = tmp_path / "child-started"
     env = os.environ.copy()
     env.update({"PIM_BOARD_LOCK_HELD": "1", "JHW_CONTROL_BIN": str(tmp_path / "missing-control"), "JHW_CONTROL_ENV": str(tmp_path / "missing.env")})
-    result = subprocess.run([str(WRAPPER), "--for", "30m", "--purpose", "nested", "--", "sh", "-c", "exit 9"], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--for",
+            "30m",
+            "--purpose",
+            "forged marker",
+            "--",
+            "sh",
+            "-c",
+            f"touch {child_started}",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 64
+    assert not child_started.exists()
+
+
+def test_wrapper_reuses_a_verified_active_lease_for_nested_calls(tmp_path: Path) -> None:
+    env, log = _control_env(tmp_path)
+    env["PIM_BOARD_SESSION"] = "pytest:nested"
+
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--for",
+            "30m",
+            "--purpose",
+            "outer",
+            "--",
+            str(WRAPPER),
+            "--for",
+            "30m",
+            "--purpose",
+            "inner",
+            "--",
+            "sh",
+            "-c",
+            "exit 9",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
     assert result.returncode == 9
+    assert log.read_text(encoding="utf-8").count("CONFIG=") == 1
 
 
 @pytest.mark.parametrize("missing, message", [("config", "not readable"), ("binary", "not executable")])
@@ -590,6 +710,12 @@ def test_auto_chain_fails_visibly_when_legacy_plan_is_running(tmp_path: Path) ->
     scripts.mkdir(parents=True)
     automation = scripts / "auto_chain.sh"
     shutil.copy2(ROOT / "scripts" / "auto_chain.sh", automation)
+    _write_executable(
+        scripts / "with_pim_board.sh",
+        "#!/bin/sh\n"
+        'test "${1:-}" = --check-held && exit 0\n'
+        "exit 99\n",
+    )
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -627,6 +753,48 @@ exit 1
 
     assert result.returncode == 75
     assert "legacy" in result.stdout.lower()
+
+
+def test_auto_chain_does_not_trust_a_caller_supplied_marker(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    automation = scripts / "auto_chain.sh"
+    shutil.copy2(ROOT / "scripts" / "auto_chain.sh", automation)
+    _write_executable(
+        scripts / "with_pim_board.sh",
+        "#!/bin/sh\n"
+        'test "${1:-}" = --check-held && exit 1\n'
+        "exit 4\n",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    unsafe_entry = tmp_path / "unsafe-entry"
+    _write_executable(
+        fake_bin / "pgrep",
+        f"#!/bin/sh\ntouch {unsafe_entry}\nexit 0\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PIM_BOARD_LOCK_HELD": "1",
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(automation)],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode == 4
+    assert not unsafe_entry.exists()
 
 
 @pytest.mark.parametrize("script_name", ["auto_overnight.sh", "auto_weekend.sh"])

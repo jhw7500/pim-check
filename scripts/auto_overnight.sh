@@ -17,7 +17,7 @@ SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
 BOARD_WRAPPER="$SCRIPT_DIR/with_pim_board.sh"
 TARGET_END=${PIM_AUTOMATION_TARGET_END:-$(date -d 'tomorrow 09:00' +%s)}
 
-if [[ "${PIM_BOARD_LOCK_HELD:-}" != "1" ]]; then
+if ! "$BOARD_WRAPPER" --check-held; then
     export PIM_AUTOMATION_TARGET_END="$TARGET_END"
     TARGET_UNTIL=$(date -d "@$TARGET_END" -Iseconds)
     exec "$BOARD_WRAPPER" \

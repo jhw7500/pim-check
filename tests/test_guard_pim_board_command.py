@@ -542,6 +542,26 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
     assert result.returncode == 2
 
 
+def test_guard_blocks_relative_wrapper_after_directory_change() -> None:
+    result = _run_guard(
+        "cd /tmp && scripts/with_pim_board.sh --for 30m --purpose x -- "
+        "python3 pim_check.py --plan smoke"
+    )
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
+    result = _run_guard(
+        f"cd /tmp && {ROOT / 'scripts' / 'with_pim_board.sh'} "
+        "--for 30m --purpose x -- python3 pim_check.py --plan smoke"
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
 @pytest.mark.parametrize(
     "command",
     [

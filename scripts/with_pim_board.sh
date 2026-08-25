@@ -14,13 +14,96 @@ die() {
     exit 64
 }
 
+lock_marker_has_coordinates() {
+    [[ "${PIM_BOARD_LOCK_HELD:-}" == "1" ]] &&
+        [[ "${PIM_BOARD_LOCK_OWNER_PID:-}" =~ ^[1-9][0-9]*$ ]] &&
+        [[ -n "${PIM_BOARD_LOCK_SESSION:-}" ]] &&
+        [[ -n "${PIM_BOARD_LOCK_BOARD_ID:-}" ]]
+}
+
+lock_owner_is_ancestor() {
+    local owner_pid="$1"
+    local current_pid="$PPID"
+    local stat_line stat_tail parent_pid
+
+    while [[ "$current_pid" =~ ^[1-9][0-9]*$ ]] && ((current_pid > 1)); do
+        [[ "$current_pid" == "$owner_pid" ]] && return 0
+        [[ -r "/proc/$current_pid/stat" ]] || return 1
+        IFS= read -r stat_line < "/proc/$current_pid/stat" || return 1
+        stat_tail="${stat_line##*) }"
+        parent_pid="${stat_tail#* }"
+        parent_pid="${parent_pid%% *}"
+        current_pid="$parent_pid"
+    done
+    return 1
+}
+
+lock_owner_runs_board_with() {
+    local owner_pid="$1"
+    local expected_board="$2"
+    local -a owner_arguments=()
+    local index
+
+    [[ -r "/proc/$owner_pid/cmdline" ]] || return 1
+    mapfile -d '' -t owner_arguments < "/proc/$owner_pid/cmdline" || return 1
+    for ((index = 0; index + 2 < ${#owner_arguments[@]}; index++)); do
+        if [[ "${owner_arguments[$index]}" == "board" ]] &&
+            [[ "${owner_arguments[$((index + 1))]}" == "with" ]] &&
+            [[ "${owner_arguments[$((index + 2))]}" == "$expected_board" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+active_lease_matches_marker() {
+    lock_marker_has_coordinates || return 1
+
+    local owner_pid="$PIM_BOARD_LOCK_OWNER_PID"
+    local lock_session="$PIM_BOARD_LOCK_SESSION"
+    local lock_board_id="$PIM_BOARD_LOCK_BOARD_ID"
+    local status_json
+
+    [[ "$lock_board_id" == "$board_id" ]] || return 1
+    lock_owner_is_ancestor "$owner_pid" || return 1
+    lock_owner_runs_board_with "$owner_pid" "$lock_board_id" || return 1
+    status_json=$("$control_bin" board status "$lock_board_id" 2>/dev/null) || return 1
+    python3 -c '
+import json
+import sys
+
+session, board_id = sys.argv[1:]
+try:
+    boards = json.load(sys.stdin)["result"]["boards"]
+except (KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+matched = any(
+    board.get("board_id") == board_id
+    and any(
+        holder.get("session") == session
+        and holder.get("mode") == "exclusive"
+        and holder.get("liveness") == "alive"
+        and holder.get("expired") is False
+        for holder in board.get("holders", [])
+    )
+    for board in boards
+)
+raise SystemExit(0 if matched else 1)
+' "$lock_session" "$lock_board_id" <<< "$status_json"
+}
+
+check_held_only="false"
+if [[ $# -eq 1 && "$1" == "--check-held" ]]; then
+    check_held_only="true"
+fi
+
 lease_flag=""
 lease_value=""
 purpose=""
 long_lease="false"
 child=()
 
-while [[ $# -gt 0 ]]; do
+while [[ "$check_held_only" == "false" && $# -gt 0 ]]; do
     case "$1" in
         --for|--until)
             [[ $# -ge 2 ]] || die "$1 requires a value"
@@ -51,13 +134,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -n "$lease_flag" ]] || die "exactly one of --for or --until is required"
-[[ -n "$lease_value" ]] || die "$lease_flag requires a non-empty value"
-[[ -n "$purpose" ]] || die "--purpose requires a non-empty value"
-[[ ${#child[@]} -gt 0 ]] || die "child command is required after --"
-
-if [[ "${PIM_BOARD_LOCK_HELD:-}" == "1" ]]; then
-    exec "${child[@]}"
+if [[ "$check_held_only" == "false" ]]; then
+    [[ -n "$lease_flag" ]] || die "exactly one of --for or --until is required"
+    [[ -n "$lease_value" ]] || die "$lease_flag requires a non-empty value"
+    [[ -n "$purpose" ]] || die "--purpose requires a non-empty value"
+    [[ ${#child[@]} -gt 0 ]] || die "child command is required after --"
+elif ! lock_marker_has_coordinates; then
+    exit 1
 fi
 
 [[ -n "${JHW_CONTROL_ENV:-}" || -n "${HOME:-}" ]] || die "HOME or JHW_CONTROL_ENV is required"
@@ -76,6 +159,13 @@ set +a
 control_bin="${JHW_CONTROL_BIN:-$HOME/.local/bin/jhw-control}"
 [[ -x "$control_bin" ]] || die "jhw-control is not executable: $control_bin"
 
+board_id="${PIM_BOARD_ID:-pim}"
+if active_lease_matches_marker; then
+    [[ "$check_held_only" == "true" ]] && exit 0
+    exec "${child[@]}"
+fi
+[[ "$check_held_only" == "true" ]] && exit 1
+
 if [[ -n "${PIM_BOARD_SESSION:-}" ]]; then
     board_session="$PIM_BOARD_SESSION"
 elif [[ -n "${GITHUB_RUN_ID:-}" ]]; then
@@ -88,7 +178,6 @@ else
     board_session="local:${USER:-unknown}:${BASHPID}"
 fi
 
-board_id="${PIM_BOARD_ID:-pim}"
 lock_command=(
     "$control_bin" board with "$board_id"
     --mode exclusive
@@ -123,4 +212,9 @@ if [[ "$long_lease" == "true" ]]; then
     )
 fi
 
-exec "${lock_command[@]}" -- env PIM_BOARD_LOCK_HELD=1 "${lock_child[@]}"
+exec "${lock_command[@]}" -- env \
+    PIM_BOARD_LOCK_HELD=1 \
+    "PIM_BOARD_LOCK_OWNER_PID=$BASHPID" \
+    "PIM_BOARD_LOCK_SESSION=$board_session" \
+    "PIM_BOARD_LOCK_BOARD_ID=$board_id" \
+    "${lock_child[@]}"

@@ -10,6 +10,10 @@
 - busy acquisition은 기다리거나 건너뛰지 않고 즉시 exit 4로 실패한다. CI lease는
   mixed-combo 30m, comprehensive 3h, plan 12h이며, 로컬 자동화는 24h 또는 정확한
   종료 deadline을 쓰고 long lease opt-in을 명시한다.
+- 중첩 실행 표시는 조상 `board with` PID·세션·보드 좌표와 read-only status의 살아
+  있는 exclusive holder가 모두 일치할 때만 인정한다. 호출자가
+  `PIM_BOARD_LOCK_HELD=1`만 주입하면 정상 acquisition 경로로 돌아가며, 자동화
+  스크립트도 wrapper의 `--check-held` 결과 없이 self-wrap을 건너뛰지 않는다.
 - long-lease 자동화의 grant 시각은 실행 deadline으로도 적용한다. 종료 31분 전
   process group에 TERM을 보내 teardown에 30분을 허용한다. 이는 네트워크 복구 전후의
   600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
@@ -32,6 +36,8 @@
   `source`/`.`는 선택적 `--` 뒤의 standalone runner를 검사한다. util-linux
   `chrt`는 policy·scheduling 옵션을 파싱하고 실행 모드의 priority 뒤 자식을 재귀
   검사하며, PID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다.
+  앞선 `cd`·`pushd`·`popd`가 현재 디렉터리를 바꿀 수 있으면 이후 상대 wrapper
+  경로는 정본으로 보지 않고 fail-closed하며, 저장소 wrapper의 절대 경로만 허용한다.
   single quote·escape로 보호돼 lease 획득 후
   자식에게 전달되는 치환은 허용한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을
   수행하는 standalone `test_vflip_frame_compare.sh`도 직접 실행을 막는다. 축약할 수

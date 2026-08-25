@@ -97,10 +97,14 @@ The wrapper delegates acquisition and cleanup to `jhw-control board with`.
 It must not call `board wait`. A busy board therefore retains the native
 non-zero `BOARD_BUSY` result, which immediately fails CI.
 
-The wrapper executes the child with `PIM_BOARD_LOCK_HELD=1`. If a supported
-entry point is already running under that marker, a nested wrapper invocation
-executes its child directly instead of trying to acquire the same exclusive
-lease twice.
+The wrapper executes the child with `PIM_BOARD_LOCK_HELD=1` plus the owning
+`board with` PID, session, and board id. The boolean is only a hint: a nested
+wrapper skips a second acquisition only when the recorded PID is an ancestor
+running `jhw-control board with` and read-only `board status` reports the same
+live, unexpired exclusive session. A caller-supplied marker without that active
+lease evidence falls back to normal acquisition and can never directly launch
+the child. Supported automation entry points use the wrapper's `--check-held`
+probe instead of trusting the environment variable themselves.
 
 GitHub Actions `concurrency: pim-target-lock` remains in place. It cheaply
 serializes CI jobs before they reach the cross-process board lock, while the

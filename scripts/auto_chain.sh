@@ -9,7 +9,7 @@ PROJECT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
 BOARD_WRAPPER="$SCRIPT_DIR/with_pim_board.sh"
 
-if [[ "${PIM_BOARD_LOCK_HELD:-}" != "1" ]]; then
+if ! "$BOARD_WRAPPER" --check-held; then
     exec "$BOARD_WRAPPER" \
         --for 24h \
         --purpose "pim-check auto_chain" \
