@@ -139,6 +139,40 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        ">/tmp/plan.log python3 pim_check.py --plan smoke",
+        "> /tmp/plan.log python3 pim_check.py --plan smoke",
+        "2>/tmp/err python3 run_comprehensive_verify.py",
+        "2> /tmp/err python3 run_comprehensive_verify.py",
+        "{fd}>/tmp/log scripts/test_vflip_frame_compare.sh",
+        ">>/tmp/plan.log python3 pim_check.py --plan=smoke",
+        ">|/tmp/plan.log python3 pim_check.py --plan smoke",
+        "</tmp/input python3 pim_check.py --plan smoke",
+        "< /tmp/input python3 run_comprehensive_verify.py",
+        "<>/tmp/io python3 pim_check.py --plan smoke",
+        "<<<payload python3 pim_check.py --plan smoke",
+        "<<EOF python3 pim_check.py --plan smoke",
+        ">out 2>err python3 pim_check.py --plan smoke",
+        "FOO=1 >out BAR=2 python3 pim_check.py --plan smoke",
+        "env >out FOO=1 python3 pim_check.py --plan smoke",
+        "bash -c '>/tmp/plan.log python3 pim_check.py --plan smoke'",
+        "timeout 30m bash -c "
+        "'2>/tmp/err python3 run_comprehensive_verify.py'",
+        "cd /tmp && >/tmp/log scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_blocks_board_commands_after_leading_redirections(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "source -- scripts/test_vflip_frame_compare.sh",
         ". -- scripts/test_vflip_frame_compare.sh",
         "builtin source -- scripts/test_vflip_frame_compare.sh",
@@ -511,6 +545,42 @@ def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        ">/tmp/safe.log printf %s safe",
+        "> /tmp/safe.log pytest -q tests/test_plan_load.py",
+        ">>/tmp/safe.log printf %s safe",
+        ">|/tmp/safe.log printf %s safe",
+        "</tmp/input printf %s safe",
+        "<>/tmp/io printf %s safe",
+        "<<EOF printf %s safe",
+        "<<-EOF printf %s safe",
+        "<<<payload printf %s safe",
+        "2>run_comprehensive_verify.py printf %s safe",
+        "2> run_comprehensive_verify.py printf %s safe",
+        ">out <in printf %s safe",
+        "FOO=1 >out BAR=2 printf %s safe",
+        "env >out FOO=1 printf %s safe",
+        "env -i >out FOO=1 printf %s safe",
+        ">/tmp/log scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke",
+        "bash -c '>/tmp/log printf %s safe'",
+        ">/tmp/log",
+        "> /tmp/log",
+        f"cd /tmp && >/tmp/log {ROOT / 'scripts' / 'with_pim_board.sh'} "
+        "--for 30m --purpose safe -- python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_allows_safe_commands_after_leading_redirections(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -c $'pytest -q tests/test_plan_load.py'",
         "printf %s \"$'python3 pim_check.py --plan smoke'\"",
         r"printf %s \$'python3 pim_check.py --plan smoke'",
@@ -816,6 +886,31 @@ def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ">",
+        "2>",
+        "{fd}>",
+        "<",
+        ">>",
+        ">|",
+        "<>",
+        "<<",
+        "<<<",
+        "2>&1 python3 pim_check.py --plan smoke",
+        "2>&1 printf %s safe",
+    ],
+)
+def test_guard_fails_closed_on_ambiguous_or_incomplete_redirections(
+    command: str,
+) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2

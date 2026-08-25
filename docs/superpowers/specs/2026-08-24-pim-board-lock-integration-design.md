@@ -214,6 +214,12 @@ Before classifying a non-Python command as unrelated, the guard parses GNU
 `ionice`, `script`, `prlimit`, `setsid`, `sudo`, `timeout`, and `nohup`
 command operands, reparses `eval` arguments as a command string, and reparses
 command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+Before locating that executable, the guard skips leading shell input/output,
+append, clobber, bidirectional, here-document, and here-string redirections.
+Attached and split targets, numeric or named file-descriptor prefixes, and
+redirections interleaved with assignments or following `env` are handled alike.
+Redirection targets remain data even when their basename matches a hardware
+runner; a missing target or ambiguous descriptor duplication fails closed.
 GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
 scanned in order and each child command is classified recursively. Escaped
 semicolon terminators and exact `{}` placeholders remain data tokens during

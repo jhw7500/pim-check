@@ -26,6 +26,7 @@ FIND_PLACEHOLDER_EXECUTION_TARGETS = tuple(
 )
 SHELL_BREAKS = set(";&|(){}\n")
 ESCAPED_SEMICOLON_MARKER = "\0"
+CLOBBER_REDIRECTION_MARKER = "\1"
 FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_EXEC_TERMINATORS = {";", "+"}
 ENV_SHORT_OPTIONS = {"i", "0", "v"}
@@ -207,7 +208,9 @@ SHELL_OPTIONS_WITH_VALUE = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
 SHELL_TERMINAL_OPTIONS = {"--help", "--version"}
 SHELL_STDIN_SCRIPTS = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
 SHELL_REDIRECTION = re.compile(
-    r"^(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})?[<>]"
+    r"^(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})?"
+    r"(?P<operator><<<|<<-?|<>|>>|>\||<|>)"
+    r"(?P<target>.*)$"
 )
 MAX_LAUNCHER_DEPTH = 8
 SHELL_COMMAND_PREFIXES = {"if", "then", "elif", "else", "while", "until", "do", "!"}
@@ -246,8 +249,36 @@ def _protect_escaped_semicolons(command: str) -> str:
     return "".join(protected)
 
 
+def _protect_clobber_redirections(command: str) -> str:
+    if CLOBBER_REDIRECTION_MARKER in command:
+        raise ValueError("shell command contains a control byte")
+    protected: list[str] = []
+    quote: Optional[str] = None
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif command.startswith(">|", index):
+            protected.extend((">", CLOBBER_REDIRECTION_MARKER))
+            index += 2
+            continue
+        protected.append(char)
+        index += 1
+    return "".join(protected)
+
+
 def _segments(command: str) -> Iterator[list[str]]:
     command = _protect_escaped_semicolons(command)
+    command = _protect_clobber_redirections(command)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -259,7 +290,11 @@ def _segments(command: str) -> Iterator[list[str]]:
                 yield segment
                 segment = []
         else:
-            segment.append(token.replace(ESCAPED_SEMICOLON_MARKER, ";"))
+            segment.append(
+                token.replace(ESCAPED_SEMICOLON_MARKER, ";").replace(
+                    CLOBBER_REDIRECTION_MARKER, "|"
+                )
+            )
     if segment:
         yield segment
 
@@ -486,13 +521,38 @@ def _skip_command_options(tokens: list[str], index: int) -> Optional[int]:
     return index
 
 
+def _skip_leading_redirections(tokens: list[str], index: int) -> int:
+    while index < len(tokens):
+        match = SHELL_REDIRECTION.fullmatch(tokens[index])
+        if match is None:
+            break
+        if match.group("target"):
+            index += 1
+            continue
+        target_index = index + 1
+        if (
+            target_index >= len(tokens)
+            or not tokens[target_index]
+            or SHELL_REDIRECTION.fullmatch(tokens[target_index])
+        ):
+            raise ValueError("shell redirection requires a target")
+        index = target_index + 1
+    return index
+
+
 def _command_index(tokens: list[str]) -> Optional[int]:
     index = 0
     allow_assignments = True
     while index < len(tokens):
         if allow_assignments:
-            while index < len(tokens) and ASSIGNMENT.match(tokens[index]):
-                index += 1
+            while index < len(tokens):
+                if ASSIGNMENT.match(tokens[index]):
+                    index += 1
+                    continue
+                redirected_index = _skip_leading_redirections(tokens, index)
+                if redirected_index == index:
+                    break
+                index = redirected_index
         if index >= len(tokens):
             return None
         executable = _basename(tokens[index])

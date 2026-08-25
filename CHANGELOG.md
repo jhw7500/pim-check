@@ -45,6 +45,10 @@
   util-linux `prlimit`은 resource·output 옵션 뒤 실행 command argv를 재귀 검사하고,
   PID 대상형과 command 없는 조회형은 실행 자식이 없는 형태로 구분한다. PID형의 잔여
   command, 누락·빈 옵션 값과 미지원 옵션은 fail-closed 처리한다.
+  실제 executable 앞의 `<`·`>`·`>>`·`>|`·`<>`·`<<`·`<<<` 리다이렉션은 숫자·변수
+  file descriptor 접두사와 붙은/분리된 대상을 구분해 건너뛴다. assignment와 `env`,
+  shell command 문자열 안에서도 같은 분류를 적용하고, 대상 파일명이 runner와 같아도
+  데이터로 취급한다. 대상 누락과 모호한 descriptor 복제형은 fail-closed 처리한다.
   앞선 `cd`·`pushd`·`popd`가 현재 디렉터리를 바꿀 수 있으면 이후 상대 wrapper
   경로는 정본으로 보지 않고 fail-closed하며, 저장소 wrapper의 절대 경로만 허용한다.
   single quote·escape로 보호돼 lease 획득 후
