@@ -229,10 +229,15 @@ unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
-`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `chrt`,
+`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `flock`, `watch`, `taskset`, `chrt`,
 `ionice`, `script`, `prlimit`, `setsid`, `sudo`, `timeout`, and `nohup`
 command operands, reparses `eval` arguments as a command string, and reparses
 command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+
+For util-linux `flock`, direct command argv is classified recursively and the
+`-c`/`--command` form is reparsed as a shell command string. A sole numeric file
+descriptor is the documented non-launching form and remains allowed; missing,
+ambiguous, or unsupported launcher forms fail closed.
 Before locating that executable, the guard skips leading shell input/output,
 append, clobber, bidirectional, here-document, and here-string redirections.
 Attached and split targets, numeric or named file-descriptor prefixes, and

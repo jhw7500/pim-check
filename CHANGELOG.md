@@ -24,7 +24,7 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·`find`·`flock`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -59,6 +59,10 @@
   util-linux 2.37.2 `unshare`는 namespace·mapping·root·working-directory 옵션 뒤의
   program argv를 재귀 검사한다. program이 없어 기본 shell로 전환되는 형태와 누락·빈
   옵션 값, 미지원 옵션은 fail-closed 처리한다.
+  같은 버전의 `flock`은 file/directory lock 뒤의 직접 command argv와 `-c` shell
+  문자열을 각각 재귀 검사하고, 숫자 file descriptor만 사용하는 무실행 형식은
+  허용한다. lock·command·옵션 값 누락, 중복 `-c`, 잔여 인자와 미지원 옵션은
+  fail-closed 처리한다.
   실제 executable 앞의 `<`·`>`·`>>`·`>|`·`<>`·`<<`·`<<<` 리다이렉션은 숫자·변수
   file descriptor 접두사와 붙은/분리된 대상을 구분해 건너뛴다. assignment와 `env`,
   shell command 문자열 안에서도 같은 분류를 적용하고, 대상 파일명이 runner와 같아도

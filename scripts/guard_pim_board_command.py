@@ -75,6 +75,25 @@ SETSID_SHORT_OPTIONS = {"c", "f", "w"}
 SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
 SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 SETSID_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+FLOCK_SHORT_OPTIONS = set("Fexnosu")
+FLOCK_SHORT_OPTIONS_WITH_VALUE = {"E", "w"}
+FLOCK_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+FLOCK_LONG_OPTIONS = {
+    "--no-fork",
+    "--exclusive",
+    "--nb",
+    "--nonblock",
+    "--close",
+    "--shared",
+    "--unlock",
+    "--verbose",
+}
+FLOCK_LONG_OPTIONS_WITH_VALUE = {
+    "--conflict-exit-code",
+    "--wait",
+    "--timeout",
+}
+FLOCK_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 UNSHARE_NAMESPACE_SHORT_OPTIONS = set("imnpuUCT")
 UNSHARE_SHORT_OPTIONS = {"f", "r", "c"}
 UNSHARE_SHORT_OPTIONS_WITH_VALUE = {"R", "w", "S", "G"}
@@ -929,6 +948,115 @@ def _setsid_command_index(
     return index
 
 
+def _skip_flock_short_options(
+    tokens: list[str], index: int
+) -> tuple[int, Optional[str], bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in FLOCK_TERMINAL_SHORT_OPTIONS:
+            return index + 1, None, True
+        if option in FLOCK_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option == "c":
+            command = cluster[position + 1 :]
+            if command:
+                return index + 1, command, False
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError("flock -c requires a command")
+            return index + 2, tokens[index + 1], False
+        if option in FLOCK_SHORT_OPTIONS_WITH_VALUE:
+            operand = cluster[position + 1 :]
+            if operand:
+                return index + 1, None, False
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError(f"flock -{option} requires an operand")
+            return index + 2, None, False
+        raise ValueError(f"unsupported flock option: -{option}")
+    return index + 1, None, False
+
+
+def _flock_child(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[int], Optional[str]]:
+    index = command_index + 1
+    lock_operand: Optional[str] = None
+    shell_command: Optional[str] = None
+    options_enabled = True
+
+    while index < len(tokens):
+        token = tokens[index]
+        if options_enabled and token == "--":
+            options_enabled = False
+            index += 1
+            continue
+        if options_enabled and token != "-" and token.startswith("-"):
+            if not token.startswith("--"):
+                index, command, terminal = _skip_flock_short_options(
+                    tokens, index
+                )
+                if terminal:
+                    return None, None
+                if command is not None:
+                    if shell_command is not None:
+                        raise ValueError("flock accepts only one shell command")
+                    shell_command = command
+                continue
+            option, separator, operand = token.partition("=")
+            if option in FLOCK_TERMINAL_LONG_OPTIONS:
+                if separator:
+                    raise ValueError(f"unsupported flock option: {token}")
+                return None, None
+            if option in FLOCK_LONG_OPTIONS:
+                if separator:
+                    raise ValueError(f"unsupported flock option: {token}")
+                index += 1
+                continue
+            if option == "--command":
+                if separator:
+                    command = operand
+                    index += 1
+                else:
+                    if index + 1 >= len(tokens):
+                        raise ValueError("flock --command requires a command")
+                    command = tokens[index + 1]
+                    index += 2
+                if not command:
+                    raise ValueError("flock --command requires a command")
+                if shell_command is not None:
+                    raise ValueError("flock accepts only one shell command")
+                shell_command = command
+                continue
+            if option in FLOCK_LONG_OPTIONS_WITH_VALUE:
+                if separator:
+                    if not operand:
+                        raise ValueError(f"{option} requires an operand")
+                    index += 1
+                else:
+                    if index + 1 >= len(tokens) or not tokens[index + 1]:
+                        raise ValueError(f"{option} requires an operand")
+                    index += 2
+                continue
+            raise ValueError(f"unsupported flock option: {token}")
+        if lock_operand is None:
+            lock_operand = token
+            index += 1
+            continue
+        if shell_command is not None:
+            raise ValueError("flock -c does not accept command arguments")
+        return index, None
+
+    if lock_operand is None:
+        raise ValueError("flock requires a lock operand")
+    if shell_command is not None:
+        return None, shell_command
+    if re.fullmatch(r"\d+", lock_operand):
+        return None, None
+    raise ValueError("flock requires a command for a file or directory lock")
+
+
 def _skip_unshare_short_options(tokens: list[str], index: int) -> tuple[int, bool]:
     cluster = tokens[index][1:]
     position = 0
@@ -1738,6 +1866,15 @@ def _segment_is_blocked(
         )
     if executable == "setsid":
         child_index = _setsid_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "flock":
+        child_index, child_command = _flock_child(tokens, command_index)
+        if child_command is not None:
+            return _command_is_blocked(
+                child_command, depth + 1, relative_wrapper_allowed
+            )
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
