@@ -20,8 +20,10 @@
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
-  검사한다. ANSI-C escape나 미종결 인용, 종료자가 없는 `find` 실행 action은 정확한
-  shell 해석을 추측하지 않고 fail-closed 처리한다.
+  검사한다. `find`의 `{}`는 알려진 보드 변경 실행 대상으로 치환될 가능성도 기존
+  분류기로 검증해 동적 실행 대상 우회를 막되, `printf`·pytest의 데이터 인자와 정식
+  wrapper 내부 placeholder는 허용한다. ANSI-C escape나 미종결 인용, 종료자가 없는
+  `find` 실행 action은 정확한 shell 해석을 추측하지 않고 fail-closed 처리한다.
   single quote·escape로 보호돼 lease 획득 후
   자식에게 전달되는 치환은 허용한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을
   수행하는 standalone `test_vflip_frame_compare.sh`도 직접 실행을 막는다. 축약할 수

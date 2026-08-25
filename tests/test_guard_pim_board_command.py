@@ -176,6 +176,12 @@ def test_guard_fails_closed_on_bash_ansi_c_escape_sequences(
         "find . -maxdepth 0 -exec python3 pim_check.py --plan smoke {} +",
         "find . -maxdepth 0 -exec sh -c "
         "'python3 pim_check.py --plan smoke' \\;",
+        "find . -name pim_check.py -exec python3 {} --plan smoke \\;",
+        "find . -name pim_check.py -exec {} --plan smoke \\;",
+        "find . -name run_comprehensive_verify.py -exec python3 {} \\;",
+        "find . -name pim_check.py -exec timeout 30m "
+        "python3 ./{} --plan smoke \\;",
+        "find . -name pim_check.py -exec sh -c '{} --plan smoke' \\;",
     ],
 )
 def test_guard_blocks_board_commands_launched_by_find(command: str) -> None:

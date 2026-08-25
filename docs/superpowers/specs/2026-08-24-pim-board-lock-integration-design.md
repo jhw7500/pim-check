@@ -212,7 +212,11 @@ reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
 scanned in order and each child command is classified recursively. Escaped
 semicolon terminators and exact `{}` placeholders remain data tokens during
-shell segmentation; empty commands or missing `;`/`+` terminators fail closed.
+shell segmentation. Actions containing `{}` are additionally classified with
+each known board-mutating executable as a possible substitution, preventing a
+matched pathname from becoming a dynamic execution target while preserving
+benign data arguments and the canonical lease wrapper. Empty commands or
+missing `;`/`+` terminators fail closed.
 Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
 before that recursive classification. ANSI-C escape sequences and unterminated
 forms fail closed instead of approximating Bash decoding; quoted or escaped

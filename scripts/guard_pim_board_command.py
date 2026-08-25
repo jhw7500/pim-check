@@ -21,6 +21,9 @@ HARDWARE_RUNNERS = {
     "run_failed_retry.py",
     "test_vflip_frame_compare.sh",
 }
+FIND_PLACEHOLDER_EXECUTION_TARGETS = tuple(
+    sorted(HARDWARE_RUNNERS | {"pim_check.py", "pim-check", "pim_check"})
+)
 SHELL_BREAKS = set(";&|(){}\n")
 ESCAPED_SEMICOLON_MARKER = "\0"
 FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
@@ -901,6 +904,19 @@ def _find_child_commands(
         index = command_end + 1
 
 
+def _find_child_is_blocked(tokens: list[str], depth: int) -> bool:
+    if _segment_is_blocked(tokens, depth):
+        return True
+    if not any("{}" in token for token in tokens):
+        return False
+    return any(
+        _segment_is_blocked(
+            [token.replace("{}", target) for token in tokens], depth
+        )
+        for target in FIND_PLACEHOLDER_EXECUTION_TARGETS
+    )
+
+
 def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     if depth > MAX_LAUNCHER_DEPTH:
         raise ValueError("launcher nesting is too deep")
@@ -970,7 +986,7 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "find":
         return any(
-            _segment_is_blocked(child, depth + 1)
+            _find_child_is_blocked(child, depth + 1)
             for child in _find_child_commands(tokens, command_index)
         )
     if executable in SHELLS:
