@@ -30,6 +30,7 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
     [
         "python3 pim_check.py --plan smoke --host 192.168.214.4",
         "python3 -m pim_check --plan smoke",
+        "python3 -mpim_check --plan smoke",
         "pim-check --plan smoke",
         "python3 run_mixed_combo_verify.py",
         "python3 run_comprehensive_verify.py",
@@ -77,6 +78,7 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         'env -S "printf %s safe"',
         "env -S'printf %s safe'",
         'python3 -W ignore -c "print(\"safe\")"',
+        "python3 -mjson.tool --help",
         "command -v python3 pim_check.py --plan smoke",
         "rg run_comprehensive_verify.py",
         "pytest -q tests/test_plan_load.py",

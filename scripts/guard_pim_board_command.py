@@ -198,11 +198,17 @@ def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str]
             if index + 1 >= len(tokens):
                 raise ValueError("-c requires a command operand")
             return None, []
-        if token == "-m":
-            if index + 1 >= len(tokens):
-                raise ValueError("-m requires a module operand")
-            if index + 1 < len(tokens) and tokens[index + 1] == "pim_check":
-                return "pim_check.py", tokens[index + 2 :]
+        if token == "-m" or token.startswith("-m"):
+            if token == "-m":
+                if index + 1 >= len(tokens):
+                    raise ValueError("-m requires a module operand")
+                module = tokens[index + 1]
+                arguments = tokens[index + 2 :]
+            else:
+                module = token[2:]
+                arguments = tokens[index + 1 :]
+            if module == "pim_check":
+                return "pim_check.py", arguments
             return None, []
         if token in PYTHON_OPTIONS_WITH_VALUE:
             if index + 1 >= len(tokens):
