@@ -113,6 +113,69 @@ SETARCH_LONG_OPTIONS = {
     "--verbose",
 }
 SETARCH_TERMINAL_LONG_OPTIONS = {"--help", "--list", "--version"}
+START_STOP_DAEMON_ACTION_SHORT_OPTIONS = {
+    "S": "start",
+    "K": "stop",
+    "T": "status",
+}
+START_STOP_DAEMON_SHORT_OPTIONS = {"t", "o", "q", "b", "C", "m", "v"}
+START_STOP_DAEMON_SHORT_OPTIONS_WITH_VALUE = {
+    "p",
+    "x",
+    "n",
+    "u",
+    "g",
+    "s",
+    "R",
+    "a",
+    "c",
+    "r",
+    "d",
+    "O",
+    "N",
+    "P",
+    "I",
+    "k",
+}
+START_STOP_DAEMON_TERMINAL_SHORT_OPTIONS = {"H", "V"}
+START_STOP_DAEMON_ACTION_LONG_OPTIONS = {
+    "--start": "start",
+    "--stop": "stop",
+    "--status": "status",
+}
+START_STOP_DAEMON_LONG_OPTIONS = {
+    "--test",
+    "--oknodo",
+    "--quiet",
+    "--background",
+    "--notify-await",
+    "--no-close",
+    "--make-pidfile",
+    "--remove-pidfile",
+    "--verbose",
+}
+START_STOP_DAEMON_LONG_OPTIONS_WITH_VALUE = {
+    "--pid",
+    "--ppid",
+    "--pidfile",
+    "--exec",
+    "--name",
+    "--user",
+    "--group",
+    "--signal",
+    "--retry",
+    "--startas",
+    "--chuid",
+    "--chroot",
+    "--chdir",
+    "--notify-timeout",
+    "--output",
+    "--nicelevel",
+    "--procsched",
+    "--iosched",
+    "--umask",
+}
+START_STOP_DAEMON_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 UNSHARE_NAMESPACE_SHORT_OPTIONS = set("imnpuUCT")
 UNSHARE_SHORT_OPTIONS = {"f", "r", "c"}
 UNSHARE_SHORT_OPTIONS_WITH_VALUE = {"R", "w", "S", "G"}
@@ -1117,6 +1180,137 @@ def _setarch_command_index(
     return index
 
 
+def _start_stop_daemon_child(
+    tokens: list[str], command_index: int
+) -> Optional[list[str]]:
+    index = command_index + 1
+    action: Optional[str] = None
+    startas: Optional[str] = None
+    executable: Optional[str] = None
+    test_mode = False
+    chroot_mode = False
+    arguments: list[str] = []
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            arguments = tokens[index + 1 :]
+            break
+        if token == "-" or not token.startswith("-"):
+            raise ValueError(
+                "start-stop-daemon has an unexpected operand before --"
+            )
+        if token in START_STOP_DAEMON_TERMINAL_LONG_OPTIONS:
+            return None
+
+        option, separator, operand = token.partition("=")
+        if option in START_STOP_DAEMON_ACTION_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported start-stop-daemon option: {token}")
+            if action is not None:
+                raise ValueError("start-stop-daemon command is duplicated")
+            action = START_STOP_DAEMON_ACTION_LONG_OPTIONS[option]
+            index += 1
+            continue
+        if option in START_STOP_DAEMON_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported start-stop-daemon option: {token}")
+            test_mode = test_mode or option == "--test"
+            index += 1
+            continue
+        if option in START_STOP_DAEMON_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                operand = tokens[index + 1]
+                index += 2
+            if option == "--startas":
+                if startas is not None:
+                    raise ValueError("start-stop-daemon startas is duplicated")
+                startas = operand
+            elif option == "--exec":
+                if executable is not None:
+                    raise ValueError("start-stop-daemon exec is duplicated")
+                executable = operand
+            elif option == "--chroot":
+                chroot_mode = True
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported start-stop-daemon option: {token}")
+
+        cluster = token[1:]
+        position = 0
+        next_index = index + 1
+        terminal = False
+        while position < len(cluster):
+            short_option = cluster[position]
+            if short_option in START_STOP_DAEMON_ACTION_SHORT_OPTIONS:
+                if action is not None:
+                    raise ValueError("start-stop-daemon command is duplicated")
+                action = START_STOP_DAEMON_ACTION_SHORT_OPTIONS[short_option]
+                position += 1
+                continue
+            if short_option in START_STOP_DAEMON_TERMINAL_SHORT_OPTIONS:
+                terminal = True
+                position += 1
+                continue
+            if short_option in START_STOP_DAEMON_SHORT_OPTIONS:
+                test_mode = test_mode or short_option == "t"
+                position += 1
+                continue
+            if short_option not in START_STOP_DAEMON_SHORT_OPTIONS_WITH_VALUE:
+                raise ValueError(
+                    f"unsupported start-stop-daemon option: -{short_option}"
+                )
+            attached = cluster[position + 1 :]
+            if attached:
+                operand = attached
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(
+                        f"start-stop-daemon -{short_option} requires an operand"
+                    )
+                operand = tokens[index + 1]
+                next_index = index + 2
+            if short_option == "a":
+                if startas is not None:
+                    raise ValueError("start-stop-daemon startas is duplicated")
+                startas = operand
+            elif short_option == "x":
+                if executable is not None:
+                    raise ValueError("start-stop-daemon exec is duplicated")
+                executable = operand
+            elif short_option == "r":
+                chroot_mode = True
+            position = len(cluster)
+        if terminal:
+            return None
+        index = next_index
+
+    if action is None:
+        raise ValueError("start-stop-daemon requires a command")
+    if action != "start":
+        if startas is not None or arguments:
+            raise ValueError(
+                "start-stop-daemon non-start command cannot launch a program"
+            )
+        return None
+
+    program = startas or executable
+    if program is None:
+        raise ValueError("start-stop-daemon --start requires a program")
+    _require_static_token(program, "start-stop-daemon program")
+    if test_mode:
+        return None
+    if chroot_mode:
+        raise ValueError("start-stop-daemon chroot program path is ambiguous")
+    return [program, *arguments]
+
+
 def _skip_unshare_short_options(tokens: list[str], index: int) -> tuple[int, bool]:
     cluster = tokens[index][1:]
     position = 0
@@ -1944,6 +2138,13 @@ def _segment_is_blocked(
         )
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "start-stop-daemon":
+        child = _start_stop_daemon_child(tokens, command_index)
+        return child is not None and _segment_is_blocked(
+            child,
+            depth + 1,
+            relative_wrapper_allowed=False,
         )
     if executable == "unshare":
         child_index = _unshare_command_index(tokens, command_index)

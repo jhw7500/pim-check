@@ -24,7 +24,7 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`start-stop-daemon`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -67,6 +67,11 @@
   personality 옵션 뒤의 program argv를 재귀 검사한다. program이 없어 기본 shell로
   전환되는 형태와 미지원 옵션은 fail-closed 처리하며, 별도 coreutils `arch` 명령은
   launcher로 오인하지 않는다.
+  dpkg 1.21.1 `start-stop-daemon --start`는 `--startas`를 우선하고 없으면 `--exec`을
+  실행 프로그램으로 사용하므로, 선택된 프로그램과 `--` 뒤 argv를 함께 재귀 검사한다.
+  `--stop`·`--status`·help/version·`--test`는 실행 자식이 없는 형식으로 구분한다.
+  기본 작업 디렉터리 변경 뒤 상대 wrapper는 면제하지 않으며, chroot 시작과 누락·충돌·
+  미지원 옵션은 fail-closed 처리한다.
   실제 executable 앞의 `<`·`>`·`>>`·`>|`·`<>`·`<<`·`<<<` 리다이렉션은 숫자·변수
   file descriptor 접두사와 붙은/분리된 대상을 구분해 건너뛴다. assignment와 `env`,
   shell command 문자열 안에서도 같은 분류를 적용하고, 대상 파일명이 runner와 같아도

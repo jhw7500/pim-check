@@ -125,6 +125,27 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "linux64 -R python3 run_comprehensive_verify.py",
         "i386 python3 -m pim_check --plan smoke",
         "x86_64 python3 pim_check.py --plan smoke",
+        "start-stop-daemon --start --name pimproofxyz "
+        "--startas /usr/bin/python3 -- pim_check.py --plan smoke",
+        "start-stop-daemon --start --exec /usr/bin/python3 -- "
+        "pim_check.py --plan smoke",
+        "start-stop-daemon --start --startas=/usr/bin/python3 -- "
+        "-m pim_check --plan smoke",
+        "start-stop-daemon -S -a /bin/sh -- -c "
+        "'python3 pim_check.py --plan smoke'",
+        "start-stop-daemon -Sqa/usr/bin/python3 -- "
+        "run_comprehensive_verify.py",
+        "start-stop-daemon -Sx/usr/bin/python3 -- "
+        "pim_check.py --plan smoke",
+        "start-stop-daemon --start --exec /bin/true "
+        "--startas /usr/bin/env -- python3 pim_check.py --plan smoke",
+        "start-stop-daemon --start --background --notify-await "
+        "--notify-timeout 30 --startas /usr/bin/python3 -- "
+        "pim_check.py --plan smoke",
+        "start-stop-daemon --start --startas "
+        "./run_comprehensive_verify.py",
+        "timeout 30m start-stop-daemon --start "
+        "--startas /usr/bin/python3 -- pim_check.py --plan smoke",
         "builtin exec python3 pim_check.py --plan smoke",
         "builtin eval 'python3 pim_check.py --plan smoke'",
         "builtin source scripts/test_vflip_frame_compare.sh",
@@ -630,6 +651,28 @@ def test_guard_fails_closed_on_interactive_script_commands(
         "setarch linux64 python3 pim_check.py --plan smoke",
         "setarch linux64 scripts/with_pim_board.sh --for 30m "
         "--purpose safe -- python3 pim_check.py --plan smoke",
+        "start-stop-daemon --start --name safe "
+        "--startas /usr/bin/printf -- %s safe",
+        "start-stop-daemon -Sqa/usr/bin/printf -- %s safe",
+        "start-stop-daemon --start --exec=/usr/bin/pytest -- "
+        "-q tests/test_plan_load.py",
+        "start-stop-daemon --start --exec /usr/bin/python3 "
+        "--startas /bin/true -- pim_check.py --plan smoke",
+        "start-stop-daemon --start --test "
+        "--startas /usr/bin/python3 -- pim_check.py --plan smoke",
+        "start-stop-daemon --start --test --chroot /tmp "
+        "--startas /usr/bin/python3 -- pim_check.py --plan smoke",
+        "start-stop-daemon --stop --exec /usr/bin/python3 --name safe",
+        "start-stop-daemon -K -x /usr/bin/python3 -n safe",
+        "start-stop-daemon --status --name safe",
+        "start-stop-daemon -T -p /tmp/safe.pid",
+        "start-stop-daemon --help",
+        "start-stop-daemon --version",
+        "start-stop-daemon -H",
+        "start-stop-daemon -V",
+        f"start-stop-daemon --start --startas "
+        f"{ROOT / 'scripts' / 'with_pim_board.sh'} -- --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
         "builtin printf %s safe",
         "builtin command -v python3 pim_check.py --plan smoke",
         "builtin",
@@ -1043,6 +1086,31 @@ def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
         "linux64",
         "linux64 --",
         "linux64 -Q true",
+        "start-stop-daemon",
+        "start-stop-daemon --",
+        "start-stop-daemon --start",
+        "start-stop-daemon -S",
+        "start-stop-daemon --test",
+        "start-stop-daemon --start --startas",
+        "start-stop-daemon --start --startas=",
+        "start-stop-daemon --start --exec",
+        "start-stop-daemon --start --exec=",
+        "start-stop-daemon --unknown",
+        "start-stop-daemon --start --stop --startas /bin/true",
+        "start-stop-daemon -SS -a /bin/true",
+        "start-stop-daemon --start --startas /bin/true unexpected",
+        "start-stop-daemon --stop --startas /bin/true",
+        "start-stop-daemon --stop --name safe -- unexpected",
+        "start-stop-daemon --start --chroot /tmp --startas /bin/true",
+        "start-stop-daemon -S -r/tmp -a/bin/true",
+        "start-stop-daemon --start --startas "
+        "scripts/with_pim_board.sh -- --for 30m --purpose unsafe -- "
+        "python3 pim_check.py --plan smoke",
+        "start-stop-daemon --start --startas /bin/true "
+        "--startas /bin/printf",
+        "start-stop-daemon --start --exec /bin/true --exec /bin/printf",
+        "start-stop-daemon -Sa",
+        "start-stop-daemon -SQ -a/bin/true",
         "builtin -x printf %s safe",
         "builtin --help",
         "sudo",
