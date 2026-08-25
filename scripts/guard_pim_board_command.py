@@ -1427,6 +1427,11 @@ def _shell_child(
         ):
             if index + 1 >= len(tokens):
                 raise ValueError(f"{_basename(tokens[command_index])} -c requires a command")
+            if index + 2 < len(tokens):
+                raise ValueError(
+                    f"{_basename(tokens[command_index])} -c positional operands "
+                    "are unsupported"
+                )
             return tokens[index + 1], None
         if token.startswith("-") and not token.startswith("--") and "s" in token[1:]:
             reads_stdin = True

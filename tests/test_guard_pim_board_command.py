@@ -219,6 +219,30 @@ def test_guard_blocks_board_commands_in_bash_ansi_c_quotes(command: str) -> None
 @pytest.mark.parametrize(
     "command",
     [
+        "bash -c 'exec \"$@\"' _ python3 pim_check.py --plan smoke",
+        "bash -c '$0 --plan smoke' pim-check",
+        "sh -c 'python3 \"$1\" --plan smoke' _ pim_check.py",
+        "dash -c 'exec \"$*\"' _ python3 run_comprehensive_verify.py",
+        "zsh -c 'exec \"${@}\"' _ scripts/test_vflip_frame_compare.sh",
+        "bash -ec 'exec \"$@\"' _ python3 pim_check.py --plan smoke",
+        "timeout 30m bash -c 'exec \"$@\"' _ python3 pim_check.py --plan smoke",
+        "bash -c 'printf %s safe' ignored",
+        "bash -c 'exec \"$@\"' _ scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_fails_closed_on_shell_c_positional_operands(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         r"bash -c $'python3\x20pim_check.py\x20--plan\x20smoke'",
         r"printf %s $'safe\n'",
     ],

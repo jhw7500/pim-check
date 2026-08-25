@@ -276,8 +276,11 @@ closed.
 Shell invocations that read commands from standard input (`-s`, no script,
 `-`, input redirections, or canonical fd-zero script paths) fail closed instead
 of attempting to reconstruct stdin. Terminal `--help` and `--version` modes
-remain allowed; `-c` strings and positional scripts retain their existing
-recursive or inventory-based classification.
+remain allowed. A `-c` command string without trailing operands retains its
+recursive classification. Any positional operand after that string fails closed
+instead of approximating shell-specific `$0`, `$@`, `$*`, numbered, or indirect
+expansion behavior. Positional scripts retain their inventory-based
+classification.
 
 Outer-shell-active `$()` and backtick command substitutions are extracted from
 the raw command with quote context intact and passed through the same bounded
