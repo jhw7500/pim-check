@@ -26,7 +26,7 @@
   종료코드는 129로 보존하되 자식 process group에는 teardown용 SIGTERM을 전달하고,
   같은 grace→KILL→reap 경로가 끝난 뒤에만 lease 부모로 복귀한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`runuser`·`timeout`·외부 GNU `time`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·moreutils `parallel`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`runuser`·`timeout`·외부 GNU `time`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -69,6 +69,9 @@
   util-linux `runuser`는 `-u` 직접 command argv와 `-c`/`--session-command` shell
   문자열을 각각 재귀 분류한다. 대화형·모호한 shell 모드와 미지원 옵션은 fail-closed,
   help/version과 무관한 자식 및 정본 wrapper 경계는 허용한다.
+  moreutils `parallel`은 `--` 앞 command가 없으면 뒤의 각 command 문자열을 shell로,
+  command가 있으면 `-n` 단위 append 또는 `-i`의 정확한 `{}` 치환 결과를 argv로 재귀
+  분류한다. 누락된 구분자, 모순 옵션과 GNU parallel 등 미지원 형식은 fail-closed한다.
   util-linux `script`는 `-c`/`--command` 문자열을 shell 분류기로 재귀 검사하고,
   logging·timing 옵션과 출력 파일은 데이터로 구분한다. command가 없는 대화형 shell,
   중복 command, 누락된 옵션 값과 미지원 옵션은 fail-closed 처리한다.

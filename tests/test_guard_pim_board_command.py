@@ -307,6 +307,58 @@ def test_guard_allows_safe_or_wrapped_runuser_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "parallel -- 'python3 pim_check.py --plan smoke'",
+        "parallel -j3 -- 'python3 run_comprehensive_verify.py'",
+        "parallel -j 3 -l 2 -- 'printf safe' "
+        "'python3 -m pim_check --plan smoke'",
+        "parallel -n2 python3 pim_check.py -- --plan smoke",
+        "parallel -n 2 python3 pim_check.py -- --plan smoke",
+        "parallel -i python3 {} --plan smoke -- pim_check.py",
+        "parallel sh -c 'python3 pim_check.py --plan smoke' -- one",
+        "timeout 30m parallel -- 'python3 pim_check.py --plan smoke'",
+        "parallel -- '$job'",
+        "parallel -j 2 printf %s safe",
+        "parallel --jobs 2 -- 'printf %s safe'",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_moreutils_parallel(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "parallel -- 'printf %s safe' 'pytest -q tests/test_plan_load.py'",
+        "parallel -j3 -- 'printf %s safe'",
+        "parallel -j 3 -l 2 -- 'printf %s safe'",
+        "parallel printf %s -- one two",
+        "parallel -n2 printf %s -- one two",
+        "parallel -i printf %s {} -- one two",
+        "parallel -h",
+        "parallel --",
+        "parallel -- 'scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke'",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- parallel -- "
+        "'python3 pim_check.py --plan smoke'",
+    ],
+)
+def test_guard_allows_safe_or_wrapped_moreutils_parallel_commands(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         ">/tmp/plan.log python3 pim_check.py --plan smoke",
         "> /tmp/plan.log python3 pim_check.py --plan smoke",
         "2>/tmp/err python3 run_comprehensive_verify.py",

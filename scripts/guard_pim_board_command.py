@@ -107,6 +107,9 @@ XARGS_REPLACEMENT_PROBES = (
     "pim_check.py --plan smoke",
     *FIND_PLACEHOLDER_EXECUTION_TARGETS,
 )
+MOREUTILS_PARALLEL_SHORT_OPTIONS = {"i"}
+MOREUTILS_PARALLEL_SHORT_OPTIONS_WITH_VALUE = {"j", "l", "n"}
+MOREUTILS_PARALLEL_TERMINAL_SHORT_OPTIONS = {"h"}
 SETSID_SHORT_OPTIONS = {"c", "f", "w"}
 SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
 SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
@@ -2611,6 +2614,110 @@ def _xargs_child_is_blocked(
     )
 
 
+def _skip_moreutils_parallel_short_options(
+    tokens: list[str],
+    index: int,
+    replace: bool,
+    arguments_per_job: int,
+) -> tuple[int, bool, int, bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in MOREUTILS_PARALLEL_TERMINAL_SHORT_OPTIONS:
+            return index + 1, replace, arguments_per_job, True
+        if option in MOREUTILS_PARALLEL_SHORT_OPTIONS:
+            replace = True
+            position += 1
+            continue
+        if option not in MOREUTILS_PARALLEL_SHORT_OPTIONS_WITH_VALUE:
+            raise ValueError(
+                f"unsupported moreutils parallel option: -{option}"
+            )
+        operand = cluster[position + 1 :]
+        if operand:
+            next_index = index + 1
+        else:
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError(f"parallel -{option} requires an operand")
+            operand = tokens[index + 1]
+            next_index = index + 2
+        if option == "n":
+            if not re.fullmatch(r"[1-9][0-9]*", operand):
+                raise ValueError("parallel -n requires a positive integer")
+            arguments_per_job = int(operand)
+        return next_index, replace, arguments_per_job, False
+    return index + 1, replace, arguments_per_job, False
+
+
+def _moreutils_parallel_context(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[list[str]], list[str], bool, int]:
+    index = command_index + 1
+    replace = False
+    arguments_per_job = 1
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--" or token == "-" or not token.startswith("-"):
+            break
+        if token.startswith("--"):
+            raise ValueError(f"unsupported moreutils parallel option: {token}")
+        index, replace, arguments_per_job, terminal = (
+            _skip_moreutils_parallel_short_options(
+                tokens, index, replace, arguments_per_job
+            )
+        )
+        if terminal:
+            return None, [], replace, arguments_per_job
+
+    command_start = index
+    while index < len(tokens) and tokens[index] != "--":
+        index += 1
+    if index >= len(tokens):
+        raise ValueError("moreutils parallel requires a -- separator")
+
+    command = tokens[command_start:index]
+    arguments = tokens[index + 1 :]
+    if replace and arguments_per_job > 1:
+        raise ValueError("parallel -i and -n greater than one are incompatible")
+    if not command and arguments_per_job > 1:
+        raise ValueError("parallel -n requires a command")
+    return command, arguments, replace, arguments_per_job
+
+
+def _moreutils_parallel_is_blocked(
+    tokens: list[str],
+    command_index: int,
+    depth: int,
+    relative_wrapper_allowed: bool,
+) -> bool:
+    command, arguments, replace, arguments_per_job = (
+        _moreutils_parallel_context(tokens, command_index)
+    )
+    if command is None or not arguments:
+        return False
+    if not command:
+        return any(
+            _command_is_blocked(
+                argument, depth, relative_wrapper_allowed
+            )
+            for argument in arguments
+        )
+
+    for start in range(0, len(arguments), arguments_per_job):
+        batch = arguments[start : start + arguments_per_job]
+        if replace:
+            child = [batch[0] if token == "{}" else token for token in command]
+        else:
+            child = [*command, *batch]
+        if _segment_is_blocked(
+            child, depth, relative_wrapper_allowed
+        ):
+            return True
+    return False
+
+
 def _segment_is_blocked(
     tokens: list[str],
     depth: int = 0,
@@ -2694,6 +2801,13 @@ def _segment_is_blocked(
         )
     if executable == "xargs":
         return _xargs_child_is_blocked(
+            tokens,
+            command_index,
+            depth + 1,
+            relative_wrapper_allowed,
+        )
+    if executable == "parallel":
+        return _moreutils_parallel_is_blocked(
             tokens,
             command_index,
             depth + 1,

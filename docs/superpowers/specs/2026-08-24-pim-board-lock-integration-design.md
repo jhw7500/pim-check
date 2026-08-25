@@ -235,7 +235,7 @@ unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
-`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `flock`, `setarch`,
+`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, moreutils `parallel`, `flock`, `setarch`,
 `start-stop-daemon`, `chroot`, `systemd-run`, `watch`, `taskset`, `chrt`, `ionice`, `script`,
 `prlimit`, `setsid`, `unshare`, `sudo`, `runuser`, `timeout`, external GNU `time`, and
 `nohup` command operands,
@@ -255,6 +255,15 @@ string, and that child is recursively classified. Interactive shell modes,
 ambiguous positional shell arguments, missing operands, and unsupported
 options fail closed; help/version, unrelated children, and canonical wrapped
 children remain allowed.
+
+For moreutils `parallel`, the required `--` separator distinguishes its two
+execution modes. With no command before the separator, each following operand
+is classified as the shell command string that `parallel` passes to `system`.
+With a command before it, the guard classifies each concrete argv produced by
+the default append behavior, `-n` argument batches, or `-i` exact `{}`
+replacement. Missing separators, contradictory options, unsupported options
+or syntaxes (including GNU parallel forms), and malformed values fail closed;
+unrelated jobs and canonical wrapper-mediated jobs remain allowed.
 
 GNU `env -C`/`--chdir` changes only its descendant command's working-directory
 context. The guard therefore removes the relative-wrapper exemption through
