@@ -179,6 +179,54 @@ START_STOP_DAEMON_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 CHROOT_LONG_OPTIONS_WITH_VALUE = {"--groups", "--userspec"}
 CHROOT_LONG_OPTIONS = {"--skip-chdir"}
 CHROOT_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+SYSTEMD_RUN_SHORT_OPTIONS = {"r", "d", "t", "P", "q", "G"}
+SYSTEMD_RUN_SHORT_OPTIONS_WITH_VALUE = {"u", "E"}
+SYSTEMD_RUN_UNTRUSTED_SHORT_OPTIONS_WITH_VALUE = {"p", "H", "M"}
+SYSTEMD_RUN_TERMINAL_SHORT_OPTIONS = {"h"}
+SYSTEMD_RUN_LONG_OPTIONS = {
+    "--no-ask-password",
+    "--scope",
+    "--slice-inherit",
+    "--remain-after-exit",
+    "--send-sighup",
+    "--same-dir",
+    "--pty",
+    "--pipe",
+    "--quiet",
+    "--on-clock-change",
+    "--on-timezone-change",
+    "--no-block",
+    "--wait",
+    "--collect",
+    "--user",
+    "--system",
+}
+SYSTEMD_RUN_LONG_OPTIONS_WITH_VALUE = {
+    "--unit",
+    "--description",
+    "--slice",
+    "--service-type",
+    "--uid",
+    "--gid",
+    "--nice",
+    "--working-directory",
+    "--setenv",
+    "--on-active",
+    "--on-boot",
+    "--on-startup",
+    "--on-unit-active",
+    "--on-unit-inactive",
+    "--on-calendar",
+}
+SYSTEMD_RUN_UNTRUSTED_LONG_OPTIONS_WITH_VALUE = {
+    "--property",
+    "--path-property",
+    "--socket-property",
+    "--timer-property",
+    "--host",
+    "--machine",
+}
+SYSTEMD_RUN_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 UNSHARE_NAMESPACE_SHORT_OPTIONS = set("imnpuUCT")
 UNSHARE_SHORT_OPTIONS = {"f", "r", "c"}
 UNSHARE_SHORT_OPTIONS_WITH_VALUE = {"R", "w", "S", "G"}
@@ -1354,6 +1402,106 @@ def _chroot_child(
     return tokens[index:], skip_chdir
 
 
+def _systemd_run_child(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[list[str]], bool]:
+    index = command_index + 1
+    scope_mode = False
+    working_directory_changed = False
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in SYSTEMD_RUN_TERMINAL_LONG_OPTIONS:
+            return None, False
+
+        option, separator, operand = token.partition("=")
+        if option in SYSTEMD_RUN_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported systemd-run option: {token}")
+            scope_mode = scope_mode or option == "--scope"
+            index += 1
+            continue
+        if option == "--shell":
+            if separator:
+                raise ValueError(f"unsupported systemd-run option: {token}")
+            raise ValueError("systemd-run --shell starts an interactive shell")
+        if option in (
+            SYSTEMD_RUN_LONG_OPTIONS_WITH_VALUE
+            | SYSTEMD_RUN_UNTRUSTED_LONG_OPTIONS_WITH_VALUE
+        ):
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                operand = tokens[index + 1]
+                index += 2
+            if option in SYSTEMD_RUN_UNTRUSTED_LONG_OPTIONS_WITH_VALUE:
+                raise ValueError(
+                    f"{option} makes systemd-run executable identity ambiguous"
+                )
+            working_directory_changed = (
+                working_directory_changed or option == "--working-directory"
+            )
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported systemd-run option: {token}")
+
+        cluster = token[1:]
+        position = 0
+        next_index = index + 1
+        terminal = False
+        while position < len(cluster):
+            short_option = cluster[position]
+            if short_option in SYSTEMD_RUN_TERMINAL_SHORT_OPTIONS:
+                terminal = True
+                position += 1
+                continue
+            if short_option == "S":
+                raise ValueError(
+                    "systemd-run -S starts an interactive shell"
+                )
+            if short_option in SYSTEMD_RUN_SHORT_OPTIONS:
+                position += 1
+                continue
+            if short_option not in (
+                SYSTEMD_RUN_SHORT_OPTIONS_WITH_VALUE
+                | SYSTEMD_RUN_UNTRUSTED_SHORT_OPTIONS_WITH_VALUE
+            ):
+                raise ValueError(
+                    f"unsupported systemd-run option: -{short_option}"
+                )
+            attached = cluster[position + 1 :]
+            if attached:
+                operand = attached
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(
+                        f"systemd-run -{short_option} requires an operand"
+                    )
+                operand = tokens[index + 1]
+                next_index = index + 2
+            if short_option in SYSTEMD_RUN_UNTRUSTED_SHORT_OPTIONS_WITH_VALUE:
+                raise ValueError(
+                    f"systemd-run -{short_option} makes executable identity ambiguous"
+                )
+            position = len(cluster)
+        if terminal:
+            return None, False
+        index = next_index
+
+    if index >= len(tokens):
+        raise ValueError("systemd-run requires an explicit command")
+    return tokens[index:], scope_mode and not working_directory_changed
+
+
 def _skip_unshare_short_options(tokens: list[str], index: int) -> tuple[int, bool]:
     cluster = tokens[index][1:]
     position = 0
@@ -2196,6 +2344,17 @@ def _segment_is_blocked(
             depth + 1,
             relative_wrapper_allowed=(
                 relative_wrapper_allowed if skip_chdir else False
+            ),
+        )
+    if executable == "systemd-run":
+        child, working_directory_inherited = _systemd_run_child(
+            tokens, command_index
+        )
+        return child is not None and _segment_is_blocked(
+            child,
+            depth + 1,
+            relative_wrapper_allowed=(
+                relative_wrapper_allowed and working_directory_inherited
             ),
         )
     if executable == "unshare":

@@ -230,7 +230,7 @@ unchanged.
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `flock`, `setarch`,
-`start-stop-daemon`, `chroot`, `watch`, `taskset`, `chrt`, `ionice`, `script`,
+`start-stop-daemon`, `chroot`, `systemd-run`, `watch`, `taskset`, `chrt`, `ionice`, `script`,
 `prlimit`, `setsid`, `unshare`, `sudo`, `timeout`, and `nohup` command operands,
 reparses `eval` arguments as a command string, and reparses command strings
 passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
@@ -256,6 +256,15 @@ classification; every alternate or dynamic root fails closed. Default chdir
 disables relative wrapper exemption, while `--skip-chdir /` preserves the
 incoming relative-path policy. A missing command would start an interactive
 shell and therefore fails closed, as do unknown or empty options.
+For systemd 249 `systemd-run`, documented options are separated from the
+transient command argv and the child is recursively classified. Relative
+wrapper exemption is preserved only for `--scope` when the incoming working
+directory is still trusted; service mode and explicit working-directory
+changes require the repository-absolute wrapper. Interactive `--shell`, a
+missing command, remote host or machine execution, arbitrary unit properties,
+and unknown or empty options fail closed because executable identity or launch
+semantics cannot be established statically. Help and version modes remain
+non-launching terminal forms.
 Before locating that executable, the guard skips leading shell input/output,
 append, clobber, bidirectional, here-document, and here-string redirections.
 Attached and split targets, numeric or named file-descriptor prefixes, and

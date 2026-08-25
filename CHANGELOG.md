@@ -24,7 +24,7 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -76,6 +76,11 @@
   유지되는 exact `/`만 자식을 재귀 검사하고 다른 root는 fail-closed 처리한다. 기본
   chdir 뒤 상대 wrapper는 면제하지 않되 `--skip-chdir /`은 기존 상대경로 정책을
   보존한다. command가 없어 interactive shell을 여는 형식과 미지원·빈 옵션도 차단한다.
+  systemd 249 `systemd-run`은 문서화된 옵션과 transient command argv를 분리해 자식을
+  재귀 검사한다. `--scope`가 호출자의 작업 디렉터리를 그대로 상속할 때만 기존 상대
+  wrapper 정책을 보존하고, service 실행이나 명시적 working-directory 변경은 절대
+  정본 wrapper만 허용한다. 대화형 `--shell`, command 누락, 원격 host/machine 및 임의
+  unit property로 실행 경로 정체가 모호한 형식과 미지원·빈 옵션은 fail-closed 처리한다.
   실제 executable 앞의 `<`·`>`·`>>`·`>|`·`<>`·`<<`·`<<<` 리다이렉션은 숫자·변수
   file descriptor 접두사와 붙은/분리된 대상을 구분해 건너뛴다. assignment와 `env`,
   shell command 문자열 안에서도 같은 분류를 적용하고, 대상 파일명이 runner와 같아도

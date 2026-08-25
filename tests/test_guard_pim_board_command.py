@@ -154,6 +154,17 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "chroot / /bin/sh -c 'python3 pim_check.py --plan smoke'",
         "chroot / /usr/bin/env python3 pim_check.py --plan smoke",
         "timeout 30m chroot / python3 pim_check.py --plan smoke",
+        "systemd-run --user --scope python3 pim_check.py --plan smoke",
+        "systemd-run --user --scope -- /usr/bin/python3 -m pim_check "
+        "--plan smoke",
+        "systemd-run -Gq --scope /bin/sh -c "
+        "'python3 run_comprehensive_verify.py'",
+        "systemd-run --description=board-run --slice qa.slice --scope "
+        "/usr/bin/env python3 pim_check.py --plan smoke",
+        "systemd-run --user --on-active=1m /usr/bin/python3 "
+        "run_smart_verify.py",
+        "timeout 30m systemd-run --user --scope python3 pim_check.py "
+        "--plan smoke",
         "builtin exec python3 pim_check.py --plan smoke",
         "builtin eval 'python3 pim_check.py --plan smoke'",
         "builtin source scripts/test_vflip_frame_compare.sh",
@@ -693,6 +704,22 @@ def test_guard_fails_closed_on_interactive_script_commands(
         "--purpose safe -- python3 pim_check.py --plan smoke",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "chroot / python3 pim_check.py --plan smoke",
+        "systemd-run --user --scope /bin/printf %s safe",
+        "systemd-run --user --scope -- /usr/bin/pytest -q "
+        "tests/test_plan_load.py",
+        "systemd-run -Gq --scope /bin/true",
+        "systemd-run -u safe-unit -E FOO=bar --scope /bin/printf %s safe",
+        "systemd-run --description=safe --slice qa.slice --scope "
+        "/bin/printf %s safe",
+        "systemd-run --on-active=1m /bin/printf %s safe",
+        "systemd-run --working-directory=/tmp /bin/printf %s safe",
+        "systemd-run --help",
+        "systemd-run --version",
+        "systemd-run -h",
+        f"systemd-run --user {ROOT / 'scripts' / 'with_pim_board.sh'} "
+        "--for 30m --purpose safe -- python3 pim_check.py --plan smoke",
+        "systemd-run --user --scope scripts/with_pim_board.sh --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
         "builtin printf %s safe",
         "builtin command -v python3 pim_check.py --plan smoke",
         "builtin",
@@ -1154,6 +1181,41 @@ def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
         f"chroot /tmp {ROOT / 'scripts' / 'with_pim_board.sh'} --for 30m "
         "--purpose unsafe -- python3 pim_check.py --plan smoke",
         "cd /tmp && chroot --skip-chdir / scripts/with_pim_board.sh "
+        "--for 30m --purpose unsafe -- python3 pim_check.py --plan smoke",
+        "systemd-run",
+        "systemd-run --",
+        "systemd-run --scope",
+        "systemd-run --shell",
+        "systemd-run -S",
+        "systemd-run --unknown /bin/true",
+        "systemd-run --unit",
+        "systemd-run --unit= /bin/true",
+        "systemd-run --description",
+        "systemd-run --description= /bin/true",
+        "systemd-run --scope=true /bin/true",
+        "systemd-run --help=true",
+        "systemd-run -u",
+        "systemd-run -E",
+        "systemd-run -x /bin/true",
+        "systemd-run -p MemoryMax=1G /bin/true",
+        "systemd-run --property=MemoryMax=1G /bin/true",
+        "systemd-run --path-property=Unit=existing.service "
+        "--on-active=1m /bin/true",
+        "systemd-run --socket-property=Service=existing.service "
+        "/bin/true",
+        "systemd-run --timer-property=Unit=existing.service "
+        "--on-active=1m /bin/true",
+        "systemd-run --host=qa-host /bin/true",
+        "systemd-run -H qa-host /bin/true",
+        "systemd-run --machine=qa-container /bin/true",
+        "systemd-run -Mqa-container /bin/true",
+        "systemd-run --on-active=1m --unit existing.service",
+        "systemd-run --user scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+        "systemd-run --scope --working-directory=/tmp "
+        "scripts/with_pim_board.sh --for 30m --purpose unsafe -- "
+        "python3 pim_check.py --plan smoke",
+        "cd /tmp && systemd-run --scope scripts/with_pim_board.sh "
         "--for 30m --purpose unsafe -- python3 pim_check.py --plan smoke",
         "builtin -x printf %s safe",
         "builtin --help",
