@@ -237,10 +237,24 @@ Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `flock`, `setarch`,
 `start-stop-daemon`, `chroot`, `systemd-run`, `watch`, `taskset`, `chrt`, `ionice`, `script`,
-`prlimit`, `setsid`, `unshare`, `sudo`, `timeout`, external GNU `time`, and
+`prlimit`, `setsid`, `unshare`, `sudo`, `runuser`, `timeout`, external GNU `time`, and
 `nohup` command operands,
 reparses `eval` arguments as a command string, and reparses command strings
 passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+
+Python module execution treats `runpy` as a launcher rather than an unrelated
+module: each following target module is classified again up to the launcher
+depth limit. Direct and `runpy`-nested module names corresponding to the
+standalone Python hardware runners are blocked alongside `pim_check` plan
+arguments. Unrelated static modules and canonical wrapper-mediated execution
+remain allowed.
+
+For util-linux `runuser`, documented options are separated from either the
+`-u` direct command argv or the `-c`/`--command`/`--session-command` shell
+string, and that child is recursively classified. Interactive shell modes,
+ambiguous positional shell arguments, missing operands, and unsupported
+options fail closed; help/version, unrelated children, and canonical wrapped
+children remain allowed.
 
 GNU `env -C`/`--chdir` changes only its descendant command's working-directory
 context. The guard therefore removes the relative-wrapper exemption through

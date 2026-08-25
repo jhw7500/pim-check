@@ -22,6 +22,9 @@ HARDWARE_RUNNERS = {
     "run_failed_retry.py",
     "test_vflip_frame_compare.sh",
 }
+HARDWARE_RUNNER_MODULES = {
+    runner[:-3]: runner for runner in HARDWARE_RUNNERS if runner.endswith(".py")
+}
 FIND_PLACEHOLDER_EXECUTION_TARGETS = tuple(
     sorted(HARDWARE_RUNNERS | {"pim_check.py", "pim-check", "pim_check"})
 )
@@ -420,6 +423,25 @@ SUDO_TERMINAL_LONG_OPTIONS = {
     "--validate",
     "--version",
 }
+RUNUSER_SHORT_OPTIONS = {"m", "p", "P", "l", "f"}
+RUNUSER_SHORT_OPTIONS_WITH_VALUE = {"u", "w", "g", "G", "c", "s"}
+RUNUSER_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+RUNUSER_LONG_OPTIONS = {
+    "--preserve-environment",
+    "--login",
+    "--fast",
+    "--pty",
+}
+RUNUSER_LONG_OPTIONS_WITH_VALUE = {
+    "--user",
+    "--whitelist-environment",
+    "--group",
+    "--supp-group",
+    "--command",
+    "--session-command",
+    "--shell",
+}
+RUNUSER_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 CANONICAL_BOARD_WRAPPERS = {
     "scripts/with_pim_board.sh",
     "./scripts/with_pim_board.sh",
@@ -827,7 +849,31 @@ def _command_index(tokens: list[str]) -> Optional[int]:
     return _command_context(tokens)[0]
 
 
-def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str], list[str]]:
+def _python_module_script(
+    module: str, arguments: list[str]
+) -> tuple[Optional[str], list[str]]:
+    runpy_depth = 0
+    while module == "runpy":
+        if not arguments:
+            raise ValueError("runpy requires a module operand")
+        runpy_depth += 1
+        if runpy_depth > MAX_LAUNCHER_DEPTH:
+            raise ValueError("runpy nesting is too deep")
+        module = _require_static_token(
+            arguments[0], "runpy module operand"
+        )
+        arguments = arguments[1:]
+    if module == "pim_check":
+        return "pim_check.py", arguments
+    runner = HARDWARE_RUNNER_MODULES.get(module)
+    if runner is not None:
+        return runner, arguments
+    return None, []
+
+
+def _python_script(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[str], list[str]]:
     index = command_index + 1
     while index < len(tokens) and tokens[index].startswith("-"):
         token = tokens[index]
@@ -848,9 +894,7 @@ def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str]
                 module = token[2:]
                 arguments = tokens[index + 1 :]
             _require_static_token(module, "Python module operand")
-            if module == "pim_check":
-                return "pim_check.py", arguments
-            return None, []
+            return _python_module_script(module, arguments)
         if token in PYTHON_OPTIONS_WITH_VALUE:
             if index + 1 >= len(tokens):
                 raise ValueError(f"{token} requires an operand")
@@ -2270,6 +2314,110 @@ def _sudo_command_index(
     return index
 
 
+def _runuser_child(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[list[str]], Optional[str]]:
+    index = command_index + 1
+    user_mode = False
+    shell_mode = False
+    shell_command: Optional[str] = None
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-":
+            shell_mode = True
+            index += 1
+            continue
+        if not token.startswith("-"):
+            break
+        if token in RUNUSER_TERMINAL_LONG_OPTIONS:
+            return None, None
+
+        if token.startswith("--"):
+            option, separator, operand = token.partition("=")
+            if option in RUNUSER_LONG_OPTIONS:
+                if separator:
+                    raise ValueError(f"unsupported runuser option: {token}")
+                shell_mode = shell_mode or option in {"--login", "--fast"}
+                index += 1
+                continue
+            if option not in RUNUSER_LONG_OPTIONS_WITH_VALUE:
+                raise ValueError(f"unsupported runuser option: {token}")
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                operand = tokens[index + 1]
+                index += 2
+            if option == "--user":
+                if user_mode:
+                    raise ValueError("runuser user option is duplicated")
+                user_mode = True
+            elif option in {"--command", "--session-command"}:
+                if shell_command is not None:
+                    raise ValueError("runuser command option is duplicated")
+                shell_command = operand
+            elif option == "--shell":
+                shell_mode = True
+            continue
+
+        cluster = token[1:]
+        position = 0
+        next_index = index + 1
+        while position < len(cluster):
+            option = cluster[position]
+            if option in RUNUSER_TERMINAL_SHORT_OPTIONS:
+                return None, None
+            if option in RUNUSER_SHORT_OPTIONS:
+                shell_mode = shell_mode or option in {"l", "f"}
+                position += 1
+                continue
+            if option not in RUNUSER_SHORT_OPTIONS_WITH_VALUE:
+                raise ValueError(f"unsupported runuser option: -{option}")
+            operand = cluster[position + 1 :]
+            if operand:
+                next_index = index + 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"runuser -{option} requires an operand")
+                operand = tokens[index + 1]
+                next_index = index + 2
+            if option == "u":
+                if user_mode:
+                    raise ValueError("runuser user option is duplicated")
+                user_mode = True
+            elif option == "c":
+                if shell_command is not None:
+                    raise ValueError("runuser command option is duplicated")
+                shell_command = operand
+            elif option == "s":
+                shell_mode = True
+            position = len(cluster)
+        index = next_index
+
+    if user_mode:
+        if shell_mode or shell_command is not None:
+            raise ValueError("runuser -u cannot use shell mode options")
+        if index >= len(tokens):
+            return None, None
+        return tokens[index:], None
+
+    if shell_command is not None:
+        if shell_mode:
+            raise ValueError("runuser command and shell modes are ambiguous")
+        if len(tokens[index:]) > 1:
+            raise ValueError("runuser shell command has positional arguments")
+        return None, shell_command
+
+    raise ValueError("runuser shell mode does not identify a command")
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -2613,6 +2761,15 @@ def _segment_is_blocked(
         child_index = _sudo_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "runuser":
+        child, shell_command = _runuser_child(tokens, command_index)
+        if child is not None:
+            return _segment_is_blocked(
+                child, depth + 1, relative_wrapper_allowed
+            )
+        return shell_command is not None and _command_is_blocked(
+            shell_command, depth + 1, relative_wrapper_allowed
         )
     if executable == "find":
         return any(

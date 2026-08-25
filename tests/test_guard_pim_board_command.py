@@ -221,6 +221,92 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "python3 -m runpy pim_check --plan smoke",
+        "python3 -mrunpy pim_check --plan=smoke",
+        "python3 -m runpy runpy pim_check --pla smoke",
+        "python3 -m runpy run_comprehensive_verify",
+        "python3 -m run_comprehensive_verify",
+        "timeout 30m python3 -m runpy pim_check --plan smoke",
+    ],
+)
+def test_guard_blocks_board_modules_launched_through_runpy(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -m runpy json.tool",
+        "python3 -m json.tool",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 -m runpy pim_check --plan smoke",
+    ],
+)
+def test_guard_allows_safe_or_wrapped_runpy_modules(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "runuser -u root -- python3 pim_check.py --plan smoke",
+        "runuser --user=root python3 -m pim_check --plan smoke",
+        "runuser -uroot python3 run_comprehensive_verify.py",
+        "runuser -p -g root -G root -w PATH -u root -- "
+        "python3 pim_check.py --plan smoke",
+        "runuser --preserve-environment --group=root --supp-group=root "
+        "--whitelist-environment=PATH --user=root "
+        "python3 -m runpy pim_check --plan smoke",
+        "runuser -c 'python3 pim_check.py --plan smoke' root",
+        "runuser --session-command='python3 -m pim_check --plan smoke' root",
+        "timeout 30m runuser -u root -- python3 pim_check.py --plan smoke",
+        "runuser root",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_runuser(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "runuser -u nobody -- true",
+        "runuser --user=nobody printf %s safe",
+        "runuser -c 'printf %s safe' nobody",
+        "runuser --session-command='printf %s safe' nobody",
+        "runuser --help",
+        "runuser --version",
+        "runuser -h",
+        "runuser -V",
+        "runuser -u root -- scripts/with_pim_board.sh --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "runuser -u root -- python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_allows_safe_or_wrapped_runuser_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         ">/tmp/plan.log python3 pim_check.py --plan smoke",
         "> /tmp/plan.log python3 pim_check.py --plan smoke",
         "2>/tmp/err python3 run_comprehensive_verify.py",
