@@ -15,7 +15,7 @@
   600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
-- Claude에 커밋한 command hook은 `env` option cluster, `exec`·`eval`·`source`·`.`·
+- Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
   `nice`·`stdbuf`·`xargs`·`setsid`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   outer shell에서 활성인 `$()`·백틱 명령 치환, 그룹·조건 제어문 내부까지 검사한다.

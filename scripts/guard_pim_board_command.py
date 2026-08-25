@@ -597,6 +597,20 @@ def _setsid_command_index(
     return index
 
 
+def _builtin_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    if index >= len(tokens):
+        return None
+    if tokens[index] == "--":
+        index += 1
+        return index if index < len(tokens) else None
+    if tokens[index].startswith("-"):
+        raise ValueError(f"unsupported builtin option: {tokens[index]}")
+    return index
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -709,6 +723,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         )
     if executable == "setsid":
         child_index = _setsid_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "builtin":
+        child_index = _builtin_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )

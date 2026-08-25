@@ -102,6 +102,14 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "setsid --wait --ctty python3 run_comprehensive_verify.py",
         "setsid -- python3 pim_check.py --plan smoke",
         "nohup setsid -f python3 pim_check.py --plan smoke",
+        "builtin exec python3 pim_check.py --plan smoke",
+        "builtin eval 'python3 pim_check.py --plan smoke'",
+        "builtin source scripts/test_vflip_frame_compare.sh",
+        "builtin . scripts/test_vflip_frame_compare.sh",
+        "builtin command python3 pim_check.py --plan smoke",
+        "builtin builtin exec python3 run_comprehensive_verify.py",
+        "builtin -- exec python3 pim_check.py --plan smoke",
+        "nohup builtin exec python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -181,6 +189,13 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "setsid --version",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "setsid python3 pim_check.py --plan smoke",
+        "builtin printf %s safe",
+        "builtin command -v python3 pim_check.py --plan smoke",
+        "builtin",
+        "builtin --",
+        "builtin -- printf %s safe",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "builtin exec python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -259,6 +274,8 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "setsid --",
         "setsid -x true",
         "setsid --unknown true",
+        "builtin -x printf %s safe",
+        "builtin --help",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:
