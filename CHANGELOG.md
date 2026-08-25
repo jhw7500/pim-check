@@ -16,8 +16,10 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `exec`·`timeout`·`nohup`,
-  shell `-c`, 그룹·조건 제어문 내부까지 검사해 직접 실행을 막고 축약할 수 없는
-  복합 문법은 fail-closed 처리하지만, defense in depth일 뿐 보안 경계가 아니다.
+  shell `-c`와 positional script, `$()`·백틱 명령 치환, 그룹·조건 제어문 내부까지
+  검사한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을 수행하는 standalone
+  `test_vflip_frame_compare.sh`도 직접 실행을 막고, 축약할 수 없는 복합 문법은
+  fail-closed 처리하지만 defense in depth일 뿐 보안 경계가 아니다.
   `SIGKILL`/OOM과 영구 실행되는 web dashboard, Docker runner, non-plan CLI entry
   point는 여전히 명시적 한계로 남는다.
 - 테스트는 fake control executable만 사용하며 실제 보드를 acquire하지 않는다.

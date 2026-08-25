@@ -212,6 +212,12 @@ fail closed. Launcher inspection is recursive and fails closed after a bounded
 nesting depth; a recognized board wrapper ends inspection because that child
 already executes under the lease.
 
+Quoted `$()` and backtick command substitutions are extracted and passed back
+through the same bounded classifier, so unrelated substitutions remain valid
+while a nested plan cannot bypass the wrapper. The standalone runner inventory
+also includes `test_vflip_frame_compare.sh`; both direct execution and a shell
+positional-script invocation require the lease wrapper.
+
 Shell grouping tokens (`()`, `{}`) are command boundaries, and command-bearing
 control prefixes such as `if`, `then`, `while`, and `do` are reduced before the
 inner command is classified. Compound forms that cannot be reduced without a

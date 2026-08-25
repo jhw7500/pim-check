@@ -34,7 +34,8 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 |------|-------------|
 | `with_pim_board.sh` | 공통 exclusive lease 래퍼. mode-600 control 환경을 로드하고 사용자 로컬 `jhw-control` 절대 경로로 자식 하드웨어 명령을 실행한다. |
 | `run_with_deadline.py` | long-lease automation 자식을 lease 종료 전 TERM→teardown→KILL 순서로 종료하고 프로세스 그룹을 회수한다. |
-| `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. `env` option cluster·`exec` 등 launcher·shell `-c`·그룹/조건 제어문 내부의 직접 plan/standalone runner 실행도 차단하고, 축약 불가능한 복합 문법은 fail-closed 처리한다. 방어 심화용이며 보안 경계는 아니다. |
+| `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. `env` option cluster·`exec` 등 launcher·shell `-c`·명령 치환·그룹/조건 제어문 내부의 직접 plan/standalone runner 실행도 차단하고, 축약 불가능한 복합 문법은 fail-closed 처리한다. 방어 심화용이며 보안 경계는 아니다. |
+| `test_vflip_frame_compare.sh` | edgeconf 변경·재부팅·녹화를 수행하는 standalone vflip 비교 러너. 직접 또는 shell positional script로 실행할 때도 lease가 필요하다. |
 | `auto_chain.sh` | `smoke → comprehensive → release_next → nightly` 자동 체인. 실행 상태 생성 전 24시간 long lease로 자신을 래핑한다. |
 | `auto_overnight.sh` | 다음 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
 | `auto_weekend.sh` | 월요일 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |

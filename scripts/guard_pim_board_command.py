@@ -19,6 +19,7 @@ HARDWARE_RUNNERS = {
     "run_smart_verify.py",
     "run_channel_verify.py",
     "run_failed_retry.py",
+    "test_vflip_frame_compare.sh",
 }
 SHELL_BREAKS = set(";&|(){}\n")
 ENV_SHORT_OPTIONS = {"i", "0", "v"}
@@ -66,6 +67,61 @@ def _segments(command: str) -> Iterator[list[str]]:
             segment.append(token)
     if segment:
         yield segment
+
+
+def _dollar_substitution(command: str, start: int) -> tuple[str, int]:
+    depth = 1
+    quote: Optional[str] = None
+    escaped = False
+    index = start
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"', "`"}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return command[start:index], index + 1
+        index += 1
+    raise ValueError("unterminated shell command substitution")
+
+
+def _backtick_substitution(command: str, start: int) -> tuple[str, int]:
+    escaped = False
+    index = start
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "`":
+            return command[start:index], index + 1
+        index += 1
+    raise ValueError("unterminated shell command substitution")
+
+
+def _shell_substitutions(tokens: list[str]) -> Iterator[str]:
+    command = " ".join(tokens)
+    index = 0
+    while index < len(command):
+        if command.startswith("$(", index):
+            substitution, index = _dollar_substitution(command, index + 2)
+            yield substitution
+        elif command[index] == "`":
+            substitution, index = _backtick_substitution(command, index + 1)
+            yield substitution
+        else:
+            index += 1
 
 
 def _basename(token: str) -> str:
@@ -314,12 +370,18 @@ def _nohup_command_index(tokens: list[str], command_index: int) -> Optional[int]
     return index
 
 
-def _shell_command(tokens: list[str], command_index: int) -> Optional[str]:
+def _shell_child(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[str], Optional[str]]:
     index = command_index + 1
+    reads_stdin = False
     while index < len(tokens):
         token = tokens[index]
-        if token == "--" or not token.startswith(("-", "+")):
-            return None
+        if token == "--":
+            index += 1
+            break
+        if not token.startswith(("-", "+")):
+            break
         if token == "-c" or (
             token.startswith("-")
             and not token.startswith("--")
@@ -327,14 +389,18 @@ def _shell_command(tokens: list[str], command_index: int) -> Optional[str]:
         ):
             if index + 1 >= len(tokens):
                 raise ValueError(f"{_basename(tokens[command_index])} -c requires a command")
-            return tokens[index + 1]
+            return tokens[index + 1], None
+        if token.startswith("-") and not token.startswith("--") and "s" in token[1:]:
+            reads_stdin = True
         if token in SHELL_OPTIONS_WITH_VALUE:
             if index + 1 >= len(tokens):
                 raise ValueError(f"{token} requires an operand")
             index += 2
             continue
         index += 1
-    return None
+    if reads_stdin or index >= len(tokens):
+        return None, None
+    return None, _basename(tokens[index])
 
 
 def _shell_command_tokens(tokens: list[str]) -> list[str]:
@@ -363,6 +429,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
         return False
+    if any(
+        _command_is_blocked(substitution, depth + 1)
+        for substitution in _shell_substitutions(tokens)
+    ):
+        return True
     if executable == "exec":
         child_index = _exec_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
@@ -377,10 +448,10 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
             tokens[child_index:], depth + 1
         )
     if executable in SHELLS:
-        child_command = _shell_command(tokens, command_index)
-        return child_command is not None and _command_is_blocked(
-            child_command, depth + 1
-        )
+        child_command, child_script = _shell_child(tokens, command_index)
+        if child_command is not None:
+            return _command_is_blocked(child_command, depth + 1)
+        return child_script in HARDWARE_RUNNERS
     if executable in HARDWARE_RUNNERS:
         return True
     if executable in {"pim_check.py", "pim-check"}:
