@@ -94,6 +94,25 @@ FLOCK_LONG_OPTIONS_WITH_VALUE = {
     "--timeout",
 }
 FLOCK_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+SETARCH_EXECUTABLES = {"setarch", "i386", "linux32", "linux64", "x86_64"}
+SETARCH_SHORT_OPTIONS = set("v3BFILRSTXZ")
+SETARCH_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+SETARCH_LONG_OPTIONS = {
+    "--uname-2.6",
+    "--3gb",
+    "--4gb",
+    "--32bit",
+    "--fdpic-funcptrs",
+    "--short-inode",
+    "--addr-compat-layout",
+    "--addr-no-randomize",
+    "--whole-seconds",
+    "--sticky-timeouts",
+    "--read-implies-exec",
+    "--mmap-page-zero",
+    "--verbose",
+}
+SETARCH_TERMINAL_LONG_OPTIONS = {"--help", "--list", "--version"}
 UNSHARE_NAMESPACE_SHORT_OPTIONS = set("imnpuUCT")
 UNSHARE_SHORT_OPTIONS = {"f", "r", "c"}
 UNSHARE_SHORT_OPTIONS_WITH_VALUE = {"R", "w", "S", "G"}
@@ -1057,6 +1076,47 @@ def _flock_child(
     raise ValueError("flock requires a command for a file or directory lock")
 
 
+def _setarch_command_index(
+    tokens: list[str], command_index: int, executable: str
+) -> Optional[int]:
+    index = command_index + 1
+    if executable == "setarch" and index < len(tokens):
+        architecture = tokens[index]
+        if architecture == "-" or not architecture.startswith("-"):
+            _require_static_token(architecture, "setarch architecture")
+            index += 1
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in SETARCH_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in SETARCH_LONG_OPTIONS:
+            index += 1
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported {executable} option: {token}")
+        terminal = False
+        for option in token[1:]:
+            if option in SETARCH_SHORT_OPTIONS:
+                continue
+            if option in SETARCH_TERMINAL_SHORT_OPTIONS:
+                terminal = True
+                continue
+            raise ValueError(f"unsupported {executable} option: -{option}")
+        if terminal:
+            return None
+        index += 1
+
+    if index >= len(tokens):
+        raise ValueError(f"{executable} requires a program")
+    return index
+
+
 def _skip_unshare_short_options(tokens: list[str], index: int) -> tuple[int, bool]:
     cluster = tokens[index][1:]
     position = 0
@@ -1875,6 +1935,13 @@ def _segment_is_blocked(
             return _command_is_blocked(
                 child_command, depth + 1, relative_wrapper_allowed
             )
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable in SETARCH_EXECUTABLES:
+        child_index = _setarch_command_index(
+            tokens, command_index, executable
+        )
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
