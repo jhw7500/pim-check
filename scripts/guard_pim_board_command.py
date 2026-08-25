@@ -74,6 +74,19 @@ SETSID_SHORT_OPTIONS = {"c", "f", "w"}
 SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
 SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 SETSID_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+WATCH_SHORT_OPTIONS = {"b", "c", "e", "g", "p", "t", "w", "x"}
+WATCH_LONG_OPTIONS = {
+    "--beep",
+    "--color",
+    "--errexit",
+    "--chgexit",
+    "--precise",
+    "--no-title",
+    "--no-wrap",
+    "--exec",
+}
+WATCH_TERMINAL_SHORT_OPTIONS = {"h", "v"}
+WATCH_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
 SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
@@ -727,6 +740,81 @@ def _setsid_command_index(
     return index
 
 
+def _skip_watch_short_options(
+    tokens: list[str], index: int, exec_direct: bool
+) -> tuple[int, bool, bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in WATCH_TERMINAL_SHORT_OPTIONS:
+            return index + 1, exec_direct, True
+        if option in WATCH_SHORT_OPTIONS:
+            exec_direct = exec_direct or option == "x"
+            position += 1
+            continue
+        if option == "n":
+            attached = cluster[position + 1 :]
+            if attached:
+                return index + 1, exec_direct, False
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError("watch -n requires an interval")
+            return index + 2, exec_direct, False
+        if option == "d":
+            if cluster[position + 1 :]:
+                return index + 1, exec_direct, False
+            position += 1
+            continue
+        raise ValueError(f"unsupported watch option: -{option}")
+    return index + 1, exec_direct, False
+
+
+def _watch_command_index(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[int], bool]:
+    index = command_index + 1
+    exec_direct = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in WATCH_TERMINAL_LONG_OPTIONS:
+            return None, exec_direct
+        if token in WATCH_LONG_OPTIONS:
+            exec_direct = exec_direct or token == "--exec"
+            index += 1
+            continue
+        option, separator, operand = token.partition("=")
+        if option == "--interval":
+            if separator:
+                if not operand:
+                    raise ValueError("watch --interval requires an interval")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError("watch --interval requires an interval")
+                index += 2
+            continue
+        if option == "--differences":
+            if separator and not operand:
+                raise ValueError("watch --differences has an empty mode")
+            index += 1
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported watch option: {token}")
+        index, exec_direct, terminal = _skip_watch_short_options(
+            tokens, index, exec_direct
+        )
+        if terminal:
+            return None, exec_direct
+    if index >= len(tokens):
+        raise ValueError("watch requires a command")
+    return index, exec_direct
+
+
 def _builtin_command_index(
     tokens: list[str], command_index: int
 ) -> Optional[int]:
@@ -988,6 +1076,15 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         return any(
             _find_child_is_blocked(child, depth + 1)
             for child in _find_child_commands(tokens, command_index)
+        )
+    if executable == "watch":
+        child_index, exec_direct = _watch_command_index(tokens, command_index)
+        if child_index is None:
+            return False
+        if exec_direct:
+            return _segment_is_blocked(tokens[child_index:], depth + 1)
+        return _command_is_blocked(
+            " ".join(tokens[child_index:]), depth + 1
         )
     if executable in SHELLS:
         child_command, child_script = _shell_child(tokens, command_index)

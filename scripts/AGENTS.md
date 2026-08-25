@@ -34,7 +34,7 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 |------|-------------|
 | `with_pim_board.sh` | 공통 exclusive lease 래퍼. mode-600 control 환경을 로드하고 사용자 로컬 `jhw-control` 절대 경로로 자식 하드웨어 명령을 실행한다. |
 | `run_with_deadline.py` | long-lease automation 자식을 lease 종료 전 TERM→teardown→KILL 순서로 종료하고 프로세스 그룹을 회수한다. |
-| `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. `env` option cluster·`builtin`·`exec`·`eval`·`source`·`nice`·`stdbuf`·`xargs`·`find`·`setsid`·`sudo` 등 launcher·shell `-c`·Bash ANSI-C quote·stdin shell fail-closed·명령 치환·그룹/조건 제어문 내부의 직접 plan/standalone runner 실행도 차단한다. `find`의 실행 action을 모두 재귀 검사하고 `{}`가 알려진 보드 변경 실행 대상으로 치환될 가능성도 검사하며 정확한 저장소 wrapper 경로만 면제한다. ANSI-C escape·미종결 find action·비정규 경로·축약 불가능한 복합 문법은 fail-closed 처리한다. 방어 심화용이며 보안 경계는 아니다. |
+| `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. `env` option cluster·`builtin`·`exec`·`eval`·`source`·`nice`·`stdbuf`·`xargs`·`find`·`watch`·`setsid`·`sudo` 등 launcher·shell `-c`·Bash ANSI-C quote·stdin shell fail-closed·명령 치환·그룹/조건 제어문 내부의 직접 plan/standalone runner 실행도 차단한다. `find`의 실행 action과 placeholder 가능성을 검사하고, `watch -x`의 exec 자식과 기본 shell command를 각각 재귀 검사하며 정확한 저장소 wrapper 경로만 면제한다. ANSI-C escape·미종결 action·비정규 경로·축약 불가능한 복합 문법은 fail-closed 처리한다. 방어 심화용이며 보안 경계는 아니다. |
 | `test_vflip_frame_compare.sh` | edgeconf 변경·재부팅·녹화를 수행하는 standalone vflip 비교 러너. 직접 또는 shell positional script로 실행할 때도 lease가 필요하다. |
 | `auto_chain.sh` | `smoke → comprehensive → release_next → nightly` 자동 체인. 실행 상태 생성 전 24시간 long lease로 자신을 래핑한다. |
 | `auto_overnight.sh` | 다음 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
