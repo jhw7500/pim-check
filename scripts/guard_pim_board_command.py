@@ -111,6 +111,14 @@ CHRT_LONG_OPTIONS_WITH_VALUE = {
 }
 CHRT_TERMINAL_SHORT_OPTIONS = {"h", "m", "V"}
 CHRT_TERMINAL_LONG_OPTIONS = {"--help", "--max", "--version"}
+IONICE_SHORT_OPTIONS = {"t"}
+IONICE_SHORT_OPTIONS_WITH_VALUE = {"c", "n"}
+IONICE_TARGET_SHORT_OPTIONS_WITH_VALUE = {"p", "P", "u"}
+IONICE_LONG_OPTIONS = {"--ignore"}
+IONICE_LONG_OPTIONS_WITH_VALUE = {"--class", "--classdata"}
+IONICE_TARGET_LONG_OPTIONS_WITH_VALUE = {"--pid", "--pgid", "--uid"}
+IONICE_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+IONICE_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 SUDO_SHORT_OPTIONS = {"A", "b", "B", "E", "H", "i", "k", "n", "P", "S", "s"}
 SUDO_SHORT_OPTIONS_WITH_VALUE = {"C", "D", "g", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_TERMINAL_SHORT_OPTIONS = {"K", "l", "v", "V"}
@@ -962,6 +970,80 @@ def _chrt_command_index(
     return index + 1
 
 
+def _skip_ionice_short_options(
+    tokens: list[str], index: int, target_mode: bool
+) -> tuple[int, bool, bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in IONICE_TERMINAL_SHORT_OPTIONS:
+            return index + 1, target_mode, True
+        if option in IONICE_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option in (
+            IONICE_SHORT_OPTIONS_WITH_VALUE
+            | IONICE_TARGET_SHORT_OPTIONS_WITH_VALUE
+        ):
+            if option in IONICE_TARGET_SHORT_OPTIONS_WITH_VALUE:
+                target_mode = True
+            attached = cluster[position + 1 :]
+            if attached:
+                return index + 1, target_mode, False
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError(f"ionice -{option} requires an operand")
+            return index + 2, target_mode, False
+        raise ValueError(f"unsupported ionice option: -{option}")
+    return index + 1, target_mode, False
+
+
+def _ionice_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    target_mode = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in IONICE_TERMINAL_LONG_OPTIONS:
+            return None
+        if token in IONICE_LONG_OPTIONS:
+            index += 1
+            continue
+        option, separator, operand = token.partition("=")
+        value_options = (
+            IONICE_LONG_OPTIONS_WITH_VALUE
+            | IONICE_TARGET_LONG_OPTIONS_WITH_VALUE
+        )
+        if option in value_options:
+            if option in IONICE_TARGET_LONG_OPTIONS_WITH_VALUE:
+                target_mode = True
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                index += 2
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported ionice option: {token}")
+        index, target_mode, terminal = _skip_ionice_short_options(
+            tokens, index, target_mode
+        )
+        if terminal:
+            return None
+    if target_mode or index >= len(tokens):
+        return None
+    return index
+
+
 def _builtin_command_index(
     tokens: list[str], command_index: int
 ) -> Optional[int]:
@@ -1284,6 +1366,11 @@ def _segment_is_blocked(
         )
     if executable == "chrt":
         child_index = _chrt_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "ionice":
+        child_index = _ionice_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
         )

@@ -210,9 +210,10 @@ unchanged.
 
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
-`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `chrt`, `setsid`, `sudo`,
-`timeout`, and `nohup` command operands, reparses `eval` arguments as a command string, and
-reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+`builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `watch`, `taskset`, `chrt`,
+`ionice`, `setsid`, `sudo`, `timeout`, and `nohup` command operands, reparses
+`eval` arguments as a command string, and reparses command strings passed to
+`bash`, `dash`, `sh`, or `zsh` with `-c`.
 GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
 scanned in order and each child command is classified recursively. Escaped
 semicolon terminators and exact `{}` placeholders remain data tokens during
@@ -239,6 +240,11 @@ operands. Execution mode skips the priority and recursively classifies the
 following command, while `--pid`/`-p` query and update forms have no child.
 Unknown options, missing option values or operands, and extra PID-mode
 operands fail closed; max/help/version forms remain allowed.
+Util-linux `ionice` class, classdata, and ignore options are parsed before its
+operands. Execution-mode children are recursively classified, while
+`--pid`/`-p`, `--pgid`/`-P`, and `--uid`/`-u` query and update forms have no
+child command. Unknown options and missing values fail closed; no-argument
+query and help/version forms remain allowed.
 Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
 before that recursive classification. ANSI-C escape sequences and unterminated
 forms fail closed instead of approximating Bash decoding; quoted or escaped

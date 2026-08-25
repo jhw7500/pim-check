@@ -297,6 +297,26 @@ def test_guard_blocks_board_commands_launched_by_chrt(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "ionice -c 3 python3 pim_check.py --plan smoke",
+        "ionice -c3 python3 run_comprehensive_verify.py",
+        "ionice -t -c 2 -n 0 scripts/test_vflip_frame_compare.sh",
+        "ionice --class=idle python3 pim_check.py --plan=smoke",
+        "ionice --class best-effort --classdata=0 "
+        "python3 run_comprehensive_verify.py",
+        "ionice -- python3 pim_check.py --plan smoke",
+        "timeout 30m ionice -c 3 python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_ionice(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "scripts/with_pim_board.sh --for 30m --purpose manual -- python3 pim_check.py --plan smoke",
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
@@ -506,6 +526,34 @@ def test_guard_allows_safe_chrt_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "ionice -c 3 printf %s safe",
+        "ionice -c3 pytest -q tests/test_plan_load.py",
+        "ionice",
+        "ionice -p 123",
+        "ionice -p123 456",
+        "ionice --pid 123",
+        "ionice -P 456",
+        "ionice --pgid=456",
+        "ionice -u 1000",
+        "ionice --uid=1000",
+        "ionice --help",
+        "ionice --version",
+        "ionice -h",
+        "ionice -V",
+        "ionice -c 3 scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --plan smoke",
+    ],
+)
+def test_guard_allows_safe_ionice_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -691,6 +739,32 @@ def test_guard_fails_closed_on_malformed_taskset_commands(command: str) -> None:
     ],
 )
 def test_guard_fails_closed_on_malformed_chrt_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ionice -c",
+        "ionice -n",
+        "ionice --class",
+        "ionice --class=",
+        "ionice --classdata",
+        "ionice --classdata=",
+        "ionice -p",
+        "ionice -P",
+        "ionice -u",
+        "ionice --pid=",
+        "ionice --pgid=",
+        "ionice --uid=",
+        "ionice -x true",
+        "ionice --unknown true",
+    ],
+)
+def test_guard_fails_closed_on_malformed_ionice_commands(command: str) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2
