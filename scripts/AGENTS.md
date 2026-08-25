@@ -45,6 +45,8 @@ positional operand를 해석하지 않고 모두 fail-closed 처리한다. opera
 `-c` 문자열만 기존 재귀 분류를 유지한다. executable, Python script/module,
 shell positional/source script 및 `pim_check.py` 인자에 셸 확장 표식이 있으면
 fail-closed하며, 무관한 데이터 인자와 정본 wrapper 뒤 자식 인자는 검사하지 않는다.
+argparse가 `--plan`으로 수용하는 고유 축약 `--pl`·`--pla`도 plan 실행으로 차단하되,
+여러 옵션과 충돌해 CLI가 거부하는 `--p`는 차단하지 않는다.
 
 ### 개발 워크플로 도구 (Python)
 

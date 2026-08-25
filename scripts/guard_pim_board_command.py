@@ -24,6 +24,7 @@ HARDWARE_RUNNERS = {
 FIND_PLACEHOLDER_EXECUTION_TARGETS = tuple(
     sorted(HARDWARE_RUNNERS | {"pim_check.py", "pim-check", "pim_check"})
 )
+PIM_CHECK_PLAN_OPTIONS = {"--pl", "--pla", "--plan"}
 SHELL_BREAKS = set(";&|(){}\n")
 ESCAPED_SEMICOLON_MARKER = "\0"
 CLOBBER_REDIRECTION_MARKER = "\1"
@@ -807,7 +808,7 @@ def _pim_check_arguments_are_blocked(arguments: list[str]) -> bool:
     for argument in arguments:
         _require_static_token(argument, "pim-check argument")
     return any(
-        argument == "--plan" or argument.startswith("--plan=")
+        argument.partition("=")[0] in PIM_CHECK_PLAN_OPTIONS
         for argument in arguments
     )
 

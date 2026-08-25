@@ -50,6 +50,9 @@
   인자처럼 실행 의미를 바꾸는 토큰에 `$`·백틱·glob·brace 확장 표식이 남아 있으면
   실제 확장을 추측하지 않고 fail-closed 처리한다. 무관한 명령의 데이터 인자와 정본
   wrapper 뒤 자식 인자는 그대로 허용한다.
+  argparse가 `--plan`의 고유 축약으로 수용하는 `--pl`·`--pla`도 분리형과 `=value`
+  형식 모두 동일한 plan 실행으로 차단한다. 여러 옵션과 충돌해 CLI가 거부하는 `--p`는
+  실행 가능한 plan 철자로 오인하지 않는다.
   util-linux `script`는 `-c`/`--command` 문자열을 shell 분류기로 재귀 검사하고,
   logging·timing 옵션과 출력 파일은 데이터로 구분한다. command가 없는 대화형 shell,
   중복 command, 누락된 옵션 값과 미지원 옵션은 fail-closed 처리한다.

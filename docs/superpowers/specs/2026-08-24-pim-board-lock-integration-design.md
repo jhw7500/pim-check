@@ -342,6 +342,10 @@ Because quote context is removed during tokenization, quoted or escaped marker
 literals in those positions receive the same conservative treatment. Expansion
 markers in unrelated data arguments remain allowed, as do child arguments after
 the literal canonical board wrapper has established the lease boundary.
+The `pim_check.py` parser currently accepts the unique argparse abbreviations
+`--pl` and `--pla` for `--plan`. The guard treats their split and `=value`
+forms as plan execution too, while leaving ambiguous `--p` to the CLI's normal
+rejection path.
 
 Outer-shell-active `$()` and backtick command substitutions are extracted from
 the raw command with quote context intact and passed through the same bounded

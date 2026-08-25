@@ -32,6 +32,13 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "python3 -m pim_check --plan smoke",
         "python3 -mpim_check --plan smoke",
         "pim-check --plan smoke",
+        "python3 pim_check.py --pl smoke",
+        "python3 pim_check.py --pla smoke",
+        "python3 pim_check.py --pl=smoke",
+        "python3 pim_check.py --pla=smoke",
+        "python3 -m pim_check --pl smoke",
+        "pim-check --pla=smoke",
+        "systemd-run --user --scope python3 pim_check.py --pla smoke",
         "python3 run_mixed_combo_verify.py",
         "python3 run_comprehensive_verify.py",
         "python3 run_bps_quick.py",
@@ -578,6 +585,7 @@ def test_guard_fails_closed_on_interactive_script_commands(
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
         "python3 pim_check.py --list-plans",
+        "python3 pim_check.py --p smoke",
         'env -S "printf %s safe"',
         "env -S'printf %s safe'",
         'python3 -W ignore -c "print(\"safe\")"',
@@ -746,6 +754,8 @@ def test_guard_fails_closed_on_interactive_script_commands(
         "--purpose safe -- python3 pim_check.py --plan smoke",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "sudo python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "python3 pim_check.py --pla smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
