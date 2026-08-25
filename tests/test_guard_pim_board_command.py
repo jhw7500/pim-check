@@ -287,6 +287,91 @@ def test_guard_allows_safe_source_after_option_terminator(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "source /dev/stdin",
+        "source /dev/stdin <<< 'python3 pim_check.py --plan smoke'",
+        ". /dev/fd/0",
+        "source -- /proc/self/fd/0",
+        "builtin source /proc/thread-self/fd/3",
+        "builtin . -- /proc/123/fd/9",
+        "source /proc/self/fd/../fd/0",
+        "source //dev/stdin",
+    ],
+)
+def test_guard_blocks_runtime_fd_source_operands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "source /tmp/stdin",
+        ". /tmp/fd/0",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "source /dev/stdin",
+    ],
+)
+def test_guard_allows_non_runtime_or_wrapped_source_operands(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "xargs python3",
+        "printf 'pim_check.py --plan smoke\\n' | xargs python3",
+        "xargs python3 pim_check.py",
+        "xargs pim-check",
+        "xargs env -i",
+        "xargs -a /tmp/args python3",
+        "timeout 30m xargs python3",
+        "xargs -IITEM python3 ITEM",
+        "xargs -IITEM ITEM pim_check.py --plan smoke",
+        "xargs --replace=ITEM sh -c ITEM",
+        "xargs -iITEM python3 ITEM --plan smoke",
+        "xargs -IINSERT pyINSERT pim_check.py --plan smoke",
+        "xargs -IINSERT python3 pim_INSERT.py --plan smoke",
+    ],
+)
+def test_guard_blocks_xargs_input_that_can_complete_board_command(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "xargs printf %s",
+        "xargs --replace=ITEM printf %s ITEM",
+        "xargs -IINSERT printf %s preINSERTpost",
+        "xargs",
+        "xargs --help",
+        "xargs scripts/with_pim_board.sh --for 30m --purpose safe -- true",
+    ],
+)
+def test_guard_allows_xargs_that_cannot_cross_lease_boundary(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -c $'python3 pim_check.py --plan smoke'",
         "nohup bash -c $'python3 run_comprehensive_verify.py'",
     ],

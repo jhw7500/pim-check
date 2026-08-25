@@ -45,6 +45,11 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 wrapper는 계속 허용한다. `env`가 끝난 뒤 부모 shell의 다음 세그먼트에는 전달하지
 않는다.
 
+`source`/`.`가 런타임 file-descriptor 의사경로를 읽으면 내용을 정적으로 확인할 수
+없으므로 fail-closed한다. `xargs`는 stdin 자체를 실행하지 않고, 일반 모드에서는
+알려진 보드 실행 인자 시퀀스의 append 결과를, replace 모드에서는 marker 치환 결과를
+기존 분류기에 다시 넣는다. 무관한 데이터 명령과 정본 wrapper 경계는 허용한다.
+
 `guard_pim_board_command.py`는 `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤
 positional operand를 해석하지 않고 모두 fail-closed 처리한다. operand가 없는
 `-c` 문자열만 기존 재귀 분류를 유지한다. executable, Python script/module,

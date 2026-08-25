@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 import sys
@@ -30,6 +31,9 @@ ESCAPED_SEMICOLON_MARKER = "\0"
 CLOBBER_REDIRECTION_MARKER = "\1"
 FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_EXEC_TERMINATORS = {";", "+"}
+RUNTIME_SOURCE_FD = re.compile(
+    r"^/(?:dev/fd/[0-9]+|proc/(?:self|thread-self|[0-9]+)/fd/[0-9]+)$"
+)
 ENV_SHORT_OPTIONS = {"i", "0", "v"}
 ENV_SHORT_OPTIONS_WITH_VALUE = {"u", "C", "S"}
 ENV_LONG_OPTIONS = {
@@ -83,6 +87,23 @@ XARGS_LONG_OPTIONS_WITH_VALUE = {
     "--process-slot-var",
 }
 XARGS_LONG_OPTIONS_WITH_OPTIONAL_VALUE = {"--eof", "--replace"}
+XARGS_APPENDED_ARGUMENT_PROBES = (
+    ("python3", "pim_check.py", "--plan", "smoke"),
+    ("pim_check.py", "--plan", "smoke"),
+    ("pim_check", "--plan", "smoke"),
+    ("-m", "pim_check", "--plan", "smoke"),
+    ("--plan", "smoke"),
+    ("--plan=smoke",),
+    ("-exec", "python3", "pim_check.py", "--plan", "smoke", ";"),
+) + tuple((runner,) for runner in sorted(HARDWARE_RUNNERS))
+XARGS_REPLACEMENT_PROBES = (
+    "python3",
+    "--plan",
+    "--plan=smoke",
+    "python3 pim_check.py --plan smoke",
+    "pim_check.py --plan smoke",
+    *FIND_PLACEHOLDER_EXECUTION_TARGETS,
+)
 SETSID_SHORT_OPTIONS = {"c", "f", "w"}
 SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
 SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
@@ -639,6 +660,13 @@ def _is_canonical_board_wrapper(token: str) -> bool:
     return token in CANONICAL_BOARD_WRAPPERS
 
 
+def _source_operand_reads_runtime_fd(token: str) -> bool:
+    path = posixpath.normpath(token)
+    if token.startswith("/"):
+        path = f"/{path.lstrip('/')}"
+    return path == "/dev/stdin" or RUNTIME_SOURCE_FD.fullmatch(path) is not None
+
+
 def _expand_env_split_string(
     tokens: list[str], index: int, operand: str, consumed: int
 ) -> int:
@@ -1088,7 +1116,9 @@ def _stdbuf_command_index(
     return index
 
 
-def _skip_xargs_short_options(tokens: list[str], index: int) -> int:
+def _skip_xargs_short_options(
+    tokens: list[str], index: int
+) -> tuple[int, Optional[str]]:
     cluster = tokens[index][1:]
     position = 0
     while position < len(cluster):
@@ -1097,21 +1127,43 @@ def _skip_xargs_short_options(tokens: list[str], index: int) -> int:
             position += 1
             continue
         if option in XARGS_SHORT_OPTIONS_WITH_VALUE:
-            if cluster[position + 1 :]:
-                return index + 1
-            if index + 1 >= len(tokens):
-                raise ValueError(f"xargs -{option} requires an operand")
-            return index + 2
+            operand = cluster[position + 1 :]
+            if operand:
+                next_index = index + 1
+            else:
+                if index + 1 >= len(tokens):
+                    raise ValueError(f"xargs -{option} requires an operand")
+                operand = tokens[index + 1]
+                next_index = index + 2
+            if option == "I":
+                if not operand:
+                    raise ValueError("xargs -I replacement must not be empty")
+                return next_index, operand
+            return next_index, None
         if option in XARGS_SHORT_OPTIONS_WITH_OPTIONAL_VALUE:
-            return index + 1
+            replacement = None
+            if option == "i":
+                replacement = cluster[position + 1 :] or "{}"
+            return index + 1, replacement
         raise ValueError(f"unsupported xargs option: -{option}")
-    return index + 1
+    return index + 1, None
 
 
-def _xargs_command_index(
+def _record_xargs_replacement(
+    current: Optional[str], replacement: str
+) -> str:
+    if not replacement:
+        raise ValueError("xargs replacement must not be empty")
+    if current is not None and current != replacement:
+        raise ValueError("conflicting xargs replacement markers")
+    return replacement
+
+
+def _xargs_command_context(
     tokens: list[str], command_index: int
-) -> Optional[int]:
+) -> tuple[Optional[int], Optional[str]]:
     index = command_index + 1
+    replacement: Optional[str] = None
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
@@ -1120,9 +1172,15 @@ def _xargs_command_index(
         if token == "-" or not token.startswith("-"):
             break
         if token in {"--help", "--version"}:
-            return None
+            return None, replacement
         if not token.startswith("--"):
-            index = _skip_xargs_short_options(tokens, index)
+            index, short_replacement = _skip_xargs_short_options(
+                tokens, index
+            )
+            if short_replacement is not None:
+                replacement = _record_xargs_replacement(
+                    replacement, short_replacement
+                )
             continue
         if token in XARGS_LONG_OPTIONS:
             index += 1
@@ -1139,12 +1197,16 @@ def _xargs_command_index(
                 index += 2
             continue
         if option in XARGS_LONG_OPTIONS_WITH_OPTIONAL_VALUE:
+            if option == "--replace":
+                replacement = _record_xargs_replacement(
+                    replacement, operand if separator else "{}"
+                )
             index += 1
             continue
         raise ValueError(f"unsupported xargs option: {token}")
     if index >= len(tokens):
-        return None
-    return index
+        return None, replacement
+    return index, replacement
 
 
 def _setsid_command_index(
@@ -2333,6 +2395,71 @@ def _find_child_is_blocked(
     )
 
 
+def _replacement_values_for_target(
+    template: str, marker: str, target: str
+) -> Iterator[str]:
+    if marker not in template:
+        return
+    seen: set[str] = set()
+    for start in range(len(target) + 1):
+        for end in range(start, len(target) + 1):
+            replacement = target[start:end]
+            if replacement in seen:
+                continue
+            if template.replace(marker, replacement) == target:
+                seen.add(replacement)
+                yield replacement
+
+
+def _xargs_replacement_values(
+    child: list[str], marker: str
+) -> Iterator[str]:
+    seen: set[str] = set()
+    for probe in XARGS_REPLACEMENT_PROBES:
+        if probe not in seen:
+            seen.add(probe)
+            yield probe
+    for token in child:
+        for target in XARGS_REPLACEMENT_PROBES:
+            for replacement in _replacement_values_for_target(
+                token, marker, target
+            ):
+                if replacement not in seen:
+                    seen.add(replacement)
+                    yield replacement
+
+
+def _xargs_child_is_blocked(
+    tokens: list[str],
+    command_index: int,
+    depth: int,
+    relative_wrapper_allowed: bool,
+) -> bool:
+    child_index, replacement = _xargs_command_context(tokens, command_index)
+    if child_index is None:
+        return False
+    child = tokens[child_index:]
+    if _segment_is_blocked(child, depth, relative_wrapper_allowed):
+        return True
+    if replacement is not None:
+        if not any(replacement in token for token in child):
+            return False
+        return any(
+            _segment_is_blocked(
+                [token.replace(replacement, probe) for token in child],
+                depth,
+                relative_wrapper_allowed,
+            )
+            for probe in _xargs_replacement_values(child, replacement)
+        )
+    return any(
+        _segment_is_blocked(
+            child + list(probe), depth, relative_wrapper_allowed
+        )
+        for probe in XARGS_APPENDED_ARGUMENT_PROBES
+    )
+
+
 def _segment_is_blocked(
     tokens: list[str],
     depth: int = 0,
@@ -2373,6 +2500,8 @@ def _segment_is_blocked(
         script = _require_static_token(
             tokens[script_index], "source script operand"
         )
+        if _source_operand_reads_runtime_fd(script):
+            raise ValueError("source operand reads from a runtime file descriptor")
         return _basename(script) in HARDWARE_RUNNERS
     if executable == "eval":
         if command_index + 1 >= len(tokens):
@@ -2413,9 +2542,11 @@ def _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "xargs":
-        child_index = _xargs_command_index(tokens, command_index)
-        return child_index is not None and _segment_is_blocked(
-            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        return _xargs_child_is_blocked(
+            tokens,
+            command_index,
+            depth + 1,
+            relative_wrapper_allowed,
         )
     if executable == "setsid":
         child_index = _setsid_command_index(tokens, command_index)

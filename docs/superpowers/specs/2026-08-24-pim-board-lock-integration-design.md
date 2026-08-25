@@ -248,6 +248,13 @@ split-string expansion, nested `env`, and recursively inspected launchers while
 continuing to permit the repository-absolute wrapper. That child-only state is
 not carried into a later segment of the parent shell command.
 
+GNU `xargs` can append input items to its initial command or substitute them
+through `-I`, `-i`, and `--replace`. The guard does not execute or guess that
+input. It counterfactually appends known board-execution argument sequences or
+substitutes the active replacement marker, then sends each result through the
+same recursive classifier. Unrelated data commands, the default echo form, and
+the canonical lease wrapper remain allowed.
+
 For util-linux `flock`, direct command argv is classified recursively and the
 `-c`/`--command` form is reparsed as a shell command string. A sole numeric file
 descriptor is the documented non-launching form and remains allowed; missing,
@@ -310,7 +317,10 @@ options, missing operands, and extra PID-mode operands fail closed; terminal
 help/version forms remain allowed.
 `source` and `.` skip one optional `--` terminator before classifying the
 sourced filename, so standalone hardware runners remain blocked through the
-documented builtin form.
+documented builtin form. Runtime-backed pseudo-files under `/dev/stdin`,
+`/dev/fd`, and `/proc/*/fd` fail closed because their sourced contents cannot be
+classified statically; ordinary files and wrapper-mediated sources remain
+allowed.
 Util-linux `chrt` policy and scheduling options are parsed before its
 operands. Execution mode skips the priority and recursively classifies the
 following command, while `--pid`/`-p` query and update forms have no child.

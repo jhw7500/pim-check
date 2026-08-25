@@ -43,9 +43,13 @@
   util-linux `taskset`은 CPU mask/list 뒤 실행 자식을 재귀 검사하고, `--pid`/`-p`
   조회·변경 모드는 실행 자식이 없는 형태로 구분한다. 미지원 옵션과 잘못된 피연산자
   개수는 fail-closed 처리한다.
-  `source`/`.`는 선택적 `--` 뒤의 standalone runner를 검사한다. util-linux
-  `chrt`는 policy·scheduling 옵션을 파싱하고 실행 모드의 priority 뒤 자식을 재귀
-  검사하며, PID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다.
+  `source`/`.`는 선택적 `--` 뒤의 standalone runner를 검사하고, `/dev/stdin`과
+  `/dev/fd/*`, `/proc/{self,thread-self,PID}/fd/*`처럼 런타임 입력을 실행하는
+  의사경로는 fail-closed 처리한다. GNU `xargs`의 일반 입력은 알려진 보드 실행 인자
+  시퀀스를 덧붙인 결과로, `-I`/`-i`/`--replace` 입력은 marker 치환 결과로 재귀
+  분류한다. 무관한 `printf`, 기본 echo 형식과 정본 wrapper는 계속 허용한다.
+  util-linux `chrt`는 policy·scheduling 옵션을 파싱하고 실행 모드의 priority 뒤
+  자식을 재귀 검사하며, PID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다.
   util-linux `ionice`는 class·classdata·ignore 옵션을 파싱하고 실행 모드 자식을 재귀
   검사하며, PID·PGID·UID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다. 누락된
   옵션 값과 미지원 옵션은 fail-closed 처리한다.
