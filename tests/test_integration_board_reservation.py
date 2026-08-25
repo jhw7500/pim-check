@@ -471,9 +471,17 @@ time.sleep(60)
     assert all(not Path(f"/proc/{pid}").exists() for pid in pids)
 
 
-@pytest.mark.parametrize("forwarded_signal", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize(
+    "supervisor_signal, expected_child_signal",
+    [
+        (signal.SIGINT, signal.SIGINT),
+        (signal.SIGTERM, signal.SIGTERM),
+        (signal.SIGHUP, signal.SIGTERM),
+    ],
+)
 def test_deadline_supervisor_forwards_external_signal_once(
-    forwarded_signal: int,
+    supervisor_signal: int,
+    expected_child_signal: int,
     tmp_path: Path,
 ) -> None:
     child_pid = tmp_path / "single-signal-child.pid"
@@ -529,24 +537,35 @@ time.sleep(60)
         text=True,
         start_new_session=True,
     )
-    limit = time.time() + 2
-    while time.time() < limit and not child_pid.exists():
-        time.sleep(0.01)
-    assert child_pid.exists()
-
-    supervisor.send_signal(forwarded_signal)
+    process_group: Optional[int] = None
     try:
-        supervisor.communicate(timeout=3)
-    except subprocess.TimeoutExpired:
+        limit = time.time() + 2
+        while time.time() < limit and not child_pid.exists():
+            time.sleep(0.01)
+        assert child_pid.exists()
         process_group = int(child_pid.read_text(encoding="utf-8"))
-        os.killpg(process_group, signal.SIGKILL)
-        supervisor.kill()
-        supervisor.wait(timeout=2)
-        pytest.fail("deadline supervisor did not finish signal teardown")
 
-    assert supervisor.returncode == 128 + forwarded_signal
-    assert received.read_text(encoding="utf-8") == str(int(forwarded_signal))
-    assert teardown.read_text(encoding="utf-8") == "complete"
+        supervisor.send_signal(supervisor_signal)
+        try:
+            supervisor.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            pytest.fail("deadline supervisor did not finish signal teardown")
+
+        assert supervisor.returncode == 128 + supervisor_signal
+        assert received.read_text(encoding="utf-8") == str(
+            int(expected_child_signal)
+        )
+        assert teardown.read_text(encoding="utf-8") == "complete"
+        assert not Path(f"/proc/{process_group}").exists()
+    finally:
+        if process_group is not None:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if supervisor.poll() is None:
+            supervisor.kill()
+        supervisor.wait(timeout=2)
 
 
 def test_deadline_supervisor_refuses_to_start_without_cleanup_budget(tmp_path: Path) -> None:

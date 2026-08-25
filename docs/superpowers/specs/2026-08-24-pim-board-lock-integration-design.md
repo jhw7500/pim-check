@@ -203,6 +203,12 @@ teardown, covering both 600-second boot polling windows around one recovery
 attempt plus restore and stabilization work. A final 60 seconds remains to
 kill and reap a stuck process group before the lease expires.
 
+The supervisor installs its `SIGHUP` handler before starting the detached child
+session. Losing an SSH connection or controlling terminal records exit status
+129 for the supervisor, but sends `SIGTERM` to the child process group so the
+normal teardown grace remains available. The supervisor returns only after the
+bounded TERM/KILL/reap path has removed that group.
+
 `auto_chain.sh` may retain its existing process check after acquiring the
 lease as migration defense against an already-running legacy, unwrapped
 `pim_check.py`. It is not a lock substitute and does not turn a board-lock
@@ -381,6 +387,7 @@ shared advisory board lease.
 | Host config or binary unavailable | Clear wrapper error before child starts |
 | Child exits non-zero | Same exit status propagates through the wrapper |
 | Child receives `SIGINT`/`SIGTERM` | `board with` releases its lease |
+| Deadline supervisor receives `SIGHUP` | Child group receives `SIGTERM`, is reaped, then the supervisor returns 129 and `board with` releases its lease |
 | Wrapper is killed with `SIGKILL` or selected by OOM | Project Control v1 cannot guarantee child termination; treat surviving-child evidence as an incident before another board run |
 | Nested supported invocation | Existing lease marker is reused; no deadlock |
 | Requested lease exceeds policy | Invocation fails; no shortened lease |
@@ -398,6 +405,8 @@ Implementation follows test-driven development. Tests will cover:
 - wrapper argument validation, host-config loading, absolute binary selection,
   session derivation, exclusive-mode arguments, nested invocation, and exact
   child/acquisition exit propagation using a temporary fake `jhw-control`;
+- deadline expiry, external `SIGINT`/`SIGTERM` forwarding, `SIGHUP`-to-`SIGTERM`
+  normalization, and bounded process-group reaping without a physical board;
 - guard behavior for direct high-risk commands, wrapper-mediated commands,
   self-wrapping automation, unrelated commands, and malformed hook input;
 - repository contracts proving that all three hardware workflows wrap their

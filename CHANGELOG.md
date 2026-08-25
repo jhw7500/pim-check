@@ -22,7 +22,9 @@
   process group에 TERM을 보내 teardown에 30분을 허용한다. 이는 네트워크 복구 전후의
   600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
-  exit 75로 실패한다.
+  exit 75로 실패한다. SSH/제어 터미널 종료로 supervisor가 SIGHUP을 받으면 외부
+  종료코드는 129로 보존하되 자식 process group에는 teardown용 SIGTERM을 전달하고,
+  같은 grace→KILL→reap 경로가 끝난 뒤에만 lease 부모로 복귀한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
   `nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·외부 GNU `time`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,

@@ -33,7 +33,7 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 | File | Description |
 |------|-------------|
 | `with_pim_board.sh` | 공통 exclusive lease 래퍼. mode-600 control 환경을 로드하고 사용자 로컬 `jhw-control` 절대 경로로 자식 하드웨어 명령을 실행한다. 중첩 실행은 표시 변수만 믿지 않고 조상 `board with` PID와 현재 active lease를 함께 검증한다. long automation은 정확한 deadline·purpose·long-lease·deadline supervisor까지 일치해야 재사용한다. |
-| `run_with_deadline.py` | long-lease automation 자식을 lease 종료 전 TERM→teardown→KILL 순서로 종료하고 프로세스 그룹을 회수한다. |
+| `run_with_deadline.py` | long-lease automation 자식을 lease 종료 전 TERM→teardown→KILL 순서로 종료하고 프로세스 그룹을 회수한다. supervisor가 받은 SIGHUP은 자식 SIGTERM으로 정규화하고, 자식 회수 후 외부 종료코드 129를 반환한다. |
 | `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. `env` option cluster·`builtin`·`exec`·`eval`·`source`·`nice`·`stdbuf`·`xargs`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·외부 GNU `time` 등 launcher·shell `-c`·Bash ANSI-C quote·stdin shell fail-closed·명령 치환·그룹/조건 제어문 내부의 직접 plan/standalone runner 실행도 차단한다. `source`/`.`의 선택적 `--` 뒤 runner, `find`의 실행 action과 placeholder 가능성, `flock`의 직접 argv와 `-c` shell command, `setarch` 및 설치된 architecture 별칭, `start-stop-daemon --start`의 `--startas`/`--exec` 프로그램, exact `/` 대상 `chroot`의 command, `systemd-run`의 transient command, 외부 `time`의 측정 대상, `watch -x`의 exec 자식과 기본 shell command, `taskset`의 affinity, `chrt`의 priority, `ionice`의 class 옵션, `script -c`의 command 문자열, `prlimit`의 resource 옵션 및 `unshare`의 namespace 옵션 뒤 실행 자식을 재귀 검사하며 정확한 저장소 wrapper 경로만 면제한다. 실제 명령 앞의 shell redirection과 붙은/분리된 대상도 건너뛴 뒤 분류한다. 앞선 `cd`·`pushd`·`popd`, `start-stop-daemon`, 기본 `chroot` chdir, 비-scope 또는 working-directory 변경 `systemd-run` 뒤에는 상대 wrapper 경로를 면제하지 않고 절대 정본 경로만 허용한다. 숫자 FD-only `flock`과 PID·PGID·UID 대상 모드는 실행 자식 없음으로 구분하고, 대화형 `script`·`systemd-run --shell`, PID형 `prlimit`의 잔여 command, program 없는 `setarch`·`start-stop-daemon --start`·`chroot`·`systemd-run`·`unshare`·외부 `time`, alternate-root/chroot·원격/임의-property `systemd-run` 시작, 대상 없는 redirection·모호한 descriptor 복제형, ANSI-C escape·미종결 action·비정규 경로·축약 불가능한 복합 문법은 fail-closed 처리한다. 방어 심화용이며 보안 경계는 아니다. |
 | `test_vflip_frame_compare.sh` | edgeconf 변경·재부팅·녹화를 수행하는 standalone vflip 비교 러너. 직접 또는 shell positional script로 실행할 때도 lease가 필요하다. |
 | `auto_chain.sh` | `smoke → comprehensive → release_next → nightly` 자동 체인. 실행 상태 생성 전 24시간 long lease로 자신을 래핑한다. |
@@ -81,7 +81,8 @@ scripts/with_pim_board.sh --for 30m --purpose "manual smoke" -- \
 | 로컬 overnight/weekend 자동화 | 정확한 종료 deadline (`--until`) | `--long-lease true` 필요 |
 
 long lease는 만료 31분 전에 정리를 시작한다. 자식 프로세스에는 teardown용 30분을
-주고, 마지막 60초는 강제 종료와 lease 해제에 남긴다.
+주고, 마지막 60초는 강제 종료와 lease 해제에 남긴다. SSH나 제어 터미널이 끊겨
+SIGHUP을 받아도 같은 SIGTERM→teardown→KILL→reap 경로를 마친 뒤 lease를 해제한다.
 
 보드가 busy이면 exit 4로 즉시 실패한다. `board wait`, 재시도 루프, `|| true`, 직접
 `jhw-control board acquire`는 사용하지 않는다. lease는 advisory이며 #108은 persistent

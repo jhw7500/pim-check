@@ -136,7 +136,7 @@ def supervise(options: argparse.Namespace, command: list[str]) -> int:
 
     previous_handlers = {
         signum: signal.getsignal(signum)
-        for signum in (signal.SIGINT, signal.SIGTERM)
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
     }
     for signum in previous_handlers:
         signal.signal(signum, forward)
@@ -199,16 +199,17 @@ def supervise(options: argparse.Namespace, command: list[str]) -> int:
                 options.deadline_epoch,
             )
 
+        child_signal = (
+            signal.SIGTERM
+            if received_signal in (None, signal.SIGHUP)
+            else received_signal
+        )
         if not _stop_and_reap(
             child,
             process_group,
             term_until,
             options.deadline_epoch,
-            initial_signal=(
-                received_signal
-                if received_signal is not None
-                else signal.SIGTERM
-            ),
+            initial_signal=child_signal,
         ):
             print(
                 "deadline supervisor: process group survived KILL through lease deadline",
