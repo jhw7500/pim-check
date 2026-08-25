@@ -146,6 +146,14 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "./run_comprehensive_verify.py",
         "timeout 30m start-stop-daemon --start "
         "--startas /usr/bin/python3 -- pim_check.py --plan smoke",
+        "chroot / python3 /workspace/pim-check/pim_check.py --plan smoke",
+        "chroot / /usr/bin/python3 pim_check.py --plan smoke",
+        "chroot --userspec=root:root / python3 -m pim_check --plan smoke",
+        "chroot --groups=root / python3 run_comprehensive_verify.py",
+        "chroot -- / python3 pim_check.py --plan smoke",
+        "chroot / /bin/sh -c 'python3 pim_check.py --plan smoke'",
+        "chroot / /usr/bin/env python3 pim_check.py --plan smoke",
+        "timeout 30m chroot / python3 pim_check.py --plan smoke",
         "builtin exec python3 pim_check.py --plan smoke",
         "builtin eval 'python3 pim_check.py --plan smoke'",
         "builtin source scripts/test_vflip_frame_compare.sh",
@@ -673,6 +681,18 @@ def test_guard_fails_closed_on_interactive_script_commands(
         f"start-stop-daemon --start --startas "
         f"{ROOT / 'scripts' / 'with_pim_board.sh'} -- --for 30m "
         "--purpose safe -- python3 pim_check.py --plan smoke",
+        "chroot / /bin/printf %s safe",
+        "chroot --userspec=root:root --groups=root / /bin/true",
+        "chroot -- / /bin/printf %s safe",
+        "chroot --skip-chdir / pytest -q tests/test_plan_load.py",
+        "chroot --help",
+        "chroot --version",
+        f"chroot / {ROOT / 'scripts' / 'with_pim_board.sh'} --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
+        "chroot --skip-chdir / scripts/with_pim_board.sh --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "chroot / python3 pim_check.py --plan smoke",
         "builtin printf %s safe",
         "builtin command -v python3 pim_check.py --plan smoke",
         "builtin",
@@ -1111,6 +1131,30 @@ def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
         "start-stop-daemon --start --exec /bin/true --exec /bin/printf",
         "start-stop-daemon -Sa",
         "start-stop-daemon -SQ -a/bin/true",
+        "chroot",
+        "chroot --",
+        "chroot /",
+        "chroot --skip-chdir /",
+        "chroot --unknown / /bin/true",
+        "chroot -x / /bin/true",
+        "chroot --groups= / /bin/true",
+        "chroot --groups root / /bin/true",
+        "chroot --userspec= / /bin/true",
+        "chroot --userspec root:root / /bin/true",
+        "chroot --skip-chdir=true / /bin/true",
+        "chroot --help=true",
+        "chroot /tmp /bin/true",
+        "chroot . /bin/true",
+        "chroot // /bin/true",
+        "chroot '$NEWROOT' /bin/true",
+        "chroot / scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+        "chroot / ./scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+        f"chroot /tmp {ROOT / 'scripts' / 'with_pim_board.sh'} --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
+        "cd /tmp && chroot --skip-chdir / scripts/with_pim_board.sh "
+        "--for 30m --purpose unsafe -- python3 pim_check.py --plan smoke",
         "builtin -x printf %s safe",
         "builtin --help",
         "sudo",

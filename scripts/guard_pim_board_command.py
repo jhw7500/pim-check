@@ -176,6 +176,9 @@ START_STOP_DAEMON_LONG_OPTIONS_WITH_VALUE = {
     "--umask",
 }
 START_STOP_DAEMON_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+CHROOT_LONG_OPTIONS_WITH_VALUE = {"--groups", "--userspec"}
+CHROOT_LONG_OPTIONS = {"--skip-chdir"}
+CHROOT_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 UNSHARE_NAMESPACE_SHORT_OPTIONS = set("imnpuUCT")
 UNSHARE_SHORT_OPTIONS = {"f", "r", "c"}
 UNSHARE_SHORT_OPTIONS_WITH_VALUE = {"R", "w", "S", "G"}
@@ -1311,6 +1314,46 @@ def _start_stop_daemon_child(
     return [program, *arguments]
 
 
+def _chroot_child(
+    tokens: list[str], command_index: int
+) -> tuple[Optional[list[str]], bool]:
+    index = command_index + 1
+    skip_chdir = False
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in CHROOT_TERMINAL_LONG_OPTIONS:
+            return None, False
+        option, separator, operand = token.partition("=")
+        if option in CHROOT_LONG_OPTIONS_WITH_VALUE:
+            if not separator or not operand:
+                raise ValueError(f"{option} requires a non-empty =value")
+            index += 1
+            continue
+        if option in CHROOT_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported chroot option: {token}")
+            skip_chdir = True
+            index += 1
+            continue
+        raise ValueError(f"unsupported chroot option: {token}")
+
+    if index >= len(tokens):
+        raise ValueError("chroot requires a new root")
+    new_root = _require_static_token(tokens[index], "chroot new root")
+    if new_root != "/":
+        raise ValueError("chroot executable paths are trusted only for root /")
+    index += 1
+    if index >= len(tokens):
+        raise ValueError("chroot without a command starts an interactive shell")
+    return tokens[index:], skip_chdir
+
+
 def _skip_unshare_short_options(tokens: list[str], index: int) -> tuple[int, bool]:
     cluster = tokens[index][1:]
     position = 0
@@ -2145,6 +2188,15 @@ def _segment_is_blocked(
             child,
             depth + 1,
             relative_wrapper_allowed=False,
+        )
+    if executable == "chroot":
+        child, skip_chdir = _chroot_child(tokens, command_index)
+        return child is not None and _segment_is_blocked(
+            child,
+            depth + 1,
+            relative_wrapper_allowed=(
+                relative_wrapper_allowed if skip_chdir else False
+            ),
         )
     if executable == "unshare":
         child_index = _unshare_command_index(tokens, command_index)

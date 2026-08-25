@@ -230,10 +230,10 @@ unchanged.
 Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `flock`, `setarch`,
-`start-stop-daemon`, `watch`, `taskset`, `chrt`, `ionice`, `script`, `prlimit`,
-`setsid`, `unshare`, `sudo`, `timeout`, and `nohup` command operands, reparses
-`eval` arguments as a command string, and reparses command strings passed to
-`bash`, `dash`, `sh`, or `zsh` with `-c`.
+`start-stop-daemon`, `chroot`, `watch`, `taskset`, `chrt`, `ionice`, `script`,
+`prlimit`, `setsid`, `unshare`, `sudo`, `timeout`, and `nohup` command operands,
+reparses `eval` arguments as a command string, and reparses command strings
+passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 
 For util-linux `flock`, direct command argv is classified recursively and the
 `-c`/`--command` form is reparsed as a shell command string. A sole numeric file
@@ -250,6 +250,12 @@ after `--` are classified together. Well-formed stop, status, help/version, and
 test-only forms have no launched child. Because start mode changes directory to
 root by default, relative wrapper paths are never exempt; chrooted starts,
 missing or conflicting commands or programs, and unknown options fail closed.
+For coreutils `chroot`, options and `NEWROOT` are separated from the command
+argv. Only exact `/` preserves executable identity and permits recursive child
+classification; every alternate or dynamic root fails closed. Default chdir
+disables relative wrapper exemption, while `--skip-chdir /` preserves the
+incoming relative-path policy. A missing command would start an interactive
+shell and therefore fails closed, as do unknown or empty options.
 Before locating that executable, the guard skips leading shell input/output,
 append, clobber, bidirectional, here-document, and here-string redirections.
 Attached and split targets, numeric or named file-descriptor prefixes, and
