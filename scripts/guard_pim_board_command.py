@@ -388,6 +388,42 @@ def _nohup_command_index(tokens: list[str], command_index: int) -> Optional[int]
     return index
 
 
+def _nice_command_index(tokens: list[str], command_index: int) -> Optional[int]:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token in {"--help", "--version"}:
+            return None
+        if token in {"-n", "--adjustment"}:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{token} requires an operand")
+            adjustment = tokens[index + 1]
+            if not re.fullmatch(r"[+-]?\d+", adjustment):
+                raise ValueError(f"invalid nice adjustment: {adjustment}")
+            index += 2
+            continue
+        if token.startswith("--adjustment="):
+            adjustment = token.partition("=")[2]
+        elif token.startswith("-n") and len(token) > 2:
+            adjustment = token[2:]
+        elif re.fullmatch(r"-\d+", token):
+            index += 1
+            continue
+        else:
+            raise ValueError(f"unsupported nice option: {token}")
+        if not re.fullmatch(r"[+-]?\d+", adjustment):
+            raise ValueError(f"invalid nice adjustment: {adjustment}")
+        index += 1
+    if index >= len(tokens):
+        return None
+    return index
+
+
 def _shell_child(
     tokens: list[str], command_index: int
 ) -> tuple[Optional[str], Optional[str]]:
@@ -467,6 +503,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         return _segment_is_blocked(tokens[child_index:], depth + 1)
     if executable == "nohup":
         child_index = _nohup_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
+    if executable == "nice":
+        child_index = _nice_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
         )

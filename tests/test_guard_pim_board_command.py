@@ -69,6 +69,11 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "eval python3 pim_check.py --plan smoke",
         "source scripts/test_vflip_frame_compare.sh",
         ". scripts/test_vflip_frame_compare.sh",
+        "nice python3 pim_check.py --plan smoke",
+        "nice -n 5 python3 pim_check.py --plan smoke",
+        "nice -n5 python3 pim_check.py --plan smoke",
+        "nice --adjustment=5 python3 pim_check.py --plan smoke",
+        "nice -10 python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -115,6 +120,10 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         ". /home/jhw/.config/jhw-control/control.env",
         "scripts/with_pim_board.sh --for 30m --purpose safe -- "
         "source scripts/test_vflip_frame_compare.sh",
+        "nice pytest -q tests/test_plan_load.py",
+        "nice --help",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "nice python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -143,6 +152,9 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "exec -x true",
         "env -iS",
         "env -iX true",
+        "nice -n",
+        "nice --adjustment=",
+        "nice -x true",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:

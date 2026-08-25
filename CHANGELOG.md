@@ -16,7 +16,7 @@
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `exec`·`eval`·`source`·`.`·
-  `timeout`·`nohup`,
+  `nice`·`timeout`·`nohup`,
   shell `-c`와 positional script, outer shell에서 활성인 `$()`·백틱 명령 치환,
   그룹·조건 제어문 내부까지 검사한다. single quote·escape로 보호돼 lease 획득 후
   자식에게 전달되는 치환은 허용한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을
