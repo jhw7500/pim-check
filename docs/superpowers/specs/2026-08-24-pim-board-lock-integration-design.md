@@ -209,6 +209,10 @@ Before classifying a non-Python command as unrelated, the guard parses GNU
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `setsid`, `sudo`, `timeout`, and
 `nohup` command operands, reparses `eval` arguments as a command string, and
 reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+GNU `find` execution actions (`-exec`, `-execdir`, `-ok`, and `-okdir`) are
+scanned in order and each child command is classified recursively. Escaped
+semicolon terminators and exact `{}` placeholders remain data tokens during
+shell segmentation; empty commands or missing `;`/`+` terminators fail closed.
 Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
 before that recursive classification. ANSI-C escape sequences and unterminated
 forms fail closed instead of approximating Bash decoding; quoted or escaped

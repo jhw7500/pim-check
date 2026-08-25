@@ -169,6 +169,35 @@ def test_guard_fails_closed_on_bash_ansi_c_escape_sequences(
 @pytest.mark.parametrize(
     "command",
     [
+        "find . -maxdepth 0 -exec python3 pim_check.py --plan smoke \\;",
+        "find . -maxdepth 0 -execdir python3 run_comprehensive_verify.py \\;",
+        "find . -maxdepth 0 -ok python3 pim_check.py --plan smoke \\;",
+        "find . -maxdepth 0 -okdir python3 run_comprehensive_verify.py \\;",
+        "find . -maxdepth 0 -exec python3 pim_check.py --plan smoke {} +",
+        "find . -maxdepth 0 -exec sh -c "
+        "'python3 pim_check.py --plan smoke' \\;",
+    ],
+)
+def test_guard_blocks_board_commands_launched_by_find(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+def test_guard_checks_every_find_execution_action() -> None:
+    result = _run_guard(
+        "find . -maxdepth 0 -exec printf %s safe \\; "
+        "-exec python3 pim_check.py --plan smoke \\;"
+    )
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "scripts/with_pim_board.sh --for 30m --purpose manual -- python3 pim_check.py --plan smoke",
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
@@ -289,6 +318,23 @@ def test_guard_allows_safe_or_literal_bash_ansi_c_quotes(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "find . -maxdepth 0 -print",
+        "find . -maxdepth 0 -exec printf %s {} \\;",
+        "find . -maxdepth 0 -execdir pytest -q tests/test_plan_load.py {} +",
+        "find . -maxdepth 0 -exec scripts/with_pim_board.sh --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke {} \\;",
+    ],
+)
+def test_guard_allows_safe_find_commands(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -371,6 +417,24 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -exec",
+        "find . -exec \\;",
+        "find . -exec python3 pim_check.py --plan smoke",
+        "find . -okdir printf %s safe",
+    ],
+)
+def test_guard_fails_closed_on_malformed_find_execution_actions(
+    command: str,
+) -> None:
     result = _run_guard(command)
 
     assert result.returncode == 2

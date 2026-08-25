@@ -22,6 +22,9 @@ HARDWARE_RUNNERS = {
     "test_vflip_frame_compare.sh",
 }
 SHELL_BREAKS = set(";&|(){}\n")
+ESCAPED_SEMICOLON_MARKER = "\0"
+FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
+FIND_EXEC_TERMINATORS = {";", "+"}
 ENV_SHORT_OPTIONS = {"i", "0", "v"}
 ENV_SHORT_OPTIONS_WITH_VALUE = {"u", "C", "S"}
 ENV_LONG_OPTIONS = {
@@ -126,19 +129,47 @@ REMEDIATION = (
 )
 
 
+def _protect_escaped_semicolons(command: str) -> str:
+    if ESCAPED_SEMICOLON_MARKER in command:
+        raise ValueError("shell command contains a NUL byte")
+    protected: list[str] = []
+    quote: Optional[str] = None
+    escaped = False
+    for char in command:
+        if escaped:
+            if char == ";" and quote is None:
+                protected.append(ESCAPED_SEMICOLON_MARKER)
+            else:
+                protected.extend(("\\", char))
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        else:
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in {"'", '"'}:
+                quote = char
+            protected.append(char)
+    if escaped:
+        protected.append("\\")
+    return "".join(protected)
+
+
 def _segments(command: str) -> Iterator[list[str]]:
+    command = _protect_escaped_semicolons(command)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
     segment: list[str] = []
     for token in lexer:
-        if token and set(token) <= SHELL_BREAKS:
+        if token and token != "{}" and set(token) <= SHELL_BREAKS:
             if segment:
                 yield segment
                 segment = []
         else:
-            segment.append(token)
+            segment.append(token.replace(ESCAPED_SEMICOLON_MARKER, ";"))
     if segment:
         yield segment
 
@@ -845,6 +876,31 @@ def _shell_command_tokens(tokens: list[str]) -> list[str]:
     return tokens
 
 
+def _find_child_commands(
+    tokens: list[str], command_index: int
+) -> Iterator[list[str]]:
+    index = command_index + 1
+    while index < len(tokens):
+        if tokens[index] not in FIND_EXEC_ACTIONS:
+            index += 1
+            continue
+        command_start = index + 1
+        if command_start >= len(tokens):
+            raise ValueError(f"find {tokens[index]} requires a command")
+        command_end = command_start
+        while (
+            command_end < len(tokens)
+            and tokens[command_end] not in FIND_EXEC_TERMINATORS
+        ):
+            command_end += 1
+        if command_end >= len(tokens):
+            raise ValueError(f"find {tokens[index]} requires ; or +")
+        if command_end == command_start:
+            raise ValueError(f"find {tokens[index]} requires a command")
+        yield tokens[command_start:command_end]
+        index = command_end + 1
+
+
 def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     if depth > MAX_LAUNCHER_DEPTH:
         raise ValueError("launcher nesting is too deep")
@@ -911,6 +967,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
         child_index = _sudo_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1
+        )
+    if executable == "find":
+        return any(
+            _segment_is_blocked(child, depth + 1)
+            for child in _find_child_commands(tokens, command_index)
         )
     if executable in SHELLS:
         child_command, child_script = _shell_child(tokens, command_index)
