@@ -56,7 +56,134 @@ lock_owner_runs_board_with() {
     return 1
 }
 
+lock_owner_matches_long_lease() {
+    local owner_pid="$1"
+    local expected_board="$2"
+    local expected_session="$3"
+    local expected_until="$4"
+    local expected_purpose="$5"
+    local -a owner_arguments=()
+    local index start_index=-1
+    local owner_mode="" owner_session="" owner_until="" owner_purpose=""
+    local owner_long_lease="false"
+
+    [[ -n "$expected_until" ]] || return 1
+    [[ -r "/proc/$owner_pid/cmdline" ]] || return 1
+    mapfile -d '' -t owner_arguments < "/proc/$owner_pid/cmdline" || return 1
+    for ((index = 0; index + 2 < ${#owner_arguments[@]}; index++)); do
+        if [[ "${owner_arguments[$index]}" == "board" ]] &&
+            [[ "${owner_arguments[$((index + 1))]}" == "with" ]] &&
+            [[ "${owner_arguments[$((index + 2))]}" == "$expected_board" ]]; then
+            start_index=$((index + 3))
+            break
+        fi
+    done
+    ((start_index >= 0)) || return 1
+
+    index="$start_index"
+    while ((index < ${#owner_arguments[@]})); do
+        [[ "${owner_arguments[$index]}" == "--" ]] && break
+        case "${owner_arguments[$index]}" in
+            --mode)
+                ((index + 1 < ${#owner_arguments[@]})) || return 1
+                owner_mode="${owner_arguments[$((index + 1))]}"
+                index=$((index + 2))
+                ;;
+            --session)
+                ((index + 1 < ${#owner_arguments[@]})) || return 1
+                owner_session="${owner_arguments[$((index + 1))]}"
+                index=$((index + 2))
+                ;;
+            --until)
+                ((index + 1 < ${#owner_arguments[@]})) || return 1
+                owner_until="${owner_arguments[$((index + 1))]}"
+                index=$((index + 2))
+                ;;
+            --purpose)
+                ((index + 1 < ${#owner_arguments[@]})) || return 1
+                owner_purpose="${owner_arguments[$((index + 1))]}"
+                index=$((index + 2))
+                ;;
+            --long-lease)
+                ((index + 1 < ${#owner_arguments[@]})) || return 1
+                owner_long_lease="${owner_arguments[$((index + 1))]}"
+                index=$((index + 2))
+                ;;
+            *)
+                index=$((index + 1))
+                ;;
+        esac
+    done
+
+    [[ "$owner_mode" == "exclusive" ]] &&
+        [[ "$owner_session" == "$expected_session" ]] &&
+        [[ "$owner_until" == "$expected_until" ]] &&
+        [[ "$owner_purpose" == "$expected_purpose" ]] &&
+        [[ "$owner_long_lease" == "true" ]]
+}
+
+deadline_supervisor_matches_requirement() {
+    local owner_pid="$1"
+    local required_deadline="$2"
+    local current_pid="$PPID"
+    local stat_line stat_tail parent_pid
+    local -a process_arguments=()
+    local index deadline cleanup_margin term_grace
+
+    while [[ "$current_pid" =~ ^[1-9][0-9]*$ ]] && ((current_pid > 1)); do
+        [[ "$current_pid" == "$owner_pid" ]] && return 1
+        [[ -r "/proc/$current_pid/cmdline" ]] || return 1
+        mapfile -d '' -t process_arguments < "/proc/$current_pid/cmdline" || return 1
+        for ((index = 0; index < ${#process_arguments[@]}; index++)); do
+            [[ "${process_arguments[$index]}" == "$DEADLINE_SUPERVISOR" ]] || continue
+            deadline=""
+            cleanup_margin=""
+            term_grace=""
+            while ((index + 1 < ${#process_arguments[@]})); do
+                index=$((index + 1))
+                [[ "${process_arguments[$index]}" == "--" ]] && break
+                case "${process_arguments[$index]}" in
+                    --deadline-epoch)
+                        ((index + 1 < ${#process_arguments[@]})) || return 1
+                        deadline="${process_arguments[$((index + 1))]}"
+                        index=$((index + 1))
+                        ;;
+                    --cleanup-margin-seconds)
+                        ((index + 1 < ${#process_arguments[@]})) || return 1
+                        cleanup_margin="${process_arguments[$((index + 1))]}"
+                        index=$((index + 1))
+                        ;;
+                    --term-grace-seconds)
+                        ((index + 1 < ${#process_arguments[@]})) || return 1
+                        term_grace="${process_arguments[$((index + 1))]}"
+                        index=$((index + 1))
+                        ;;
+                esac
+            done
+            [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || return 1
+            [[ "$cleanup_margin" =~ ^[1-9][0-9]*$ ]] || return 1
+            [[ "$term_grace" =~ ^[1-9][0-9]*$ ]] || return 1
+            ((deadline >= required_deadline)) || return 1
+            ((cleanup_margin >= AUTOMATION_CLEANUP_MARGIN_SECONDS)) || return 1
+            ((term_grace >= AUTOMATION_TERM_GRACE_SECONDS)) || return 1
+            ((cleanup_margin - term_grace >= AUTOMATION_LEASE_RELEASE_MARGIN_SECONDS)) || return 1
+            return 0
+        done
+        IFS= read -r stat_line < "/proc/$current_pid/stat" || return 1
+        stat_tail="${stat_line##*) }"
+        parent_pid="${stat_tail#* }"
+        parent_pid="${parent_pid%% *}"
+        current_pid="$parent_pid"
+    done
+    return 1
+}
+
 active_lease_matches_marker() {
+    local require_long_lease="${1:-false}"
+    local required_deadline="${2:-0}"
+    local required_purpose="${3:-}"
+    local required_until="${4:-}"
+
     lock_marker_has_coordinates || return 1
 
     local owner_pid="$PIM_BOARD_LOCK_OWNER_PID"
@@ -67,16 +194,42 @@ active_lease_matches_marker() {
     [[ "$lock_board_id" == "$board_id" ]] || return 1
     lock_owner_is_ancestor "$owner_pid" || return 1
     lock_owner_runs_board_with "$owner_pid" "$lock_board_id" || return 1
+    if [[ "$require_long_lease" == "true" ]]; then
+        [[ "$required_deadline" =~ ^[1-9][0-9]*$ ]] || return 1
+        lock_owner_matches_long_lease \
+            "$owner_pid" "$lock_board_id" "$lock_session" \
+            "$required_until" "$required_purpose" || return 1
+        deadline_supervisor_matches_requirement \
+            "$owner_pid" "$required_deadline" || return 1
+    fi
     status_json=$("$control_bin" board status "$lock_board_id" 2>/dev/null) || return 1
     python3 -c '
+from datetime import datetime
 import json
 import sys
 
-session, board_id = sys.argv[1:]
+session, board_id, require_long, required_deadline, required_purpose = sys.argv[1:]
+
+
+def timestamp(value):
+    if not isinstance(value, str):
+        return 0
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        return 0
+    return int(parsed.timestamp())
+
+
 try:
     boards = json.load(sys.stdin)["result"]["boards"]
 except (KeyError, TypeError, ValueError):
     raise SystemExit(1)
+required_epoch = int(required_deadline)
 matched = any(
     board.get("board_id") == board_id
     and any(
@@ -84,17 +237,26 @@ matched = any(
         and holder.get("mode") == "exclusive"
         and holder.get("liveness") == "alive"
         and holder.get("expired") is False
+        and (
+            require_long != "true"
+            or (
+                holder.get("purpose") == required_purpose
+                and timestamp(holder.get("granted_until")) >= required_epoch
+            )
+        )
         for holder in board.get("holders", [])
     )
     for board in boards
 )
 raise SystemExit(0 if matched else 1)
-' "$lock_session" "$lock_board_id" <<< "$status_json"
+' "$lock_session" "$lock_board_id" "$require_long_lease" \
+        "$required_deadline" "$required_purpose" <<< "$status_json"
 }
 
 check_held_only="false"
-if [[ $# -eq 1 && "$1" == "--check-held" ]]; then
+if [[ "${1:-}" == "--check-held" ]]; then
     check_held_only="true"
+    shift
 fi
 
 lease_flag=""
@@ -103,7 +265,7 @@ purpose=""
 long_lease="false"
 child=()
 
-while [[ "$check_held_only" == "false" && $# -gt 0 ]]; do
+while [[ $# -gt 0 ]]; do
     case "$1" in
         --for|--until)
             [[ $# -ge 2 ]] || die "$1 requires a value"
@@ -124,6 +286,8 @@ while [[ "$check_held_only" == "false" && $# -gt 0 ]]; do
             shift 2
             ;;
         --)
+            [[ "$check_held_only" == "false" ]] || die \
+                "--check-held does not accept a child command"
             shift
             child=("$@")
             break
@@ -134,13 +298,33 @@ while [[ "$check_held_only" == "false" && $# -gt 0 ]]; do
     esac
 done
 
+[[ -n "$lease_flag" ]] || die "exactly one of --for or --until is required"
+[[ -n "$lease_value" ]] || die "$lease_flag requires a non-empty value"
+[[ -n "$purpose" ]] || die "--purpose requires a non-empty value"
 if [[ "$check_held_only" == "false" ]]; then
-    [[ -n "$lease_flag" ]] || die "exactly one of --for or --until is required"
-    [[ -n "$lease_value" ]] || die "$lease_flag requires a non-empty value"
-    [[ -n "$purpose" ]] || die "--purpose requires a non-empty value"
     [[ ${#child[@]} -gt 0 ]] || die "child command is required after --"
-elif ! lock_marker_has_coordinates; then
-    exit 1
+else
+    [[ "$lease_flag" == "--until" ]] || die \
+        "--check-held requires an exact --until boundary"
+    [[ "$long_lease" == "true" ]] || die \
+        "--check-held requires --long-lease true"
+    lock_marker_has_coordinates || exit 1
+fi
+
+lease_deadline_epoch=0
+if [[ "$long_lease" == "true" ]]; then
+    if [[ "$lease_flag" == "--for" && "$lease_value" =~ ^([1-9][0-9]{0,4})([mh])$ ]]; then
+        lease_minutes="${BASH_REMATCH[1]}"
+        if [[ "${BASH_REMATCH[2]}" == "h" ]]; then
+            lease_minutes=$((lease_minutes * 60))
+        fi
+        lease_deadline_epoch=$(( $(date +%s) + lease_minutes * 60 ))
+    elif [[ "$lease_flag" == "--until" ]]; then
+        lease_deadline_epoch=$(date -d "$lease_value" +%s 2>/dev/null) || \
+            lease_deadline_epoch=0
+    fi
+    ((lease_deadline_epoch > 0)) || die \
+        "long lease boundary must resolve to a valid deadline"
 fi
 
 [[ -n "${JHW_CONTROL_ENV:-}" || -n "${HOME:-}" ]] || die "HOME or JHW_CONTROL_ENV is required"
@@ -160,7 +344,12 @@ control_bin="${JHW_CONTROL_BIN:-$HOME/.local/bin/jhw-control}"
 [[ -x "$control_bin" ]] || die "jhw-control is not executable: $control_bin"
 
 board_id="${PIM_BOARD_ID:-pim}"
-if active_lease_matches_marker; then
+required_until=""
+if [[ "$long_lease" == "true" && "$lease_flag" == "--until" ]]; then
+    required_until="$lease_value"
+fi
+if active_lease_matches_marker \
+    "$long_lease" "$lease_deadline_epoch" "$purpose" "$required_until"; then
     [[ "$check_held_only" == "true" ]] && exit 0
     exec "${child[@]}"
 fi
@@ -193,16 +382,6 @@ lock_child=("${child[@]}")
 if [[ "$long_lease" == "true" ]]; then
     [[ -x "$DEADLINE_SUPERVISOR" ]] || die \
         "deadline supervisor is not executable: $DEADLINE_SUPERVISOR"
-    lease_deadline_epoch=0
-    if [[ "$lease_flag" == "--for" && "$lease_value" =~ ^([1-9][0-9]{0,4})([mh])$ ]]; then
-        lease_minutes="${BASH_REMATCH[1]}"
-        if [[ "${BASH_REMATCH[2]}" == "h" ]]; then
-            lease_minutes=$((lease_minutes * 60))
-        fi
-        lease_deadline_epoch=$(( $(date +%s) + lease_minutes * 60 ))
-    elif [[ "$lease_flag" == "--until" ]]; then
-        lease_deadline_epoch=$(date -d "$lease_value" +%s 2>/dev/null) || lease_deadline_epoch=0
-    fi
     lock_child=(
         "$DEADLINE_SUPERVISOR"
         --deadline-epoch "$lease_deadline_epoch"

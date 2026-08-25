@@ -8,11 +8,19 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
 BOARD_WRAPPER="$SCRIPT_DIR/with_pim_board.sh"
+TARGET_END=${PIM_AUTOMATION_TARGET_END:-$(( $(date +%s) + 24 * 60 * 60 ))}
+TARGET_UNTIL=$(date -d "@$TARGET_END" -Iseconds)
+LEASE_PURPOSE="pim-check auto_chain"
 
-if ! "$BOARD_WRAPPER" --check-held; then
+if ! "$BOARD_WRAPPER" \
+    --check-held \
+    --until "$TARGET_UNTIL" \
+    --purpose "$LEASE_PURPOSE" \
+    --long-lease true; then
+    export PIM_AUTOMATION_TARGET_END="$TARGET_END"
     exec "$BOARD_WRAPPER" \
-        --for 24h \
-        --purpose "pim-check auto_chain" \
+        --until "$TARGET_UNTIL" \
+        --purpose "$LEASE_PURPOSE" \
         --long-lease true \
         -- "$SCRIPT_PATH" "$@"
 fi

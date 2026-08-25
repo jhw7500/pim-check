@@ -75,6 +75,43 @@ SETSID_SHORT_OPTIONS = {"c", "f", "w"}
 SETSID_LONG_OPTIONS = {"--ctty", "--fork", "--wait"}
 SETSID_TERMINAL_SHORT_OPTIONS = {"h", "V"}
 SETSID_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
+UNSHARE_NAMESPACE_SHORT_OPTIONS = set("imnpuUCT")
+UNSHARE_SHORT_OPTIONS = {"f", "r", "c"}
+UNSHARE_SHORT_OPTIONS_WITH_VALUE = {"R", "w", "S", "G"}
+UNSHARE_TERMINAL_SHORT_OPTIONS = {"h", "V"}
+UNSHARE_NAMESPACE_LONG_OPTIONS = {
+    "--ipc",
+    "--mount",
+    "--net",
+    "--pid",
+    "--uts",
+    "--user",
+    "--cgroup",
+    "--time",
+}
+UNSHARE_LONG_OPTIONS = {
+    "--fork",
+    "--keep-caps",
+    "--map-root-user",
+    "--map-current-user",
+}
+UNSHARE_LONG_OPTIONS_WITH_OPTIONAL_VALUE = {
+    "--kill-child",
+    "--mount-proc",
+}
+UNSHARE_LONG_OPTIONS_WITH_VALUE = {
+    "--map-user",
+    "--map-group",
+    "--propagation",
+    "--setgroups",
+    "--root",
+    "--wd",
+    "--setuid",
+    "--setgid",
+    "--monotonic",
+    "--boottime",
+}
+UNSHARE_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 WATCH_SHORT_OPTIONS = {"b", "c", "e", "g", "p", "t", "w", "x"}
 WATCH_LONG_OPTIONS = {
     "--beep",
@@ -892,6 +929,85 @@ def _setsid_command_index(
     return index
 
 
+def _skip_unshare_short_options(tokens: list[str], index: int) -> tuple[int, bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in UNSHARE_TERMINAL_SHORT_OPTIONS:
+            return index + 1, True
+        if option in UNSHARE_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option in UNSHARE_NAMESPACE_SHORT_OPTIONS:
+            attached = cluster[position + 1 :]
+            if attached.startswith("="):
+                if len(attached) == 1:
+                    raise ValueError(f"unshare -{option} requires a non-empty file")
+                return index + 1, False
+            position += 1
+            continue
+        if option in UNSHARE_SHORT_OPTIONS_WITH_VALUE:
+            attached = cluster[position + 1 :]
+            if attached:
+                return index + 1, False
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError(f"unshare -{option} requires an operand")
+            return index + 2, False
+        raise ValueError(f"unsupported unshare option: -{option}")
+    return index + 1, False
+
+
+def _unshare_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if not token.startswith("--"):
+            index, terminal = _skip_unshare_short_options(tokens, index)
+            if terminal:
+                return None
+            continue
+        option, separator, operand = token.partition("=")
+        if option in UNSHARE_TERMINAL_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported unshare option: {token}")
+            return None
+        if option in UNSHARE_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported unshare option: {token}")
+            index += 1
+            continue
+        if option in (
+            UNSHARE_NAMESPACE_LONG_OPTIONS
+            | UNSHARE_LONG_OPTIONS_WITH_OPTIONAL_VALUE
+        ):
+            if separator and not operand:
+                raise ValueError(f"{option} requires a non-empty operand")
+            index += 1
+            continue
+        if option in UNSHARE_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                index += 2
+            continue
+        raise ValueError(f"unsupported unshare option: {token}")
+    if index >= len(tokens):
+        raise ValueError("unshare requires a program")
+    return index
+
+
 def _skip_watch_short_options(
     tokens: list[str], index: int, exec_direct: bool
 ) -> tuple[int, bool, bool]:
@@ -1622,6 +1738,11 @@ def _segment_is_blocked(
         )
     if executable == "setsid":
         child_index = _setsid_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "unshare":
+        child_index = _unshare_command_index(tokens, command_index)
         return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
         )

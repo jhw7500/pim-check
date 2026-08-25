@@ -13,14 +13,18 @@
 - 중첩 실행 표시는 조상 `board with` PID·세션·보드 좌표와 read-only status의 살아
   있는 exclusive holder가 모두 일치할 때만 인정한다. 호출자가
   `PIM_BOARD_LOCK_HELD=1`만 주입하면 정상 acquisition 경로로 돌아가며, 자동화
-  스크립트도 wrapper의 `--check-held` 결과 없이 self-wrap을 건너뛰지 않는다.
+  스크립트도 wrapper의 strict `--check-held` 결과 없이 self-wrap을 건너뛰지 않는다.
+  strict probe는 자동화의 정확한 `--until`·purpose·long-lease 인자, status의
+  `granted_until`, 조상 deadline supervisor의 종료·정리 예산을 함께 검증한다. 짧거나
+  다른 lease 안에서는 long-lease 중첩 실행을 허용하지 않고 정상 acquisition의 busy
+  실패를 보존한다.
 - long-lease 자동화의 grant 시각은 실행 deadline으로도 적용한다. 종료 31분 전
   process group에 TERM을 보내 teardown에 30분을 허용한다. 이는 네트워크 복구 전후의
   600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
   KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
   exit 75로 실패한다.
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
-  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`sudo`·`timeout`·`nohup`,
+  `nice`·`stdbuf`·`xargs`·`find`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
   escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
   명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
@@ -52,6 +56,9 @@
   util-linux `prlimit`은 resource·output 옵션 뒤 실행 command argv를 재귀 검사하고,
   PID 대상형과 command 없는 조회형은 실행 자식이 없는 형태로 구분한다. PID형의 잔여
   command, 누락·빈 옵션 값과 미지원 옵션은 fail-closed 처리한다.
+  util-linux 2.37.2 `unshare`는 namespace·mapping·root·working-directory 옵션 뒤의
+  program argv를 재귀 검사한다. program이 없어 기본 shell로 전환되는 형태와 누락·빈
+  옵션 값, 미지원 옵션은 fail-closed 처리한다.
   실제 executable 앞의 `<`·`>`·`>>`·`>|`·`<>`·`<<`·`<<<` 리다이렉션은 숫자·변수
   file descriptor 접두사와 붙은/분리된 대상을 구분해 건너뛴다. assignment와 `env`,
   shell command 문자열 안에서도 같은 분류를 적용하고, 대상 파일명이 runner와 같아도

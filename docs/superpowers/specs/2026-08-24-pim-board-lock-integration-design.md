@@ -104,7 +104,12 @@ running `jhw-control board with` and read-only `board status` reports the same
 live, unexpired exclusive session. A caller-supplied marker without that active
 lease evidence falls back to normal acquisition and can never directly launch
 the child. Supported automation entry points use the wrapper's `--check-held`
-probe instead of trusting the environment variable themselves.
+probe instead of trusting the environment variable themselves. That probe is
+strict: it also requires the automation's exact absolute deadline and purpose,
+the owning `board with` command's `--long-lease true`, a covering
+`granted_until` from `board status`, and a matching ancestor deadline
+supervisor with the full cleanup budget. A shorter or unrelated outer lease
+therefore cannot satisfy an automation self-wrap.
 
 GitHub Actions `concurrency: pim-target-lock` remains in place. It cheaply
 serializes CI jobs before they reach the cross-process board lock, while the
@@ -120,6 +125,16 @@ scripts/with_pim_board.sh \
   --purpose TEXT \
   [--long-lease true] \
   -- COMMAND [ARGUMENT ...]
+```
+
+Long-running automation verifies only its own supervised lease with:
+
+```bash
+scripts/with_pim_board.sh \
+  --check-held \
+  --until TIMESTAMP \
+  --purpose TEXT \
+  --long-lease true
 ```
 
 Required behavior:
@@ -139,6 +154,9 @@ Required behavior:
    available to the release-plan workflow's existing result policy.
 7. Produce a clear non-zero error for missing configuration, missing binary,
    invalid arguments, or an out-of-range long lease.
+8. Reuse an active lease for a long-lease child only when the strict probe
+   evidence matches; otherwise attempt normal acquisition and preserve its
+   busy failure without launching the child.
 
 The wrapper owns no retry loop. Signal-safe release remains the responsibility
 of `jhw-control board with`, which already releases on normal exit, `SIGINT`,
@@ -167,12 +185,13 @@ shows why the board is occupied.
 Each long-running script self-reexecutes through the wrapper before creating
 run state or issuing any board command:
 
-- `auto_chain.sh` uses a bounded 24-hour long lease;
+- `auto_chain.sh` computes an absolute deadline 24 hours ahead;
 - `auto_overnight.sh` uses its computed next-morning deadline;
 - `auto_weekend.sh` uses its computed Monday-morning deadline.
 
-The overnight and weekend scripts pass `--until` rather than estimating a
-duration twice. Long leases explicitly opt in with `--long-lease true`.
+All three scripts preserve their target epoch across self-reexec and pass the
+same exact `--until`, purpose, and `--long-lease true` contract to both the
+strict probe and acquisition. This avoids estimating a duration twice.
 Project Control's 72-hour ceiling remains authoritative; an invocation whose
 computed deadline exceeds it fails clearly instead of silently running with an
 insufficient lease. The intended Friday-to-Monday weekend window fits within

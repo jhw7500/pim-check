@@ -32,8 +32,13 @@ set -u
 if [[ "${1:-}" == "board" && "${2:-}" == "status" ]]; then
     [[ -r "$FAKE_JHW_ACTIVE" ]] || exit 3
     IFS= read -r active_session < "$FAKE_JHW_ACTIVE"
-    printf '{"command":"board status","result":{"boards":[{"board_id":"%s","holders":[{"holder_id":"hold-test","session":"%s","mode":"exclusive","purpose":"test","acquired_at":"2026-08-25T00:00:00.000Z","granted_until":"2026-08-26T00:00:00.000Z","liveness":"alive","expired":false,"overstay":false,"extended_after_expiry":false}],"reservations":[]}]}}\\n' "$3" "$active_session"
+    active_purpose="${FAKE_STATUS_PURPOSE:-test}"
+    granted_until="${FAKE_GRANTED_UNTIL:-2026-08-26T00:00:00.000Z}"
+    printf '{"command":"board status","result":{"boards":[{"board_id":"%s","holders":[{"holder_id":"hold-test","session":"%s","mode":"exclusive","purpose":"%s","acquired_at":"2026-08-25T00:00:00.000Z","granted_until":"%s","liveness":"alive","expired":false,"overstay":false,"extended_after_expiry":false}],"reservations":[]}]}}\\n' "$3" "$active_session" "$active_purpose" "$granted_until"
     exit 0
+fi
+if [[ "${FAKE_REJECT_BUSY:-}" == "1" && -r "$FAKE_JHW_ACTIVE" ]]; then
+    exit 4
 fi
 {
     printf 'CONFIG=%s\\n' "${FAKE_CONFIG_LOADED:-}"
@@ -78,6 +83,9 @@ def _control_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "PIM_BOARD_LOCK_SESSION",
         "PIM_BOARD_LOCK_BOARD_ID",
         "PIM_BOARD_SESSION",
+        "FAKE_GRANTED_UNTIL",
+        "FAKE_REJECT_BUSY",
+        "FAKE_STATUS_PURPOSE",
         "GITHUB_RUN_ID",
         "GITHUB_RUN_ATTEMPT",
         "GITHUB_REPOSITORY",
@@ -638,6 +646,147 @@ def test_wrapper_reuses_a_verified_active_lease_for_nested_calls(tmp_path: Path)
     assert log.read_text(encoding="utf-8").count("CONFIG=") == 1
 
 
+def test_wrapper_strict_probe_accepts_its_own_long_lease(tmp_path: Path) -> None:
+    env, _ = _control_env(tmp_path)
+    purpose = "pim-check auto_overnight"
+    target = datetime.now(timezone.utc) + timedelta(hours=2)
+    target_text = target.isoformat()
+    env.update(
+        {
+            "PIM_BOARD_SESSION": "pytest:strict-long-lease",
+            "FAKE_STATUS_PURPOSE": purpose,
+            "FAKE_GRANTED_UNTIL": target_text,
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--until",
+            target_text,
+            "--purpose",
+            purpose,
+            "--long-lease",
+            "true",
+            "--",
+            str(WRAPPER),
+            "--check-held",
+            "--until",
+            target_text,
+            "--purpose",
+            purpose,
+            "--long-lease",
+            "true",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize("status_mismatch", ["purpose", "deadline"])
+def test_wrapper_strict_probe_rejects_noncovering_status(
+    status_mismatch: str,
+    tmp_path: Path,
+) -> None:
+    env, _ = _control_env(tmp_path)
+    purpose = "pim-check auto_overnight"
+    now = datetime.now(timezone.utc)
+    target = now + timedelta(hours=2)
+    target_text = target.isoformat()
+    env.update(
+        {
+            "PIM_BOARD_SESSION": "pytest:strict-status",
+            "FAKE_STATUS_PURPOSE": (
+                "different automation" if status_mismatch == "purpose" else purpose
+            ),
+            "FAKE_GRANTED_UNTIL": (
+                (now + timedelta(minutes=30)).isoformat()
+                if status_mismatch == "deadline"
+                else target_text
+            ),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--until",
+            target_text,
+            "--purpose",
+            purpose,
+            "--long-lease",
+            "true",
+            "--",
+            str(WRAPPER),
+            "--check-held",
+            "--until",
+            target_text,
+            "--purpose",
+            purpose,
+            "--long-lease",
+            "true",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+
+
+def test_wrapper_does_not_reuse_short_lease_for_long_automation(tmp_path: Path) -> None:
+    child_started = tmp_path / "child-started"
+    env, _ = _control_env(tmp_path)
+    purpose = "pim-check auto_chain"
+    target = datetime.now(timezone.utc) + timedelta(hours=2)
+    target_text = target.isoformat()
+    env.update(
+        {
+            "PIM_BOARD_SESSION": "pytest:short-outer",
+            "FAKE_STATUS_PURPOSE": purpose,
+            "FAKE_GRANTED_UNTIL": target_text,
+            "FAKE_REJECT_BUSY": "1",
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(WRAPPER),
+            "--for",
+            "30m",
+            "--purpose",
+            purpose,
+            "--",
+            str(WRAPPER),
+            "--until",
+            target_text,
+            "--purpose",
+            purpose,
+            "--long-lease",
+            "true",
+            "--",
+            "sh",
+            "-c",
+            f"touch {child_started}",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 4
+    assert not child_started.exists()
+
+
 @pytest.mark.parametrize("missing, message", [("config", "not readable"), ("binary", "not executable")])
 def test_wrapper_reports_missing_control_dependency(tmp_path: Path, missing: str, message: str) -> None:
     env, _ = _control_env(tmp_path)
@@ -691,10 +840,15 @@ def _run_automation(
 
 
 def test_auto_chain_self_wraps_with_24_hour_long_lease(tmp_path: Path) -> None:
-    result, args = _run_automation("auto_chain.sh", tmp_path)
+    target = datetime(2026, 8, 26, 9, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+    result, args = _run_automation(
+        "auto_chain.sh",
+        tmp_path,
+        {"PIM_AUTOMATION_TARGET_END": str(int(target.timestamp()))},
+    )
 
     assert result.returncode == 4
-    assert args[args.index("--for") + 1] == "24h"
+    assert args[args.index("--until") + 1] == target.isoformat()
     assert args[args.index("--long-lease") + 1] == "true"
     assert "auto_chain" in args[args.index("--purpose") + 1]
 
@@ -811,6 +965,64 @@ def test_timed_automation_self_wraps_until_exact_deadline(script_name: str, tmp_
     assert args[args.index("--until") + 1] == target.isoformat()
     assert args[args.index("--long-lease") + 1] == "true"
     assert script_name.removesuffix(".sh") in args[args.index("--purpose") + 1]
+
+
+@pytest.mark.parametrize("script_name", ["auto_chain.sh", "auto_overnight.sh", "auto_weekend.sh"])
+def test_automation_probes_for_its_exact_long_lease(script_name: str, tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    automation = scripts / script_name
+    shutil.copy2(ROOT / "scripts" / script_name, automation)
+    call_log = tmp_path / "wrapper-calls.log"
+    _write_executable(
+        scripts / "with_pim_board.sh",
+        "#!/bin/sh\n"
+        "{\n"
+        "  printf 'CALL\\n'\n"
+        "  printf 'ARG=%s\\n' \"$@\"\n"
+        "  printf 'END\\n'\n"
+        '} >> "$WRAPPER_CALL_LOG"\n'
+        "exit 4\n",
+    )
+    kst = timezone(timedelta(hours=9))
+    target = datetime(2026, 8, 26, 9, 0, 0, tzinfo=kst)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PIM_AUTOMATION_TARGET_END": str(int(target.timestamp())),
+            "TZ": "Asia/Seoul",
+            "WRAPPER_CALL_LOG": str(call_log),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(automation)],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    calls = [
+        [line.removeprefix("ARG=") for line in block.splitlines() if line.startswith("ARG=")]
+        for block in call_log.read_text(encoding="utf-8").split("CALL\n")[1:]
+    ]
+    purpose = f"pim-check {script_name.removesuffix('.sh')}"
+    required = [
+        "--until",
+        target.isoformat(),
+        "--purpose",
+        purpose,
+        "--long-lease",
+        "true",
+    ]
+
+    assert result.returncode == 4
+    assert calls[0] == ["--check-held", *required]
+    assert calls[1][: len(required)] == required
 
 
 @pytest.mark.parametrize("script_name", ["auto_chain.sh", "auto_overnight.sh", "auto_weekend.sh"])
