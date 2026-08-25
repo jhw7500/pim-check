@@ -231,7 +231,8 @@ Before classifying a non-Python command as unrelated, the guard parses GNU
 `env` short-option clusters (including split-string operands), unwraps
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `flock`, `setarch`,
 `start-stop-daemon`, `chroot`, `systemd-run`, `watch`, `taskset`, `chrt`, `ionice`, `script`,
-`prlimit`, `setsid`, `unshare`, `sudo`, `timeout`, and `nohup` command operands,
+`prlimit`, `setsid`, `unshare`, `sudo`, `timeout`, external GNU `time`, and
+`nohup` command operands,
 reparses `eval` arguments as a command string, and reparses command strings
 passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
 
@@ -265,6 +266,12 @@ missing command, remote host or machine execution, arbitrary unit properties,
 and unknown or empty options fail closed because executable identity or launch
 semantics cannot be established statically. Help and version modes remain
 non-launching terminal forms.
+For external GNU `time`, documented measurement and output options are
+separated from the command argv, which is recursively classified. Help and
+version modes remain non-launching terminal forms; a missing command and
+unknown, empty, or malformed options fail closed. The bare shell `time`
+reserved word remains fail-closed compound syntax instead of being mistaken
+for the external executable.
 Before locating that executable, the guard skips leading shell input/output,
 append, clobber, bidirectional, here-document, and here-string redirections.
 Attached and split targets, numeric or named file-descriptor prefixes, and

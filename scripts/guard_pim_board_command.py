@@ -48,6 +48,17 @@ EXEC_SHORT_OPTIONS = {"c", "l"}
 PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X", "--check-hash-based-pycs"}
 TIMEOUT_OPTIONS_WITH_VALUE = {"-k", "--kill-after", "-s", "--signal"}
 TIMEOUT_OPTIONS = {"--foreground", "--preserve-status", "--verbose", "-v"}
+GNU_TIME_SHORT_OPTIONS = {"a", "p", "q", "v"}
+GNU_TIME_SHORT_OPTIONS_WITH_VALUE = {"f", "o"}
+GNU_TIME_TERMINAL_SHORT_OPTIONS = {"V"}
+GNU_TIME_LONG_OPTIONS = {
+    "--append",
+    "--portability",
+    "--quiet",
+    "--verbose",
+}
+GNU_TIME_LONG_OPTIONS_WITH_VALUE = {"--format", "--output"}
+GNU_TIME_TERMINAL_LONG_OPTIONS = {"--help", "--version"}
 STDBUF_SHORT_OPTIONS = {"i", "o", "e"}
 STDBUF_LONG_OPTIONS = {"--input", "--output", "--error"}
 XARGS_SHORT_OPTIONS = {"0", "o", "p", "r", "t", "x"}
@@ -890,6 +901,73 @@ def _timeout_command_index(tokens: list[str], command_index: int) -> int:
     index += 1
     if index >= len(tokens):
         raise ValueError("timeout requires a command")
+    return index
+
+
+def _gnu_time_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        option, separator, operand = token.partition("=")
+        if option in GNU_TIME_TERMINAL_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported time option: {token}")
+            return None
+        if option in GNU_TIME_LONG_OPTIONS:
+            if separator:
+                raise ValueError(f"unsupported time option: {token}")
+            index += 1
+            continue
+        if option in GNU_TIME_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                if not operand:
+                    raise ValueError(f"{option} requires an operand")
+                index += 1
+            else:
+                if index + 1 >= len(tokens) or not tokens[index + 1]:
+                    raise ValueError(f"{option} requires an operand")
+                index += 2
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"unsupported time option: {token}")
+
+        cluster = token[1:]
+        position = 0
+        next_index = index + 1
+        terminal = False
+        while position < len(cluster):
+            short_option = cluster[position]
+            if short_option in GNU_TIME_SHORT_OPTIONS:
+                position += 1
+                continue
+            if short_option in GNU_TIME_TERMINAL_SHORT_OPTIONS:
+                terminal = True
+                position += 1
+                continue
+            if short_option not in GNU_TIME_SHORT_OPTIONS_WITH_VALUE:
+                raise ValueError(
+                    f"unsupported time option: -{short_option}"
+                )
+            attached_operand = cluster[position + 1 :]
+            if attached_operand:
+                position = len(cluster)
+                continue
+            if index + 1 >= len(tokens) or not tokens[index + 1]:
+                raise ValueError(f"-{short_option} requires an operand")
+            next_index = index + 2
+            position = len(cluster)
+        if terminal:
+            return None
+        index = next_index
+    if index >= len(tokens):
+        raise ValueError("time requires a command")
     return index
 
 
@@ -2288,6 +2366,11 @@ def _segment_is_blocked(
     if executable == "timeout":
         child_index = _timeout_command_index(tokens, command_index)
         return _segment_is_blocked(
+            tokens[child_index:], depth + 1, relative_wrapper_allowed
+        )
+    if executable == "time":
+        child_index = _gnu_time_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
             tokens[child_index:], depth + 1, relative_wrapper_allowed
         )
     if executable == "nohup":

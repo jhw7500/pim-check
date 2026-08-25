@@ -172,6 +172,18 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "run_smart_verify.py",
         "timeout 30m systemd-run --user --scope python3 pim_check.py "
         "--plan smoke",
+        "/usr/bin/time python3 pim_check.py --plan smoke",
+        "/bin/time python3 -m pim_check --pla smoke",
+        "/usr/bin/time -p python3 run_comprehensive_verify.py",
+        "/usr/bin/time -av -f %E -o /tmp/pim.time "
+        "/usr/bin/env python3 pim_check.py --plan smoke",
+        "/usr/bin/time -avf%E -o/tmp/pim.time "
+        "python3 pim_check.py --plan smoke",
+        "/usr/bin/time --portability --format=%E "
+        "--output=/tmp/pim.time python3 pim_check.py --plan smoke",
+        "env time python3 pim_check.py --plan smoke",
+        "command time python3 pim_check.py --plan smoke",
+        "timeout 30m /usr/bin/time python3 pim_check.py --plan smoke",
         "builtin exec python3 pim_check.py --plan smoke",
         "builtin eval 'python3 pim_check.py --plan smoke'",
         "builtin source scripts/test_vflip_frame_compare.sh",
@@ -728,6 +740,19 @@ def test_guard_fails_closed_on_interactive_script_commands(
         "--for 30m --purpose safe -- python3 pim_check.py --plan smoke",
         "systemd-run --user --scope scripts/with_pim_board.sh --for 30m "
         "--purpose safe -- python3 pim_check.py --plan smoke",
+        "/usr/bin/time /bin/printf %s safe",
+        "/usr/bin/time -p pytest -q tests/test_plan_load.py",
+        "/usr/bin/time --format %E --output /tmp/pim.time /bin/true",
+        "env time --quiet /bin/true",
+        "command time --format=%E /bin/printf %s safe",
+        "/usr/bin/time -- /bin/printf %s safe",
+        "/usr/bin/time --help",
+        "/usr/bin/time --version",
+        "/usr/bin/time -V",
+        "/usr/bin/time scripts/with_pim_board.sh --for 30m "
+        "--purpose safe -- python3 pim_check.py --plan smoke",
+        "scripts/with_pim_board.sh --for 30m --purpose safe -- "
+        "/usr/bin/time python3 pim_check.py --plan smoke",
         "builtin printf %s safe",
         "builtin command -v python3 pim_check.py --plan smoke",
         "builtin",
@@ -1227,6 +1252,22 @@ def test_guard_allows_absolute_wrapper_after_directory_change() -> None:
         "python3 pim_check.py --plan smoke",
         "cd /tmp && systemd-run --scope scripts/with_pim_board.sh "
         "--for 30m --purpose unsafe -- python3 pim_check.py --plan smoke",
+        "/usr/bin/time",
+        "/usr/bin/time --",
+        "/usr/bin/time -p",
+        "/usr/bin/time --unknown /bin/true",
+        "/usr/bin/time -x /bin/true",
+        "/usr/bin/time -f",
+        "/usr/bin/time -af",
+        "/usr/bin/time -o",
+        "/usr/bin/time --format",
+        "/usr/bin/time --format= /bin/true",
+        "/usr/bin/time --output",
+        "/usr/bin/time --output= /bin/true",
+        "/usr/bin/time --append=true /bin/true",
+        "/usr/bin/time --help=true",
+        "cd /tmp && /usr/bin/time scripts/with_pim_board.sh --for 30m "
+        "--purpose unsafe -- python3 pim_check.py --plan smoke",
         "builtin -x printf %s safe",
         "builtin --help",
         "sudo",
