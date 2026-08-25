@@ -139,6 +139,36 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "bash -c $'python3 pim_check.py --plan smoke'",
+        "nohup bash -c $'python3 run_comprehensive_verify.py'",
+    ],
+)
+def test_guard_blocks_board_commands_in_bash_ansi_c_quotes(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        r"bash -c $'python3\x20pim_check.py\x20--plan\x20smoke'",
+        r"printf %s $'safe\n'",
+    ],
+)
+def test_guard_fails_closed_on_bash_ansi_c_escape_sequences(
+    command: str,
+) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "scripts/with_pim_board.sh --for 30m --purpose manual -- python3 pim_check.py --plan smoke",
         "bash scripts/auto_overnight.sh",
         "./scripts/auto_weekend.sh",
@@ -244,6 +274,21 @@ def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "bash -c $'pytest -q tests/test_plan_load.py'",
+        "printf %s \"$'python3 pim_check.py --plan smoke'\"",
+        r"printf %s \$'python3 pim_check.py --plan smoke'",
+    ],
+)
+def test_guard_allows_safe_or_literal_bash_ansi_c_quotes(command: str) -> None:
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash -s <<< 'python3 pim_check.py --plan smoke'",
         "bash <<< 'python3 pim_check.py --plan smoke'",
         "printf 'python3 pim_check.py --plan smoke\\n' | bash",
@@ -322,6 +367,7 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
         "sudo -x true",
         "sudo --unknown true",
         "sudo -e run_comprehensive_verify.py",
+        "bash -c $'python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:

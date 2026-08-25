@@ -209,6 +209,10 @@ Before classifying a non-Python command as unrelated, the guard parses GNU
 `builtin`, `exec`, `nice`, `stdbuf`, `xargs`, `setsid`, `sudo`, `timeout`, and
 `nohup` command operands, reparses `eval` arguments as a command string, and
 reparses command strings passed to `bash`, `dash`, `sh`, or `zsh` with `-c`.
+Unquoted Bash ANSI-C `$'...'` strings without backslash escapes are normalized
+before that recursive classification. ANSI-C escape sequences and unterminated
+forms fail closed instead of approximating Bash decoding; quoted or escaped
+literal `$'...'` text remains unchanged.
 Unknown or malformed launcher options fail closed. Launcher inspection is
 recursive and fails closed after a bounded nesting depth. Only
 `scripts/with_pim_board.sh`, `./scripts/with_pim_board.sh`, and the resolved

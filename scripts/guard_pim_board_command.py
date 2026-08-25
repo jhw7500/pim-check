@@ -184,6 +184,57 @@ def _backtick_substitution(command: str, start: int) -> tuple[str, int]:
     raise ValueError("unterminated shell command substitution")
 
 
+def _normalize_ansi_c_quotes(command: str) -> str:
+    normalized: list[str] = []
+    quote: Optional[str] = None
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            normalized.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            normalized.append(char)
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            normalized.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if command.startswith("$'", index):
+            body: list[str] = []
+            body_has_escape = False
+            index += 2
+            while index < len(command):
+                char = command[index]
+                if char == "\\":
+                    body_has_escape = True
+                    index += 2
+                    continue
+                if char == "'":
+                    break
+                body.append(char)
+                index += 1
+            if index >= len(command):
+                raise ValueError("unterminated Bash ANSI-C quote")
+            if body_has_escape:
+                raise ValueError("Bash ANSI-C escape sequences are unsupported")
+            normalized.append(shlex.quote("".join(body)))
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        normalized.append(char)
+        index += 1
+    return "".join(normalized)
+
+
 def _shell_substitutions(command: str) -> Iterator[str]:
     quote: Optional[str] = None
     escaped = False
@@ -883,6 +934,7 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
 def _command_is_blocked(command: str, depth: int = 0) -> bool:
     if depth > MAX_LAUNCHER_DEPTH:
         raise ValueError("launcher nesting is too deep")
+    command = _normalize_ansi_c_quotes(command)
     if any(
         _command_is_blocked(substitution, depth + 1)
         for substitution in _shell_substitutions(command)

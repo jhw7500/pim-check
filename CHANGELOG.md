@@ -18,7 +18,9 @@
 - Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
   `nice`·`stdbuf`·`xargs`·`setsid`·`sudo`·`timeout`·`nohup`,
   shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
-  outer shell에서 활성인 `$()`·백틱 명령 치환, 그룹·조건 제어문 내부까지 검사한다.
+  escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
+  명령 치환, 그룹·조건 제어문 내부까지 검사한다. ANSI-C escape나 미종결 인용은
+  정확한 Bash 해석을 추측하지 않고 fail-closed 처리한다.
   single quote·escape로 보호돼 lease 획득 후
   자식에게 전달되는 치환은 허용한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을
   수행하는 standalone `test_vflip_frame_compare.sh`도 직접 실행을 막는다. 축약할 수
