@@ -21,7 +21,21 @@ HARDWARE_RUNNERS = {
     "run_failed_retry.py",
 }
 SHELL_BREAKS = set(";&|(){}\n")
-ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+ENV_SHORT_OPTIONS = {"i", "0", "v"}
+ENV_SHORT_OPTIONS_WITH_VALUE = {"u", "C", "S"}
+ENV_LONG_OPTIONS = {
+    "--ignore-environment",
+    "--null",
+    "--debug",
+    "--list-signal-handling",
+}
+ENV_LONG_OPTIONS_WITH_VALUE = {"--unset", "--chdir", "--split-string"}
+ENV_LONG_OPTIONS_WITH_OPTIONAL_VALUE = {
+    "--block-signal",
+    "--default-signal",
+    "--ignore-signal",
+}
+EXEC_SHORT_OPTIONS = {"c", "l"}
 PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X", "--check-hash-based-pycs"}
 TIMEOUT_OPTIONS_WITH_VALUE = {"-k", "--kill-after", "-s", "--signal"}
 TIMEOUT_OPTIONS = {"--foreground", "--preserve-status", "--verbose", "-v"}
@@ -58,38 +72,80 @@ def _basename(token: str) -> str:
     return PurePosixPath(token).name
 
 
+def _expand_env_split_string(
+    tokens: list[str], index: int, operand: str, consumed: int
+) -> int:
+    expanded = shlex.split(operand)
+    if not expanded:
+        raise ValueError("env split-string operand is empty")
+    tokens[index : index + consumed] = expanded
+    return index
+
+
+def _skip_env_short_options(tokens: list[str], index: int) -> int:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in ENV_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option not in ENV_SHORT_OPTIONS_WITH_VALUE:
+            raise ValueError(f"unsupported env option: -{option}")
+        attached = cluster[position + 1 :]
+        if attached:
+            operand = attached
+            consumed = 1
+        else:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"env -{option} requires an operand")
+            operand = tokens[index + 1]
+            consumed = 2
+        if option == "S":
+            return _expand_env_split_string(tokens, index, operand, consumed)
+        return index + consumed
+    return index + 1
+
+
 def _skip_env_options(tokens: list[str], index: int) -> int:
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
             return index + 1
-        if not token.startswith("-") or token == "-":
-            return index
-        if token in {"-S", "--split-string"}:
-            if index + 1 >= len(tokens):
-                raise ValueError(f"{token} requires a split-string operand")
-            expanded = shlex.split(tokens[index + 1])
-            if not expanded:
-                raise ValueError(f"{token} split-string operand is empty")
-            tokens[index : index + 2] = expanded
-            continue
-        if token.startswith("-S"):
-            expanded = shlex.split(token[2:])
-            if not expanded:
-                raise ValueError("-S split-string operand is empty")
-            tokens[index : index + 1] = expanded
-            continue
-        if token.startswith("--split-string="):
-            expanded = shlex.split(token.partition("=")[2])
-            if not expanded:
-                raise ValueError("--split-string operand is empty")
-            tokens[index : index + 1] = expanded
-            continue
-        index += 1
-        if token in ENV_OPTIONS_WITH_VALUE:
-            if index >= len(tokens):
-                raise ValueError(f"{token} requires an operand")
+        if token == "-":
             index += 1
+            continue
+        if not token.startswith("-"):
+            return index
+        if not token.startswith("--"):
+            index = _skip_env_short_options(tokens, index)
+            continue
+        if token in {"--help", "--version"}:
+            return len(tokens)
+        if token in ENV_LONG_OPTIONS:
+            index += 1
+            continue
+        option, separator, attached = token.partition("=")
+        if option in ENV_LONG_OPTIONS_WITH_VALUE:
+            if separator:
+                operand = attached
+                consumed = 1
+            else:
+                if index + 1 >= len(tokens):
+                    raise ValueError(f"{option} requires an operand")
+                operand = tokens[index + 1]
+                consumed = 2
+            if option == "--split-string":
+                index = _expand_env_split_string(
+                    tokens, index, operand, consumed
+                )
+            else:
+                index += consumed
+            continue
+        if option in ENV_LONG_OPTIONS_WITH_OPTIONAL_VALUE:
+            index += 1
+            continue
+        raise ValueError(f"unsupported env option: {token}")
     return index
 
 
@@ -157,6 +213,50 @@ def _python_script(tokens: list[str], command_index: int) -> tuple[Optional[str]
     if index >= len(tokens):
         return None, []
     return _basename(tokens[index]), tokens[index + 1 :]
+
+
+def _skip_exec_short_options(
+    tokens: list[str], index: int
+) -> tuple[int, bool]:
+    cluster = tokens[index][1:]
+    position = 0
+    while position < len(cluster):
+        option = cluster[position]
+        if option in EXEC_SHORT_OPTIONS:
+            position += 1
+            continue
+        if option != "a":
+            raise ValueError(f"unsupported exec option: -{option}")
+        attached = cluster[position + 1 :]
+        if attached:
+            return index + 1, True
+        if index + 1 >= len(tokens):
+            raise ValueError("exec -a requires a name")
+        return index + 2, True
+    return index + 1, False
+
+
+def _exec_command_index(
+    tokens: list[str], command_index: int
+) -> Optional[int]:
+    index = command_index + 1
+    name_override = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-" or not token.startswith("-"):
+            break
+        if token.startswith("--"):
+            raise ValueError(f"unsupported exec option: {token}")
+        index, used_name_override = _skip_exec_short_options(tokens, index)
+        name_override = name_override or used_name_override
+    if index >= len(tokens):
+        if name_override:
+            raise ValueError("exec -a requires a command")
+        return None
+    return index
 
 
 def _timeout_command_index(tokens: list[str], command_index: int) -> int:
@@ -257,6 +357,11 @@ def _segment_is_blocked(tokens: list[str], depth: int = 0) -> bool:
     executable = _basename(tokens[command_index])
     if executable == "with_pim_board.sh":
         return False
+    if executable == "exec":
+        child_index = _exec_command_index(tokens, command_index)
+        return child_index is not None and _segment_is_blocked(
+            tokens[child_index:], depth + 1
+        )
     if executable == "timeout":
         child_index = _timeout_command_index(tokens, command_index)
         return _segment_is_blocked(tokens[child_index:], depth + 1)

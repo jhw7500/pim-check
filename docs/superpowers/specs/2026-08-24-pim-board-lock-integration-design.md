@@ -204,11 +204,13 @@ The hook exits with status `2` and writes a remediation message to stderr so
 Claude blocks the tool call before execution. Unrelated shell commands pass
 unchanged.
 
-Before classifying a non-Python command as unrelated, the guard unwraps
-`timeout` and `nohup` command operands and reparses command strings passed to
-`bash`, `dash`, `sh`, or `zsh` with `-c`. Launcher inspection is recursive and
-fails closed after a bounded nesting depth; a recognized board wrapper ends
-inspection because that child already executes under the lease.
+Before classifying a non-Python command as unrelated, the guard parses GNU
+`env` short-option clusters (including split-string operands), unwraps `exec`,
+`timeout`, and `nohup` command operands, and reparses command strings passed to
+`bash`, `dash`, `sh`, or `zsh` with `-c`. Unknown or malformed launcher options
+fail closed. Launcher inspection is recursive and fails closed after a bounded
+nesting depth; a recognized board wrapper ends inspection because that child
+already executes under the lease.
 
 Shell grouping tokens (`()`, `{}`) are command boundaries, and command-bearing
 control prefixes such as `if`, `then`, `while`, and `do` are reduced before the

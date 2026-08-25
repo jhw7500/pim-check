@@ -52,6 +52,12 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
         "(python3 pim_check.py --plan smoke)",
         "{ python3 run_comprehensive_verify.py; }",
         "if true; then python3 pim_check.py --plan smoke; fi",
+        "exec python3 pim_check.py --plan smoke",
+        "exec -- python3 pim_check.py --plan smoke",
+        "exec -cl -a board-runner python3 run_comprehensive_verify.py",
+        "env -iS'python3 pim_check.py --plan smoke'",
+        "env -ivS'python3 pim_check.py --plan smoke'",
+        "env - python3 pim_check.py --plan smoke",
     ],
 )
 def test_guard_blocks_direct_board_commands(command: str) -> None:
@@ -80,6 +86,10 @@ def test_guard_blocks_direct_board_commands(command: str) -> None:
         "(scripts/with_pim_board.sh --for 30m --purpose safe -- true)",
         "{ pytest -q tests/test_plan_load.py; }",
         "if true; then pytest -q tests/test_plan_load.py; fi",
+        "exec scripts/with_pim_board.sh --for 30m --purpose safe -- true",
+        "exec -cl -a safe-run pytest -q tests/test_plan_load.py",
+        "env -iS'printf %s safe'",
+        "env - printf %s safe",
     ],
 )
 def test_guard_allows_wrapped_or_unrelated_commands(command: str) -> None:
@@ -98,7 +108,18 @@ def test_guard_does_not_let_wrapper_in_one_segment_cover_a_later_direct_run() ->
     assert result.returncode == 2
 
 
-@pytest.mark.parametrize("command", ["timeout 30m", "nohup", "bash -c"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "timeout 30m",
+        "nohup",
+        "bash -c",
+        "exec -a",
+        "exec -x true",
+        "env -iS",
+        "env -iX true",
+    ],
+)
 def test_guard_fails_closed_on_malformed_launchers(command: str) -> None:
     result = _run_guard(command)
 
