@@ -9,6 +9,7 @@ from .rules import EvidenceError, Verdict, _finite_number, evaluate_rule
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_RELATIVE_PATH_RE = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_RFC3339_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 _COMPONENT_VERDICTS = {Verdict.PASS.value, Verdict.FAIL.value, Verdict.ERROR.value}
 
 
@@ -38,7 +39,7 @@ def _require_integer(value: object, field: str) -> int:
 
 def _validate_timestamp(value: object, field: str) -> None:
     timestamp = _require_string(value, field)
-    if not timestamp.endswith("Z"):
+    if not _RFC3339_UTC_RE.fullmatch(timestamp):
         raise EvidenceError("{0} must be an RFC3339 UTC timestamp".format(field))
     try:
         dt.datetime.fromisoformat(timestamp[:-1] + "+00:00")

@@ -147,6 +147,15 @@ def test_invalid_timestamp_or_raw_reference_is_rejected(path: tuple[object, ...]
         validate_structure(document)
 
 
+def test_date_only_utc_timestamp_is_rejected() -> None:
+    """Accepting a date-only value with Z as an RFC3339 date-time must fail."""
+    document = load_document()
+    document["created_at"] = "2026-08-26Z"
+
+    with pytest.raises(EvidenceError, match="timestamp"):
+        validate_structure(document)
+
+
 @pytest.mark.parametrize("field", ["preconditions", "restoration", "identity"])
 def test_pass_claim_with_failed_gate_component_recomputes_fail(field: str) -> None:
     """Producer PASS must not mask failed preconditions, restoration, or identity."""
