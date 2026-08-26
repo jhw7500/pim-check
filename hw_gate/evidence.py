@@ -189,7 +189,11 @@ def _baseline_gates(baseline: Dict[str, Any]) -> List[Dict[str, Any]]:
     return gates
 
 
-def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any]) -> Verdict:
+def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any], canonical_baseline: bool = False) -> Verdict:
+    if canonical_baseline:
+        from .baseline import assert_gate_coverage
+
+        assert_gate_coverage(gate, baseline_gate)
     if gate.get("adapter_schema_version") != baseline_gate.get("adapter_schema_version"):
         return Verdict.ERROR
     if gate.get("adapter_id") != baseline_gate.get("adapter_id"):
@@ -239,6 +243,27 @@ def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any]) -> Verdic
     return Verdict.FAIL if has_fail else Verdict.PASS
 
 
+def _canonical_baseline_gates(baseline: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Convert strict map-keyed baseline gates to the evaluator's gate shape."""
+    gates: List[Dict[str, Any]] = []
+    for gate_id, gate in baseline["gates"].items():
+        metrics = []
+        for metric_id, metric in gate["metrics"].items():
+            item = dict(metric)
+            item["id"] = metric_id
+            metrics.append(item)
+        gates.append(
+            {
+                "id": gate_id,
+                "adapter_id": gate_id,
+                "adapter_schema_version": gate["adapter_schema_version"],
+                "comparability": gate["comparability"],
+                "metrics": metrics,
+            }
+        )
+    return gates
+
+
 def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[str, Any]]) -> Verdict:
     """Recompute a verdict from validated evidence, never trusting producer claims."""
     try:
@@ -247,7 +272,20 @@ def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[
             return Verdict.BUSY
         if baseline is None:
             return Verdict.ERROR
-        baseline_by_id = {gate["id"]: gate for gate in _baseline_gates(baseline)}
+        baseline_data = getattr(baseline, "data", baseline)
+        canonical_baseline = isinstance(baseline_data, dict) and any(
+            key in baseline_data for key in ("schema_version", "baseline_version", "target_identity", "calibration")
+        )
+        if canonical_baseline:
+            from .baseline import validate_baseline
+
+            validate_baseline(baseline_data, production=True)
+            if document.get("comparability") != baseline_data["comparability"]:
+                return Verdict.ERROR
+            baseline_gates = _canonical_baseline_gates(baseline_data)
+        else:
+            baseline_gates = _baseline_gates(baseline_data)
+        baseline_by_id = {gate["id"]: gate for gate in baseline_gates}
         evidence_gate_ids = {gate["id"] for gate in document["gates"]}
         if evidence_gate_ids != set(baseline_by_id):
             return Verdict.ERROR
@@ -256,7 +294,7 @@ def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[
             baseline_gate = baseline_by_id.get(gate["id"])
             if baseline_gate is None:
                 return Verdict.ERROR
-            verdicts.append(_gate_verdict(gate, baseline_gate))
+            verdicts.append(_gate_verdict(gate, baseline_gate, canonical_baseline=canonical_baseline))
     except (EvidenceError, KeyError, TypeError):
         return Verdict.ERROR
     if Verdict.ERROR in verdicts:
