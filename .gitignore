@@ -31,9 +31,10 @@ build/
 # Real-time JSONL event stream output (per-run files + current.jsonl symlink)
 events/
 
-# Runtime logs (keep JSON results untracked by default; track selectively)
+# Runtime outputs (root-only; tests/golden/*.golden.json remains tracked)
 *.log
-mixed_combo_results.json
+/*_results.json
+/temp_awb_retry.json
 comprehensive_results.json.bak.*
 
 # Diagnostic artifacts (vflip frame compare PNG bundles 등)

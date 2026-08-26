@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 all = ["rich>=13"]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4", "pre-commit>=3.5"]
 # pim_viewer TUI 용. 없으면 viewer 는 plain-text 폴백으로 동작한다.
 viewer = ["rich>=13"]
 # JS smoke test (tests/test_viewer_js_smoke.py) — INDEX_HTML 의 임베디드 JS 가

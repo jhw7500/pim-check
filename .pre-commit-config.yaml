@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: reject-runtime-result-json
+        name: Reject runtime result JSON artifacts
+        entry: python3 scripts/check_result_artifacts.py
+        language: system
+        pass_filenames: false
+        always_run: true
