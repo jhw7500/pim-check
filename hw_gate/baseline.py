@@ -24,6 +24,10 @@ _TOP_LEVEL_KEYS = {
     "calibration",
 }
 _COMPARABILITY_KEYS = {"board_id", "target_host", "bps_fixture", "encoder"}
+_GATE_COMPARABILITY_KEYS = {
+    "bps_quick": {"fixture", "encoder"},
+    "mixed_combo": {"scenario_matrix"},
+}
 _GATE_KEYS = {"adapter_schema_version", "comparability", "metrics"}
 _METRIC_KEYS = {"value", "unit", "rule", "calibration_required"}
 _IDENTITY_KEYS = {"id", "kind", "module", "path", "sha256", "version", "calibration_required"}
@@ -96,12 +100,12 @@ def _reject_unknown(mapping: Mapping[str, Any], allowed: Iterable[str], field: s
         raise EvidenceError("{0} contains unknown key: {1}".format(field, sorted(unknown)[0]))
 
 
-def _validate_comparability(value: object, field: str, *, top_level: bool) -> Dict[str, Any]:
+def _validate_comparability(value: object, field: str, required_keys: Iterable[str]) -> Dict[str, Any]:
     comparability = _require_mapping(value, field)
-    if top_level:
-        _reject_unknown(comparability, _COMPARABILITY_KEYS, field)
-        if set(comparability) != _COMPARABILITY_KEYS:
-            raise EvidenceError("{0} must contain the complete comparability context".format(field))
+    required = set(required_keys)
+    _reject_unknown(comparability, required, field)
+    if set(comparability) != required:
+        raise EvidenceError("{0} must contain the complete comparability context".format(field))
     for key, item in comparability.items():
         _require_string(key, "{0} key".format(field))
         _require_string(item, "{0}.{1}".format(field, key))
@@ -256,7 +260,7 @@ def validate_baseline(data: object, production: bool = True) -> None:
     source_commit = _require_string(baseline.get("source_commit"), "source_commit")
     if not _COMMIT_RE.fullmatch(source_commit):
         raise EvidenceError("source_commit must be a lowercase git commit SHA")
-    _validate_comparability(baseline.get("comparability"), "comparability", top_level=True)
+    comparability = _validate_comparability(baseline.get("comparability"), "comparability", _COMPARABILITY_KEYS)
 
     identities = _require_list(baseline.get("target_identity"), "target_identity")
     if production and not identities:
@@ -274,7 +278,16 @@ def validate_baseline(data: object, production: bool = True) -> None:
         _reject_unknown(gate, _GATE_KEYS, "gates.{0}".format(gate_id))
         if _require_integer(gate.get("adapter_schema_version"), "gates.{0}.adapter_schema_version".format(gate_id)) != 1:
             raise EvidenceError("gates.{0}.adapter_schema_version must be 1".format(gate_id))
-        _validate_comparability(gate.get("comparability"), "gates.{0}.comparability".format(gate_id), top_level=False)
+        gate_comparability = _validate_comparability(
+            gate.get("comparability"),
+            "gates.{0}.comparability".format(gate_id),
+            _GATE_COMPARABILITY_KEYS[gate_id],
+        )
+        if gate_id == "bps_quick" and (
+            gate_comparability["fixture"] != comparability["bps_fixture"]
+            or gate_comparability["encoder"] != comparability["encoder"]
+        ):
+            raise EvidenceError("gates.bps_quick.comparability must match the top-level BPS context")
         metrics = _require_mapping(gate.get("metrics"), "gates.{0}.metrics".format(gate_id))
         if not metrics:
             raise EvidenceError("gates.{0}.metrics must not be empty".format(gate_id))

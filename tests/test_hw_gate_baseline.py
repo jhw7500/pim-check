@@ -192,6 +192,32 @@ def test_gate_coverage_requires_matching_comparability() -> None:
         assert_gate_coverage(raw_gate, baseline["gates"]["bps_quick"])
 
 
+@pytest.mark.parametrize("mutation", ["empty", "missing", "unknown"])
+def test_production_baseline_requires_each_gate_comparability_inventory(mutation: str) -> None:
+    """Allowing a gate to erase or rename its measurement context must fail closed."""
+    baseline = load_fixture()
+    comparability = baseline["gates"]["bps_quick"]["comparability"]
+    if mutation == "empty":
+        comparability.clear()
+    elif mutation == "missing":
+        comparability.pop("encoder")
+    else:
+        comparability["unreviewed_context"] = "enabled"
+
+    with pytest.raises(EvidenceError, match="comparability"):
+        validate_baseline(baseline)
+
+
+def test_gate_coverage_rejects_a_different_comparability_value() -> None:
+    """Comparing the same metric inventory under another encoder must fail closed."""
+    baseline = load_fixture()
+    raw_gate = raw_gate_from(baseline)
+    raw_gate["comparability"]["encoder"] = "h264"
+
+    with pytest.raises(EvidenceError, match="comparability"):
+        assert_gate_coverage(raw_gate, baseline["gates"]["bps_quick"])
+
+
 def test_recompute_uses_committed_baseline_coverage_and_rules() -> None:
     """Using artifact rules or incomplete committed coverage must not produce PASS."""
     baseline = load_fixture()
