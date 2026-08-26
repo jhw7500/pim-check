@@ -4,6 +4,7 @@ __pycache__/
 .omc/
 .bkit/
 reports/
+hw-results/
 *.egg-info/
 dist/
 build/
