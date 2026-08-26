@@ -9,6 +9,8 @@ from hw_gate.rules import EvidenceError
 
 RAW_TAIL_BYTES = 16_384
 DMESG_LINES = 200
+MAX_RAW_TAIL_FILES = 8
+DIAGNOSTIC_TOTAL_BYTES = 262_144
 _PROCESS_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _EDGECONF_COMMAND = (
     "jq -c '{encoder:.VHL_CAM.enc,ch0:{bps:.VHL_CAM.i2c2.ch0.bps,"
@@ -29,6 +31,12 @@ def _bounded_text(value: object, limit: int = RAW_TAIL_BYTES) -> str:
     return raw[-limit:].decode("utf-8", errors="ignore")
 
 
+def bounded_diagnostic_text(value: object, limit: int = RAW_TAIL_BYTES) -> str:
+    """Return a bounded UTF-8 prefix for exception and status diagnostics."""
+    raw = value.encode("utf-8") if isinstance(value, str) else b""
+    return raw[:limit].decode("utf-8", errors="ignore")
+
+
 def _read_tail(path: Path) -> str:
     try:
         with path.open("rb") as stream:
@@ -37,15 +45,27 @@ def _read_tail(path: Path) -> str:
             stream.seek(max(0, size - RAW_TAIL_BYTES))
             return stream.read(RAW_TAIL_BYTES).decode("utf-8", errors="ignore")
     except OSError as exc:
-        return "diagnostic read failed: {0}".format(exc)
+        return bounded_diagnostic_text("diagnostic read failed: {0}".format(exc))
 
 
 def _run(ssh: object, command: str) -> str:
     try:
         output = ssh.run(command)  # type: ignore[attr-defined]
     except Exception as exc:  # diagnostics must not hide the primary outcome
-        return "diagnostic command failed: {0}".format(exc)
+        return bounded_diagnostic_text("diagnostic command failed: {0}".format(exc))
     return _bounded_text(output)
+
+
+def _enforce_aggregate_budget(diagnostics: List[dict]) -> List[dict]:
+    remaining = DIAGNOSTIC_TOTAL_BYTES
+    bounded: List[dict] = []
+    for item in diagnostics:
+        output = bounded_diagnostic_text(item.get("output", ""), min(RAW_TAIL_BYTES, remaining))
+        bounded.append({"id": item["id"], "output": output})
+        remaining -= len(output.encode("utf-8"))
+        if remaining <= 0:
+            break
+    return bounded
 
 
 def collect_diagnostics(
@@ -78,7 +98,11 @@ def collect_diagnostics(
         {"id": "module.max9296", "output": module},
     ]
     if raw_dir.is_dir():
+        raw_count = 0
         for path in sorted(raw_dir.iterdir(), key=lambda item: item.name):
             if path.is_file() and not path.is_symlink():
                 diagnostics.append({"id": "raw:{0}".format(path.name), "output": _read_tail(path)})
-    return diagnostics
+                raw_count += 1
+                if raw_count == MAX_RAW_TAIL_FILES:
+                    break
+    return _enforce_aggregate_budget(diagnostics)

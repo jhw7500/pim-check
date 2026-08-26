@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import signal
 from pathlib import Path
 
@@ -196,7 +197,18 @@ class _FakeAdapter:
 
         self.events.append("adapter:" + self.adapter_id)
         if self.terminate:
-            raise TerminationRequested(signal.SIGTERM)
+            adapter_events = self.events
+
+            class ActiveTransaction:
+                def __enter__(self) -> None:
+                    adapter_events.append("transaction-enter")
+
+                def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+                    adapter_events.append("transaction-restore")
+                    return False
+
+            with ActiveTransaction():
+                raise TerminationRequested(signal.SIGTERM)
         return _gate(self.adapter_id)
 
 
@@ -341,6 +353,54 @@ def test_identity_error_checkpoints_numeric_error_and_stops_before_adapters(
     assert document["gates"][0]["errors"][0]["code"] == "infrastructure.identity"
 
 
+@pytest.mark.parametrize(
+    "adapter_result",
+    [
+        {},
+        {**_gate("bps_quick"), "metrics": [{**_metric(), "value": True}]},
+        {**_gate("bps_quick"), "metrics": [{**_metric(), "value": float("inf")}]},
+    ],
+    ids=("malformed", "boolean", "non-finite"),
+)
+def test_invalid_adapter_evidence_becomes_one_numeric_error_and_stops_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adapter_result: dict,
+) -> None:
+    """Unsafe adapter evidence must never be checkpointed or followed by another mutation."""
+    from hw_gate import cli
+    from hw_gate.evidence import validate_structure
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+
+    class InvalidAdapter:
+        adapter_id = "bps_quick"
+        schema_version = 1
+
+        def run(self, context: object) -> dict:
+            events.append("adapter:bps_quick")
+            return copy.deepcopy(adapter_result)
+
+    monkeypatch.setattr(cli, "ADAPTER_FACTORIES", {
+        "bps_quick": InvalidAdapter,
+        "mixed_combo": lambda: _FakeAdapter("mixed_combo", events),
+    })
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    assert "adapter:mixed_combo" not in events
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    validate_structure(document)
+    assert len(document["gates"]) == 1
+    gate = document["gates"][0]
+    assert gate["id"] == "infrastructure"
+    assert gate["errors"][0]["code"] == "infrastructure.adapter_evidence"
+    value = gate["metrics"][0]["value"]
+    assert isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def test_baseline_digest_and_source_binding_fail_before_ssh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -375,9 +435,161 @@ def test_internal_termination_becomes_error_after_diagnostics_and_ssh_close(
         "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
         "--output-dir", str(output_dir),
     ]) == 2
+    assert events.index("transaction-restore") < events.index("diagnostics")
     assert events[-2:] == ["diagnostics", "ssh-close"]
     document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
     assert document["verdict"] == "ERROR"
+    assert document["gates"][0]["errors"][0]["code"] == "infrastructure.signal"
+
+
+def test_termination_during_diagnostics_still_closes_and_checkpoints_signal_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SIGHUP while gathering diagnostics must remain inside protected terminalization."""
+    from hw_gate import cli
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+
+    def interrupted_diagnostics(ssh: object, raw_dir: Path, process_names: tuple[str, ...]) -> list[dict]:
+        events.append("diagnostics")
+        raise cli.TerminationRequested(signal.SIGHUP)
+
+    monkeypatch.setattr(cli, "collect_diagnostics", interrupted_diagnostics)
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    assert events[-1] == "ssh-close"
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    assert document["lifecycle"]["state"] == "complete"
+    assert document["gates"][0]["errors"][0]["code"] == "infrastructure.signal"
+
+
+def test_termination_during_ssh_close_retries_close_and_checkpoints_signal_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SIGTERM interrupting close must not escape or skip an idempotent close retry."""
+    from hw_gate import cli
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+
+    class CloseInterruptedSsh(_FakeSsh):
+        def __init__(self, target_events: list[str]) -> None:
+            super().__init__(target_events)
+            self.close_attempts = 0
+
+        def close(self) -> None:
+            self.close_attempts += 1
+            self.events.append("ssh-close:{0}".format(self.close_attempts))
+            if self.close_attempts == 1:
+                raise cli.TerminationRequested(signal.SIGTERM)
+
+    monkeypatch.setattr(cli, "SshClient", lambda host: CloseInterruptedSsh(events))
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    assert events[-2:] == ["ssh-close:1", "ssh-close:2"]
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    assert document["gates"][0]["errors"][0]["code"] == "infrastructure.signal"
+
+
+def test_termination_during_terminal_checkpoint_retries_canonical_signal_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SIGTERM during the final atomic publication must retry as canonical ERROR evidence."""
+    from hw_gate import cli
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+    real_atomic = cli.atomic_write_json
+    interrupted = False
+
+    def interrupt_complete(path: Path, payload: dict, *, max_bytes: int = cli.MAX_EVIDENCE_BYTES) -> None:
+        nonlocal interrupted
+        if payload.get("lifecycle", {}).get("state") == "complete" and not interrupted:
+            interrupted = True
+            raise cli.TerminationRequested(signal.SIGTERM)
+        real_atomic(path, payload, max_bytes=max_bytes)
+
+    monkeypatch.setattr(cli, "atomic_write_json", interrupt_complete)
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    assert interrupted is True
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    assert document["lifecycle"]["state"] == "complete"
+    assert document["gates"][0]["errors"][0]["code"] == "infrastructure.signal"
+
+
+def test_termination_during_adapter_checkpoint_stops_before_next_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A signal interrupting durable adapter publication must stop later hardware mutation."""
+    from hw_gate import cli
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+    real_atomic = cli.atomic_write_json
+    interrupted = False
+
+    def interrupt_first_adapter(path: Path, payload: dict, *, max_bytes: int = cli.MAX_EVIDENCE_BYTES) -> None:
+        nonlocal interrupted
+        if payload.get("lifecycle", {}).get("state") == "adapter:bps_quick" and not interrupted:
+            interrupted = True
+            raise cli.TerminationRequested(signal.SIGTERM)
+        real_atomic(path, payload, max_bytes=max_bytes)
+
+    monkeypatch.setattr(cli, "atomic_write_json", interrupt_first_adapter)
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    assert interrupted is True
+    assert "adapter:mixed_combo" not in events
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    assert document["gates"][0]["errors"][0]["code"] == "infrastructure.signal"
+
+
+def test_termination_during_terminal_timestamp_retries_complete_signal_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SIGHUP during terminal timestamping must not escape before complete publication."""
+    from hw_gate import cli
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+    real_now = cli._utc_now
+    interrupted = False
+
+    def interrupt_after_close() -> str:
+        nonlocal interrupted
+        if events and events[-1] == "ssh-close" and not interrupted:
+            interrupted = True
+            raise cli.TerminationRequested(signal.SIGHUP)
+        return real_now()
+
+    monkeypatch.setattr(cli, "_utc_now", interrupt_after_close)
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    assert interrupted is True
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    assert document["lifecycle"]["state"] == "complete"
     assert document["gates"][0]["errors"][0]["code"] == "infrastructure.signal"
 
 
@@ -398,10 +610,10 @@ def test_signal_handlers_install_only_term_and_hup(monkeypatch: pytest.MonkeyPat
     assert signal.SIGKILL not in installed
 
 
-def test_finalize_preserves_valid_child_artifact_and_recomputes_its_exit(
+def test_finalize_replaces_declared_and_recomputed_disagreement_with_canonical_error(
     tmp_path: Path,
 ) -> None:
-    """Wrapper status must not replace valid evidence or establish its verdict."""
+    """Producer PASS must not survive when trusted baseline recomputation is ERROR."""
     from hw_gate.cli import main
 
     envelope, output_dir = _prepare(tmp_path)
@@ -419,6 +631,31 @@ def test_finalize_preserves_valid_child_artifact_and_recomputes_its_exit(
         "finalize", "--envelope", str(envelope), "--output-dir", str(output_dir),
         "--child-exit-code", "73",
     ]) == 2
+    assert result.read_bytes() != original
+    finalized = json.loads(result.read_text(encoding="utf-8"))
+    assert finalized["verdict"] == "ERROR"
+    assert [gate["id"] for gate in finalized["gates"]] == ["infrastructure"]
+    markdown = (output_dir / (FULL_SHA + ".md")).read_text(encoding="utf-8")
+    assert markdown.startswith("# Hardware evidence: ERROR\n")
+    assert "# Hardware evidence: PASS" not in markdown
+    assert "bps\\.ch0\\.1024\\.baseline" not in markdown
+
+
+def test_finalize_preserves_self_consistent_valid_child_artifact(tmp_path: Path) -> None:
+    """A canonical envelope-bound child must remain byte-identical on later finalization."""
+    from hw_gate.cli import main
+
+    envelope, output_dir = _prepare(tmp_path)
+    args = [
+        "finalize", "--envelope", str(envelope), "--output-dir", str(output_dir),
+        "--child-exit-code", "2",
+    ]
+    assert main(args) == 2
+    result = output_dir / (FULL_SHA + ".json")
+    original = result.read_bytes()
+
+    args[-1] = "73"
+    assert main(args) == 2
     assert result.read_bytes() == original
 
 
@@ -525,6 +762,8 @@ def test_diagnostics_are_allowlisted_and_hard_bounded(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     (raw_dir / "gate.json").write_bytes(b"x" * 20_000)
+    for index in range(32):
+        (raw_dir / "raw-{0:02d}.json".format(index)).write_bytes(b"y" * 20_000)
     ssh = DiagnosticSsh()
 
     diagnostics = collect_diagnostics(ssh, raw_dir, ("gstApp", "pim-service"))
@@ -542,6 +781,50 @@ def test_diagnostics_are_allowlisted_and_hard_bounded(tmp_path: Path) -> None:
     assert len(tail["output"].encode("utf-8")) <= 16_384
     module = next(item for item in diagnostics if item["id"] == "module.max9296")
     assert len(module["output"].encode("utf-8")) <= 16_384
+    raw_items = [item for item in diagnostics if item["id"].startswith("raw:")]
+    assert len(raw_items) <= 8
+    assert sum(len(item["output"].encode("utf-8")) for item in diagnostics) <= 262_144
+
+
+def test_diagnostic_command_exceptions_are_bounded_by_entry_and_aggregate(tmp_path: Path) -> None:
+    """Remote exception text must not bypass per-entry or aggregate evidence limits."""
+    from hw_gate.diagnostics import collect_diagnostics
+
+    class ExplodingSsh:
+        def run(self, command: str) -> str:
+            raise RuntimeError("x" * 2_000_000)
+
+    diagnostics = collect_diagnostics(ExplodingSsh(), tmp_path, ("gstApp",))
+
+    assert all(len(item["output"].encode("utf-8")) <= 16_384 for item in diagnostics)
+    assert sum(len(item["output"].encode("utf-8")) for item in diagnostics) <= 262_144
+
+
+def test_oversized_diagnostic_collector_exception_still_finishes_bounded_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Core diagnostic failure text must be bounded before the terminal JSON checkpoint."""
+    from hw_gate import cli
+
+    envelope, output_dir = _prepare(tmp_path)
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+
+    def exploding_diagnostics(ssh: object, raw_dir: Path, process_names: tuple[str, ...]) -> list[dict]:
+        raise RuntimeError("z" * 2_000_000)
+
+    monkeypatch.setattr(cli, "collect_diagnostics", exploding_diagnostics)
+
+    assert cli.main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "--output-dir", str(output_dir),
+    ]) == 2
+    result = output_dir / (FULL_SHA + ".json")
+    assert result.stat().st_size <= 1_048_576
+    document = json.loads(result.read_text(encoding="utf-8"))
+    assert document["lifecycle"]["state"] == "complete"
+    output = document["diagnostics"][0]["output"]
+    assert len(output.encode("utf-8")) <= 16_384
 
 
 def test_diagnostics_reject_undeclared_process_names(tmp_path: Path) -> None:
@@ -582,7 +865,8 @@ def test_markdown_is_deterministic_complete_and_escapes_measured_controls() -> N
 
     assert first == second
     for required in (
-        "predeployed measurement", FULL_SHA, "b" * 64, "https://github.com/jhw7500/pim-check/actions/runs/123/attempts/2",
+        "predeployed measurement", "deployment.verified=false", FULL_SHA, "b" * 64,
+        "https://github.com/jhw7500/pim-check/actions/runs/123/attempts/2",
         "Target identities", "Metrics", "Rule", "Delta", "Preconditions", "Restoration", "Diagnostics",
     ):
         assert required in first

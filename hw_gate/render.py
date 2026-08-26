@@ -33,7 +33,7 @@ def render_markdown(document: dict) -> str:
     lines = [
         "# Hardware evidence: {0}".format(_escape(verdict)),
         "",
-        "Scope: predeployed measurement (deployment verified=false)",
+        "Scope: predeployed measurement (deployment.verified=false)",
         "",
         "- PR HEAD: {0}".format(_escape(run.get("pr_head_sha", "unavailable"))),
         "- Baseline SHA256: {0}".format(_escape(baseline.get("sha256", "unavailable"))),

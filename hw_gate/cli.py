@@ -18,7 +18,7 @@ from hw_gate.adapters.base import AdapterContext
 from hw_gate.adapters.bps import BpsAdapter
 from hw_gate.adapters.mixed_combo import MixedComboAdapter
 from hw_gate.baseline import LoadedBaseline, load_baseline
-from hw_gate.diagnostics import collect_diagnostics
+from hw_gate.diagnostics import bounded_diagnostic_text, collect_diagnostics
 from hw_gate.evidence import recompute_overall_verdict, validate_structure
 from hw_gate.render import render_markdown
 from hw_gate.rules import EvidenceError, Verdict
@@ -380,6 +380,22 @@ def _normalize_gate_paths(gate: dict, head: str) -> None:
         gate["diagnostic_refs"] = ["raw/{0}/{1}".format(head, Path(ref).name) for ref in refs if isinstance(ref, str)]
 
 
+def _validate_adapter_gate(gate: object, adapter_id: str, schema_version: int) -> None:
+    if not isinstance(gate, dict):
+        raise EvidenceError("adapter {0} returned non-object evidence".format(adapter_id))
+    if gate.get("id") != adapter_id or gate.get("adapter_id") != adapter_id:
+        raise EvidenceError("adapter {0} returned mismatched identity".format(adapter_id))
+    if gate.get("adapter_schema_version") != schema_version:
+        raise EvidenceError("adapter {0} returned mismatched schema version".format(adapter_id))
+    validate_structure({
+        "schema_version": 1,
+        "created_at": _utc_now(),
+        "deployment": {"mode": "predeployed", "verified": False},
+        "gates": [gate],
+        "verdict": Verdict.ERROR.value,
+    })
+
+
 @contextlib.contextmanager
 def installed_termination_handlers() -> Iterator[None]:
     previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
@@ -401,7 +417,59 @@ def _collect_terminal_diagnostics(document: dict, ssh: object, raw_dir: Path) ->
     try:
         document["diagnostics"] = collect_diagnostics(ssh, raw_dir, PROCESS_NAMES)
     except Exception as exc:
-        document["diagnostics"] = [{"id": "diagnostics.error", "output": str(exc)}]
+        document["diagnostics"] = [{
+            "id": "diagnostics.error",
+            "output": bounded_diagnostic_text(str(exc)),
+        }]
+
+
+def _record_termination(document: dict, exc: TerminationRequested) -> None:
+    _set_infrastructure_error(
+        document, "infrastructure.signal", "terminated by signal {0}".format(exc.signum),
+    )
+
+
+def _checkpoint_protected(
+    document: dict,
+    loaded: LoadedBaseline,
+    output_dir: Path,
+    state: str,
+) -> None:
+    while True:
+        try:
+            _checkpoint(document, loaded, output_dir, state)
+            return
+        except TerminationRequested as exc:
+            _record_termination(document, exc)
+
+
+def _close_ssh_protected(
+    ssh: object,
+    document: dict,
+    loaded: LoadedBaseline,
+    output_dir: Path,
+) -> None:
+    while True:
+        try:
+            ssh.close()  # type: ignore[attr-defined]
+            return
+        except TerminationRequested as exc:
+            _record_termination(document, exc)
+            _checkpoint_protected(document, loaded, output_dir, "terminated")
+        except Exception as exc:
+            _set_infrastructure_error(document, "infrastructure.ssh_close", str(exc))
+            _checkpoint_protected(document, loaded, output_dir, "close_error")
+            return
+
+
+def _finish_run_protected(document: dict, loaded: LoadedBaseline, output_dir: Path) -> None:
+    while True:
+        try:
+            document["run"]["finished_at"] = _utc_now()
+            _checkpoint(document, loaded, output_dir, "complete")
+            return
+        except TerminationRequested as exc:
+            _record_termination(document, exc)
 
 
 def _measure_command(args: argparse.Namespace) -> int:
@@ -420,66 +488,75 @@ def _measure_command(args: argparse.Namespace) -> int:
     _checkpoint(document, loaded, args.output_dir, "baseline_validated")
 
     ssh: Optional[object] = None
-    try:
+    with installed_termination_handlers():
         try:
             ssh = SshClient(args.target_host)
             manager = SetupManager(ssh)
             try:
-                with installed_termination_handlers():
-                    recover_pending_transaction(manager)
-                    _checkpoint(document, loaded, args.output_dir, "recovery_complete")
+                recover_pending_transaction(manager)
+                _checkpoint(document, loaded, args.output_dir, "recovery_complete")
 
-                    identity_check = TargetIdentityCheck()
-                    identity_config = {"target_identity": loaded.data["target_identity"]}
-                    identity = identity_check.collect(ssh, identity_config)
-                    document["board"]["identity"] = identity.get("claims", []) if isinstance(identity, dict) else []
-                    identity_valid, identity_reason = identity_check.validate(identity, identity_config)
-                    if not identity_valid:
-                        _set_infrastructure_error(document, "infrastructure.identity", identity_reason)
-                        _checkpoint(document, loaded, args.output_dir, "identity_error")
-                    else:
-                        _checkpoint(document, loaded, args.output_dir, "identity_verified")
-                        document["gates"] = []
-                        for adapter_id in args.gates:
-                            adapter = ADAPTER_FACTORIES[adapter_id]()
-                            gate = adapter.run(AdapterContext(
-                                ssh=ssh,
-                                baseline_gate=loaded.data["gates"][adapter_id],
-                                run_id="{0}-{1}".format(head, adapter_id),
-                                raw_dir=raw_dir,
-                            ))
+                identity_check = TargetIdentityCheck()
+                identity_config = {"target_identity": loaded.data["target_identity"]}
+                identity = identity_check.collect(ssh, identity_config)
+                document["board"]["identity"] = identity.get("claims", []) if isinstance(identity, dict) else []
+                identity_valid, identity_reason = identity_check.validate(identity, identity_config)
+                if not identity_valid:
+                    _set_infrastructure_error(document, "infrastructure.identity", identity_reason)
+                    _checkpoint_protected(document, loaded, args.output_dir, "identity_error")
+                else:
+                    _checkpoint(document, loaded, args.output_dir, "identity_verified")
+                    document["gates"] = []
+                    for adapter_id in args.gates:
+                        adapter = ADAPTER_FACTORIES[adapter_id]()
+                        gate = adapter.run(AdapterContext(
+                            ssh=ssh,
+                            baseline_gate=loaded.data["gates"][adapter_id],
+                            run_id="{0}-{1}".format(head, adapter_id),
+                            raw_dir=raw_dir,
+                        ))
+                        try:
                             if not isinstance(gate, dict):
-                                raise EvidenceError("adapter {0} returned malformed evidence".format(adapter_id))
+                                raise EvidenceError("adapter {0} returned non-object evidence".format(adapter_id))
                             gate["identity"] = {"verdict": Verdict.PASS.value}
                             _normalize_gate_paths(gate, head)
-                            document["gates"].append(gate)
-                            _checkpoint(document, loaded, args.output_dir, "adapter:{0}".format(adapter_id))
+                            _validate_adapter_gate(gate, adapter_id, adapter.schema_version)
+                        except EvidenceError as exc:
+                            _set_infrastructure_error(document, "infrastructure.adapter_evidence", str(exc))
+                            _checkpoint_protected(document, loaded, args.output_dir, "adapter_evidence_error")
+                            break
+                        document["gates"].append(gate)
+                        _checkpoint(document, loaded, args.output_dir, "adapter:{0}".format(adapter_id))
             except TerminationRequested as exc:
-                _set_infrastructure_error(
-                    document, "infrastructure.signal", "terminated by signal {0}".format(exc.signum),
-                )
-                _checkpoint(document, loaded, args.output_dir, "terminated")
+                _record_termination(document, exc)
+                _checkpoint_protected(document, loaded, args.output_dir, "terminated")
             except Exception as exc:
                 phase = document.get("lifecycle", {}).get("state", "measurement")
                 code = "infrastructure.recovery" if phase == "baseline_validated" else "infrastructure.measurement"
                 _set_infrastructure_error(document, code, str(exc))
-                _checkpoint(document, loaded, args.output_dir, "error")
+                _checkpoint_protected(document, loaded, args.output_dir, "error")
+        except TerminationRequested as exc:
+            _record_termination(document, exc)
+            _checkpoint_protected(document, loaded, args.output_dir, "terminated")
         except Exception as exc:
             code = "infrastructure.ssh" if ssh is None else "infrastructure.setup"
             _set_infrastructure_error(document, code, str(exc))
-            _checkpoint(document, loaded, args.output_dir, "target_error")
+            _checkpoint_protected(document, loaded, args.output_dir, "target_error")
+
+        try:
+            if ssh is not None:
+                _collect_terminal_diagnostics(document, ssh, raw_dir)
+            else:
+                document["diagnostics"] = [{"id": "ssh.unavailable", "output": "target connection was not established"}]
+        except TerminationRequested as exc:
+            _record_termination(document, exc)
+            document["diagnostics"] = [{"id": "diagnostics.interrupted", "output": str(exc)}]
+        _checkpoint_protected(document, loaded, args.output_dir, "diagnostics_complete")
 
         if ssh is not None:
-            _collect_terminal_diagnostics(document, ssh, raw_dir)
-        else:
-            document["diagnostics"] = [{"id": "ssh.unavailable", "output": "target connection was not established"}]
-        _checkpoint(document, loaded, args.output_dir, "diagnostics_complete")
-    finally:
-        if ssh is not None:
-            ssh.close()  # type: ignore[attr-defined]
+            _close_ssh_protected(ssh, document, loaded, args.output_dir)
 
-    document["run"]["finished_at"] = _utc_now()
-    _checkpoint(document, loaded, args.output_dir, "complete")
+        _finish_run_protected(document, loaded, args.output_dir)
     return _exit_for_verdict(Verdict(document["verdict"]))
 
 
@@ -550,10 +627,14 @@ def _finalize_command(args: argparse.Namespace) -> int:
             if not _document_binding_matches(document, envelope):
                 raise EvidenceError("child artifact binding does not match envelope")
             verdict = recompute_overall_verdict(document, loaded)
+            declared = document.get("verdict")
+            overall = document.get("overall_verdict", declared)
+            if declared != verdict.value or overall != verdict.value:
+                raise EvidenceError("child declared verdict disagrees with trusted recomputation")
             atomic_write_text(markdown_path, render_markdown(document))
             return _exit_for_verdict(verdict)
-        except EvidenceError:
-            pass
+        except EvidenceError as exc:
+            preflight_error = str(exc)
 
     busy = args.child_exit_code == BUSY_EXIT and not child_exists
     document = _finalizer_document(envelope, loaded, args.child_exit_code, busy, preflight_error)
