@@ -4,7 +4,27 @@
 # 종료 시각 마커 작성: /tmp/pim-check-auto-chain-done.flag
 
 set -u
-PROJECT=/home/jhw/ai/opencode/projects/pim-check
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PROJECT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+BOARD_WRAPPER="$SCRIPT_DIR/with_pim_board.sh"
+TARGET_END=${PIM_AUTOMATION_TARGET_END:-$(( $(date +%s) + 24 * 60 * 60 ))}
+TARGET_UNTIL=$(date -d "@$TARGET_END" -Iseconds)
+LEASE_PURPOSE="pim-check auto_chain"
+
+if ! "$BOARD_WRAPPER" \
+    --check-held \
+    --until "$TARGET_UNTIL" \
+    --purpose "$LEASE_PURPOSE" \
+    --long-lease true; then
+    export PIM_AUTOMATION_TARGET_END="$TARGET_END"
+    exec "$BOARD_WRAPPER" \
+        --until "$TARGET_UNTIL" \
+        --purpose "$LEASE_PURPOSE" \
+        --long-lease true \
+        -- "$SCRIPT_PATH" "$@"
+fi
+
 cd "$PROJECT" || exit 1
 
 SESSION_TS=$(date +%Y%m%d_%H%M%S)
@@ -14,13 +34,13 @@ MAIN_LOG=$SESSION_DIR/main.log
 
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$MAIN_LOG"; }
 
-# Wait for any running pim_check plan to finish
+# Refuse a legacy unwrapped process instead of consuming this lease waiting for it.
 log "=== auto_chain session $SESSION_TS started ==="
-log "Waiting for any current pim_check.py to finish..."
-while pgrep -f "pim_check.py.*--plan" > /dev/null 2>&1; do
-    sleep 60
-done
-log "previous plan finished, starting chain"
+if pgrep -f "pim_check.py.*--plan" > /dev/null 2>&1; then
+    log "ERROR: legacy pim_check.py --plan process is already running; refusing unsafe lease wait"
+    exit 75
+fi
+log "no legacy plan detected, starting chain"
 
 PLANS=(smoke comprehensive release_next nightly)
 for plan in "${PLANS[@]}"; do

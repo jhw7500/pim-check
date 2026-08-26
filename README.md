@@ -44,7 +44,8 @@ python3 pim_check.py --case 720p_2ch --html --history
 python3 pim_check.py --history-report
 
 # Plan 실행 (case 묶음 + 합격선 + 리포트 한번에)
-python3 pim_check.py --plan smoke --host 192.168.0.5
+scripts/with_pim_board.sh --for 30m --purpose "manual smoke" -- \
+  python3 pim_check.py --plan smoke --host 192.168.0.5
 python3 pim_check.py --list-plans
 ```
 
@@ -305,7 +306,7 @@ email:
 
 | 변수 | 우선순위 | 설명 | 예시 |
 |------|---------|------|------|
-| `TARGET_HOST` | 최상위 | 타겟 IP — `run_*.py` runner와 `qa_agent`/`infer_agent`의 기본 호스트 | `TARGET_HOST=192.168.0.50 python3 run_mixed_combo_verify.py` |
+| `TARGET_HOST` | 최상위 | 타겟 IP — `run_*.py` runner와 `qa_agent`/`infer_agent`의 기본 호스트 | `scripts/with_pim_board.sh --for 30m --purpose "manual mixed_combo" -- env TARGET_HOST=192.168.0.50 python3 run_mixed_combo_verify.py` |
 
 **우선순위 (높음→낮음)**: env var → CLI 인자(`--host`) → `~/.pim-check.yaml`(`default_host`) → `profiles/base.yaml`(`target.host`) → 코드 fallback (`192.168.0.5`).
 
@@ -341,7 +342,8 @@ python3 -m pytest tests/ -v    # 256 tests, 93% coverage
 
 ```bash
 # 1. plan 실행 → reports/{plan}/{ts}.json/html/junit/md 생성
-python3 pim_check.py --plan comprehensive --host 192.168.0.5
+scripts/with_pim_board.sh --for 3h --purpose "manual comprehensive" -- \
+  python3 pim_check.py --plan comprehensive --host 192.168.0.5
 
 # 2. 결과 검토 후 baseline으로 promote
 python3 pim_check.py --promote-baseline comprehensive --baseline-label v1_2
@@ -351,7 +353,8 @@ python3 pim_check.py --promote-baseline comprehensive --baseline-label v1_2
 #    file: reports/comprehensive/baselines/v1_2.json
 
 # 4. 다음 릴리스에서 plan 다시 실행 → 자동 회귀 비교
-python3 pim_check.py --plan comprehensive --host 192.168.0.5
+scripts/with_pim_board.sh --for 3h --purpose "manual comprehensive" -- \
+  python3 pim_check.py --plan comprehensive --host 192.168.0.5
 # → regressions / fixed / new_cases 분석 + verdict (PASS/FAIL/WARN)
 ```
 
@@ -416,7 +419,8 @@ ls comprehensive_results.json mixed_combo_results.json ...
 python3 scripts/generate_comprehensive_mapping.py
 
 # 3. 새 plan 실행
-python3 pim_check.py --plan comprehensive --host 192.168.0.5
+scripts/with_pim_board.sh --for 3h --purpose "manual comprehensive" -- \
+  python3 pim_check.py --plan comprehensive --host 192.168.0.5
 
 # 4. 동등성 비교
 python3 scripts/equivalence_check.py \

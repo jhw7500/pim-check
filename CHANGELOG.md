@@ -2,6 +2,125 @@
 
 ## Unreleased (2026-08-24)
 
+### CI·로컬 PIM 보드 점유 직렬화 (pim-check#108)
+
+- GitHub `concurrency`만으로는 로컬 실행과 점유를 조율할 수 없었다. 공통
+  exclusive wrapper가 mode-600 host config를 로드하고 사용자 로컬 CLI의 절대 경로로
+  `jhw-control`을 호출해 CI와 수동/자동 실행을 같은 lease로 묶는다.
+- busy acquisition은 기다리거나 건너뛰지 않고 즉시 exit 4로 실패한다. CI lease는
+  mixed-combo 30m, comprehensive 3h, plan 12h이며, 로컬 자동화는 24h 또는 정확한
+  종료 deadline을 쓰고 long lease opt-in을 명시한다.
+- 중첩 실행 표시는 조상 `board with` PID·세션·보드 좌표와 read-only status의 살아
+  있는 exclusive holder가 모두 일치할 때만 인정한다. 호출자가
+  `PIM_BOARD_LOCK_HELD=1`만 주입하면 정상 acquisition 경로로 돌아가며, 자동화
+  스크립트도 wrapper의 strict `--check-held` 결과 없이 self-wrap을 건너뛰지 않는다.
+  strict probe는 자동화의 정확한 `--until`·purpose·long-lease 인자, status의
+  `granted_until`, 조상 deadline supervisor의 종료·정리 예산을 함께 검증한다. 짧거나
+  다른 lease 안에서는 long-lease 중첩 실행을 허용하지 않고 정상 acquisition의 busy
+  실패를 보존한다.
+- long-lease 자동화의 grant 시각은 실행 deadline으로도 적용한다. 종료 31분 전
+  process group에 TERM을 보내 teardown에 30분을 허용한다. 이는 네트워크 복구 전후의
+  600초 부팅 대기 두 번과 복원 작업을 포함하며, 남은 프로세스는 마지막 60초 전에
+  KILL·회수한다. timeout은 exit 124로 드러나고 legacy plan 감지는 기다리지 않고
+  exit 75로 실패한다. SSH/제어 터미널 종료로 supervisor가 SIGHUP을 받으면 외부
+  종료코드는 129로 보존하되 자식 process group에는 teardown용 SIGTERM을 전달하고,
+  같은 grace→KILL→reap 경로가 끝난 뒤에만 lease 부모로 복귀한다.
+- Claude에 커밋한 command hook은 `env` option cluster, `builtin`·`exec`·`eval`·`source`·`.`·
+  `nice`·`stdbuf`·`xargs`·moreutils `parallel`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`runuser`·`timeout`·외부 GNU `time`·`nohup`,
+  shell `-c`와 positional script, stdin에서 명령을 읽는 shell의 fail-closed 처리,
+  escape 없는 Bash ANSI-C `$'...'` 명령 문자열, outer shell에서 활성인 `$()`·백틱
+  명령 치환, `find`의 `-exec`·`-execdir`·`-ok`·`-okdir`, 그룹·조건 제어문 내부까지
+  검사한다. `find`의 `{}`는 알려진 보드 변경 실행 대상으로 치환될 가능성도 기존
+  분류기로 검증해 동적 실행 대상 우회를 막되, `printf`·pytest의 데이터 인자와 정식
+  wrapper 내부 placeholder는 허용한다. ANSI-C escape나 미종결 인용, 종료자가 없는
+  `find` 실행 action은 정확한 shell 해석을 추측하지 않고 fail-closed 처리한다.
+  GNU `env -C`/`--chdir`가 자식의 작업 디렉터리를 바꾸면 중첩 launcher 아래까지
+  상대 wrapper 면제를 제거하고 저장소 절대 경로만 허용한다. 이 변경은 `env -S`
+  확장과 중첩 `env`에도 누적되지만, 부모 shell의 후속 명령 세그먼트에는 전파되지
+  않는다.
+  procps-ng `watch`는 `-x`의 직접 exec 자식과 기본 `sh -c` 명령 문자열을 각각 기존
+  재귀 분류기로 검사하며, 미지원 옵션·값 또는 자식 누락은 fail-closed 처리한다.
+  util-linux `taskset`은 CPU mask/list 뒤 실행 자식을 재귀 검사하고, `--pid`/`-p`
+  조회·변경 모드는 실행 자식이 없는 형태로 구분한다. 미지원 옵션과 잘못된 피연산자
+  개수는 fail-closed 처리한다.
+  `source`/`.`는 선택적 `--` 뒤의 standalone runner를 검사하고, `/dev/stdin`과
+  `/dev/fd/*`, `/proc/{self,thread-self,PID}/fd/*`처럼 런타임 입력을 실행하는
+  의사경로는 fail-closed 처리한다. GNU `xargs`의 일반 입력은 알려진 보드 실행 인자
+  시퀀스를 덧붙인 결과로, `-I`/`-i`/`--replace` 입력은 marker 치환 결과로 재귀
+  분류한다. 무관한 `printf`, 기본 echo 형식과 정본 wrapper는 계속 허용한다.
+  util-linux `chrt`는 policy·scheduling 옵션을 파싱하고 실행 모드의 priority 뒤
+  자식을 재귀 검사하며, PID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다.
+  util-linux `ionice`는 class·classdata·ignore 옵션을 파싱하고 실행 모드 자식을 재귀
+  검사하며, PID·PGID·UID 조회·변경 모드는 실행 자식이 없는 형태로 구분한다. 누락된
+  옵션 값과 미지원 옵션은 fail-closed 처리한다.
+  `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤 positional operand는 `$0`·`$@`·`$*`
+  확장을 흉내 내지 않고 모두 fail-closed 처리한다. operand가 없는 `-c` 문자열은 기존
+  재귀 분류를 유지한다. shell positional script도 source와 같은 정규화된 runtime-FD
+  의사경로 전체를 fail-closed 처리하며 일반 파일과 정본 wrapper 내부 실행은 허용한다.
+  executable, Python script/module, shell positional/source script와 `pim_check.py`의
+  인자처럼 실행 의미를 바꾸는 토큰에 `$`·백틱·glob·brace 확장 표식이 남아 있으면
+  실제 확장을 추측하지 않고 fail-closed 처리한다. 무관한 명령의 데이터 인자와 정본
+  wrapper 뒤 자식 인자는 그대로 허용한다.
+  argparse가 `--plan`의 고유 축약으로 수용하는 `--pl`·`--pla`도 분리형과 `=value`
+  형식 모두 동일한 plan 실행으로 차단한다. 여러 옵션과 충돌해 CLI가 거부하는 `--p`는
+  실행 가능한 plan 철자로 오인하지 않는다.
+  Python의 `-m runpy` 진입점은 뒤따르는 대상 모듈을 중첩 깊이 제한 안에서 다시
+  분류하며, `.py` standalone runner와 같은 이름의 직접 `-m` 모듈 실행도 차단한다.
+  util-linux `runuser`는 `-u` 직접 command argv와 `-c`/`--session-command` shell
+  문자열을 각각 재귀 분류한다. 대화형·모호한 shell 모드와 미지원 옵션은 fail-closed,
+  help/version과 무관한 자식 및 정본 wrapper 경계는 허용한다.
+  moreutils `parallel`은 `--` 앞 command가 없으면 뒤의 각 command 문자열을 shell로,
+  command가 있으면 `-n` 단위 append 또는 `-i`의 정확한 `{}` 치환 결과를 argv로 재귀
+  분류한다. 누락된 구분자, 모순 옵션과 GNU parallel 등 미지원 형식은 fail-closed한다.
+  util-linux `script`는 `-c`/`--command` 문자열을 shell 분류기로 재귀 검사하고,
+  logging·timing 옵션과 출력 파일은 데이터로 구분한다. command가 없는 대화형 shell,
+  중복 command, 누락된 옵션 값과 미지원 옵션은 fail-closed 처리한다.
+  util-linux `prlimit`은 resource·output 옵션 뒤 실행 command argv를 재귀 검사하고,
+  PID 대상형과 command 없는 조회형은 실행 자식이 없는 형태로 구분한다. PID형의 잔여
+  command, 누락·빈 옵션 값과 미지원 옵션은 fail-closed 처리한다.
+  util-linux 2.37.2 `unshare`는 namespace·mapping·root·working-directory 옵션 뒤의
+  program argv를 재귀 검사한다. program이 없어 기본 shell로 전환되는 형태와 누락·빈
+  옵션 값, 미지원 옵션은 fail-closed 처리한다.
+  같은 버전의 `flock`은 file/directory lock 뒤의 직접 command argv와 `-c` shell
+  문자열을 각각 재귀 검사하고, 숫자 file descriptor만 사용하는 무실행 형식은
+  허용한다. lock·command·옵션 값 누락, 중복 `-c`, 잔여 인자와 미지원 옵션은
+  fail-closed 처리한다.
+  같은 버전의 `setarch`와 설치된 `i386`·`linux32`·`linux64`·`x86_64` 별칭은
+  personality 옵션 뒤의 program argv를 재귀 검사한다. program이 없어 기본 shell로
+  전환되는 형태와 미지원 옵션은 fail-closed 처리하며, 별도 coreutils `arch` 명령은
+  launcher로 오인하지 않는다.
+  dpkg 1.21.1 `start-stop-daemon --start`는 `--startas`를 우선하고 없으면 `--exec`을
+  실행 프로그램으로 사용하므로, 선택된 프로그램과 `--` 뒤 argv를 함께 재귀 검사한다.
+  `--stop`·`--status`·help/version·`--test`는 실행 자식이 없는 형식으로 구분한다.
+  기본 작업 디렉터리 변경 뒤 상대 wrapper는 면제하지 않으며, chroot 시작과 누락·충돌·
+  미지원 옵션은 fail-closed 처리한다.
+  coreutils 8.32 `chroot`는 옵션과 `NEWROOT` 뒤 command argv를 분리한다. 경로 정체가
+  유지되는 exact `/`만 자식을 재귀 검사하고 다른 root는 fail-closed 처리한다. 기본
+  chdir 뒤 상대 wrapper는 면제하지 않되 `--skip-chdir /`은 기존 상대경로 정책을
+  보존한다. command가 없어 interactive shell을 여는 형식과 미지원·빈 옵션도 차단한다.
+  systemd 249 `systemd-run`은 문서화된 옵션과 transient command argv를 분리해 자식을
+  재귀 검사한다. `--scope`가 호출자의 작업 디렉터리를 그대로 상속할 때만 기존 상대
+  wrapper 정책을 보존하고, service 실행이나 명시적 working-directory 변경은 절대
+  정본 wrapper만 허용한다. 대화형 `--shell`, command 누락, 원격 host/machine 및 임의
+  unit property로 실행 경로 정체가 모호한 형식과 미지원·빈 옵션은 fail-closed 처리한다.
+  외부 GNU `time`은 문서화된 측정·출력 옵션 뒤 command argv를 재귀 검사한다.
+  help/version은 실행 자식이 없는 종료 형식으로 구분하고, command 누락과 미지원·빈
+  옵션은 fail-closed 처리한다. 셸 예약어 `time`은 복합 문법으로 계속 fail-closed한다.
+  실제 executable 앞의 `<`·`>`·`>>`·`>|`·`<>`·`<<`·`<<<` 리다이렉션은 숫자·변수
+  file descriptor 접두사와 붙은/분리된 대상을 구분해 건너뛴다. assignment와 `env`,
+  shell command 문자열 안에서도 같은 분류를 적용하고, 대상 파일명이 runner와 같아도
+  데이터로 취급한다. 대상 누락과 모호한 descriptor 복제형은 fail-closed 처리한다.
+  앞선 `cd`·`pushd`·`popd`가 현재 디렉터리를 바꿀 수 있으면 이후 상대 wrapper
+  경로는 정본으로 보지 않고 fail-closed하며, 저장소 wrapper의 절대 경로만 허용한다.
+  single quote·escape로 보호돼 lease 획득 후
+  자식에게 전달되는 치환은 허용한다. Python 러너뿐 아니라 edgeconf 변경·재부팅을
+  수행하는 standalone `test_vflip_frame_compare.sh`도 직접 실행을 막는다. 축약할 수
+  없는 복합 문법과 동명 비정규 wrapper 경로는 fail-closed 처리하지만 defense in
+  depth일 뿐 보안 경계가 아니다.
+  `SIGKILL`/OOM과 영구 실행되는 web dashboard, Docker runner, non-plan CLI entry
+  point는 여전히 명시적 한계로 남는다.
+- 테스트는 fake control executable만 사용하며 실제 보드를 acquire하지 않는다.
+
 ### PR 자동리뷰 3종 집계 + 머지 게이트 (scripts/pr_reviews.py)
 
 - **문제**: 세 리뷰어가 서로 다른 API 경로에 결과를 남긴다 — Claude·Gemini 는

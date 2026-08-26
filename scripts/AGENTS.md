@@ -4,9 +4,8 @@
 # scripts
 
 ## Purpose
-두 가지 목적의 스크립트가 공존:
-1. **Windows 운영 스크립트** — PowerShell/Batch로 가상환경 설정, 서버 시작/종료 자동화
-2. **Plan 운영 도구** (Python) — equivalence_check, comprehensive 매핑 생성기
+운영·검증 목적의 스크립트가 공존한다. Windows 환경 자동화, Plan 운영,
+PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞게 제공한다.
 
 ## Key Files
 
@@ -29,6 +28,46 @@
 | `equivalence_check.py` | run_*.py 결과 vs plan-driven 결과 동등성 비교 (binary). MATCHED / MISMATCHED / LEFT_ONLY / RIGHT_ONLY 카테고리 분류. `--mapping` JSON 옵션으로 도메인 case_name 매핑 지원. |
 | `generate_comprehensive_mapping.py` | run_comprehensive_verify의 96 scenario를 8 mandatory multi case로 자동 매핑 JSON 생성. `profiles/plans/comprehensive_mapping.json` 출력. |
 
+### PIM 보드 점유 도구 (Shell/Python)
+
+| File | Description |
+|------|-------------|
+| `with_pim_board.sh` | 공통 exclusive lease 래퍼. mode-600 control 환경을 로드하고 사용자 로컬 `jhw-control` 절대 경로로 자식 하드웨어 명령을 실행한다. 중첩 실행은 표시 변수만 믿지 않고 조상 `board with` PID와 현재 active lease를 함께 검증한다. long automation은 정확한 deadline·purpose·long-lease·deadline supervisor까지 일치해야 재사용한다. |
+| `run_with_deadline.py` | long-lease automation 자식을 lease 종료 전 TERM→teardown→KILL 순서로 종료하고 프로세스 그룹을 회수한다. supervisor가 받은 SIGHUP은 자식 SIGTERM으로 정규화하고, 자식 회수 후 외부 종료코드 129를 반환한다. |
+| `guard_pim_board_command.py` | Claude Bash PreToolUse 가드. `env` option cluster·`builtin`·`exec`·`eval`·`source`·`nice`·`stdbuf`·`xargs`·moreutils `parallel`·`find`·`flock`·`setarch`·`start-stop-daemon`·`chroot`·`systemd-run`·`watch`·`taskset`·`chrt`·`ionice`·`script`·`prlimit`·`setsid`·`unshare`·`sudo`·`runuser`·외부 GNU `time` 등 launcher·shell `-c`·Bash ANSI-C quote·stdin shell fail-closed·명령 치환·그룹/조건 제어문 내부의 직접 plan/standalone runner 실행도 차단한다. `source`/`.`의 선택적 `--` 뒤 runner, `find`의 실행 action과 placeholder 가능성, `flock`의 직접 argv와 `-c` shell command, `setarch` 및 설치된 architecture 별칭, `start-stop-daemon --start`의 `--startas`/`--exec` 프로그램, exact `/` 대상 `chroot`의 command, `systemd-run`의 transient command, 외부 `time`의 측정 대상, `watch -x`의 exec 자식과 기본 shell command, `taskset`의 affinity, `chrt`의 priority, `ionice`의 class 옵션, `script -c`와 `runuser -c`의 command 문자열, `prlimit`의 resource 옵션 및 `unshare`의 namespace 옵션 뒤 실행 자식을 재귀 검사하며 정확한 저장소 wrapper 경로만 면제한다. 실제 명령 앞의 shell redirection과 붙은/분리된 대상도 건너뛴 뒤 분류한다. 앞선 `cd`·`pushd`·`popd`, `start-stop-daemon`, 기본 `chroot` chdir, 비-scope 또는 working-directory 변경 `systemd-run` 뒤에는 상대 wrapper 경로를 면제하지 않고 절대 정본 경로만 허용한다. 숫자 FD-only `flock`과 PID·PGID·UID 대상 모드는 실행 자식 없음으로 구분하고, 대화형 `script`·`runuser`·`systemd-run --shell`, PID형 `prlimit`의 잔여 command, program 없는 `setarch`·`start-stop-daemon --start`·`chroot`·`systemd-run`·`unshare`·외부 `time`, alternate-root/chroot·원격/임의-property `systemd-run` 시작, 대상 없는 redirection·모호한 descriptor 복제형, ANSI-C escape·미종결 action·비정규 경로·축약 불가능한 복합 문법은 fail-closed 처리한다. Python `-m runpy` 대상과 `.py` standalone runner의 직접 module 실행, moreutils `parallel`의 command string·append·`{}` 치환 결과도 재귀 분류한다. 방어 심화용이며 보안 경계는 아니다. |
+| `test_vflip_frame_compare.sh` | edgeconf 변경·재부팅·녹화를 수행하는 standalone vflip 비교 러너. 직접 또는 shell positional script로 실행할 때도 lease가 필요하다. |
+| `auto_chain.sh` | `smoke → comprehensive → release_next → nightly` 자동 체인. 실행 상태 생성 전 24시간 long lease로 자신을 래핑한다. |
+| `auto_overnight.sh` | 다음 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
+| `auto_weekend.sh` | 월요일 09:00 KST까지 자동 체인. 정확한 deadline까지 long lease로 자신을 래핑한다. |
+
+`env -C`/`--chdir`는 그 자식 실행 문맥에서만 상대 wrapper 면제를 제거한다.
+이 상태는 `env -S`, 중첩 `env`, 다른 launcher의 자식까지 전달되며 저장소 절대
+wrapper는 계속 허용한다. `env`가 끝난 뒤 부모 shell의 다음 세그먼트에는 전달하지
+않는다.
+
+`source`/`.` 또는 shell positional script가 런타임 file-descriptor 의사경로를
+읽으면 내용을 정적으로 확인할 수 없으므로 fail-closed한다. `xargs`는 stdin 자체를
+실행하지 않고, 일반 모드에서는 알려진 보드 실행 인자 시퀀스의 append 결과를,
+replace 모드에서는 marker 치환 결과를 기존 분류기에 다시 넣는다. 무관한 데이터
+명령과 정본 wrapper 경계는 허용한다.
+
+`guard_pim_board_command.py`는 `bash`·`dash`·`sh`·`zsh -c`의 command 문자열 뒤
+positional operand를 해석하지 않고 모두 fail-closed 처리한다. operand가 없는
+`-c` 문자열만 기존 재귀 분류를 유지한다. executable, Python script/module,
+shell positional/source script 및 `pim_check.py` 인자에 셸 확장 표식이 있으면
+fail-closed하며, 무관한 데이터 인자와 정본 wrapper 뒤 자식 인자는 검사하지 않는다.
+argparse가 `--plan`으로 수용하는 고유 축약 `--pl`·`--pla`도 plan 실행으로 차단하되,
+여러 옵션과 충돌해 CLI가 거부하는 `--p`는 차단하지 않는다.
+Python `-m runpy`는 다음 대상 모듈을 깊이 제한 안에서 재분류하고, standalone Python
+runner의 직접 module 실행도 차단한다. util-linux `runuser`는 `-u` 뒤 직접 argv와
+`-c`/`--session-command` 문자열을 각각 재귀 분류하며 대화형·모호한 형식은
+fail-closed한다.
+moreutils `parallel`은 `--` 뒤 독립 command 문자열 또는 앞 command에 append·`{}`
+치환되는 실제 argv를 재귀 분류한다. 구분자 누락과 미지원/GNU parallel 형식은
+fail-closed한다.
+외부 GNU `time`은 문서화된 옵션 뒤 자식을 재귀 분류하고 help/version만 무실행
+종료 형식으로 허용한다. 셸 예약어 `time`은 복합 문법으로 계속 fail-closed한다.
+
 ### 개발 워크플로 도구 (Python)
 
 | File | Description |
@@ -41,6 +80,31 @@
 - **Windows 스크립트** (.ps1/.bat): `.bat` 파일은 `.ps1`의 단순 래퍼 — 로직 수정은 `.ps1`에서. 줄바꿈은 CRLF 유지. 실행 권한(+x) 확인 불필요.
 - **Python 도구**: shebang `#!/usr/bin/env python3` + 실행 권한(+x). `from __future__ import annotations` 사용. 단위 테스트는 `tests/test_{module}.py`.
 - 두 카테고리는 다른 OS 환경 — 하나 수정해도 다른 쪽 영향 없음.
+
+### PIM 보드 lease 사용
+
+실제 plan 또는 standalone hardware runner는 반드시 공통 래퍼로 실행한다.
+
+```bash
+scripts/with_pim_board.sh --for 30m --purpose "manual smoke" -- \
+  python3 pim_check.py --plan smoke
+```
+
+| 실행 주체/범위 | Lease | 비고 |
+|---|---|---|
+| CI mixed-combo | 30m | `hw-verify.yml` |
+| CI comprehensive | 3h | `hw-verify-comprehensive.yml` |
+| CI plan | 12h | `hw-verify-plan.yml` |
+| 로컬 `auto_chain.sh` | 24h | `--long-lease true` 필요 |
+| 로컬 overnight/weekend 자동화 | 정확한 종료 deadline (`--until`) | `--long-lease true` 필요 |
+
+long lease는 만료 31분 전에 정리를 시작한다. 자식 프로세스에는 teardown용 30분을
+주고, 마지막 60초는 강제 종료와 lease 해제에 남긴다. SSH나 제어 터미널이 끊겨
+SIGHUP을 받아도 같은 SIGTERM→teardown→KILL→reap 경로를 마친 뒤 lease를 해제한다.
+
+보드가 busy이면 exit 4로 즉시 실패한다. `board wait`, 재시도 루프, `|| true`, 직접
+`jhw-control board acquire`는 사용하지 않는다. lease는 advisory이며 #108은 persistent
+web dashboard, Docker runner, non-plan CLI 모드를 소급 적용하지 않는다.
 
 ### Plan 도구 사용 패턴
 
