@@ -101,3 +101,15 @@ jobs:
           if total > 10:
               print(f'  ... ({total-10} more)')
           PYEOF
+
+      - name: Notify failure
+        if: failure()
+        continue-on-error: true
+        env:
+          PIM_CHECK_WEBHOOK_URL: ${{ secrets.PIM_CHECK_WEBHOOK_URL }}
+        run: |
+          python3 notifier.py \
+            --results comprehensive_results.json \
+            --case comprehensive \
+            --host "$TARGET_HOST" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

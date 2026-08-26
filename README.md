@@ -312,6 +312,13 @@ email:
 
 CI(GitHub Actions hw-verify*)는 `env: TARGET_HOST: ...` 값을 모든 step에 전달한다. Hardware gate compatibility workflow의 주소를 바꾸려면 해당 보드에서 baseline calibration과 human review를 먼저 수행해야 한다.
 
+### CI 실패 webhook
+
+주간 comprehensive 검증 실패를 외부 webhook으로 받으려면 저장소의
+`Settings > Secrets and variables > Actions`에 `PIM_CHECK_WEBHOOK_URL` Secret을
+한 번 등록한다. 이후 정기·수동 실행이 같은 Secret을 자동으로 사용하므로 실행할
+때마다 다시 입력할 필요가 없다. URL을 교체하거나 폐기할 때만 Secret을 갱신한다.
+
 ## 테스트
 
 ```bash
