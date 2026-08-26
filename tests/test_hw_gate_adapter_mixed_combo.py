@@ -38,6 +38,7 @@ class FakeSetupManager:
     def __init__(self) -> None:
         self.checked: list[dict] = []
         self.current_changes: dict = {}
+        self.collector_configs: list[dict] = []
 
     def check_current(self, changes: dict) -> bool:
         self.checked.append(copy.deepcopy(changes))
@@ -48,12 +49,14 @@ class FakeTransaction:
     def __init__(
         self, manager: FakeSetupManager, events: list[str], run_id: str,
         restore_failure: bool = False, fail_at: Optional[int] = None,
+        fatal_at: Optional[int] = None,
     ) -> None:
         self.manager = manager
         self.events = events
         self.run_id = run_id
         self.restore_failure = restore_failure
         self.fail_at = fail_at
+        self.fatal_at = fatal_at
         self.apply_count = 0
 
     def __enter__(self) -> "FakeTransaction":
@@ -63,6 +66,8 @@ class FakeTransaction:
     def apply_and_reboot(self, changes: dict) -> None:
         self.apply_count += 1
         self.events.append("apply-reboot-{0}".format(self.apply_count))
+        if self.fatal_at == self.apply_count:
+            raise SigtermLike("simulated SIGTERM")
         if self.fail_at == self.apply_count:
             raise RuntimeError("scenario mutation failed")
         self.manager.current_changes = copy.deepcopy(changes)
@@ -76,17 +81,23 @@ class FakeTransaction:
 
 
 class FixtureCollector:
-    def __init__(self, scenarios: list[dict]) -> None:
+    def __init__(self, scenarios: list[dict], collector_configs: list[dict]) -> None:
         self._by_id = {item["test_id"]: copy.deepcopy(item["evidence"]) for item in scenarios}
+        self._collector_configs = collector_configs
 
     def collect(self, ssh: FakeSsh, config: dict) -> dict:
         del ssh
+        self._collector_configs.append(copy.deepcopy(config))
         return copy.deepcopy(self._by_id[config["mixed_combo_evidence"]["test_id"]])
+
+
+class SigtermLike(BaseException):
+    """Test-only signal-shaped interruption that must not be swallowed as an Exception."""
 
 
 def _adapter(
     tmp_path: Path, *, scenarios: Optional[list[dict]] = None, restore_failure: bool = False,
-    fail_at: Optional[int] = None,
+    fail_at: Optional[int] = None, fatal_at: Optional[int] = None,
 ) -> tuple[MixedComboAdapter, AdapterContext, FakeSetupManager, list[str]]:
     manager = FakeSetupManager()
     events: list[str] = []
@@ -96,12 +107,12 @@ def _adapter(
     ) -> FakeTransaction:
         assert setup_manager is manager
         assert stabilize_sec == 30
-        return FakeTransaction(manager, events, run_id, restore_failure, fail_at)
+        return FakeTransaction(manager, events, run_id, restore_failure, fail_at, fatal_at)
 
     adapter = MixedComboAdapter(
         setup_manager_factory=lambda ssh: manager,
         transaction_factory=transaction_factory,
-        collector=FixtureCollector(scenarios or _raw_scenarios()),
+        collector=FixtureCollector(scenarios or _raw_scenarios(), manager.collector_configs),
     )
     context = AdapterContext(
         ssh=FakeSsh(), baseline_gate=_baseline_gate(), run_id="mixed-test", raw_dir=tmp_path / "raw",
@@ -127,6 +138,61 @@ def test_normalization_preserves_the_four_legacy_channel_assignments_as_numeric_
     assert gate["raw_output"] == {
         "path": "raw/mixed_combo.json",
         "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("scenario_index", "expected_channels", "expected_enabled_channels", "expected_masks"),
+    [
+        (0, {
+            0: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
+            1: {"enable": True, "vflip": True, "hflip": False, "ae_on": True, "awb": "auto"},
+            2: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
+            3: {"enable": True, "vflip": False, "hflip": True, "ae_on": False, "awb": "off"},
+        }, [1, 3], {"1": 0, "2": 0}),
+        (1, {
+            0: {"enable": True, "vflip": True, "hflip": True, "ae_on": True, "awb": "off"},
+            1: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
+            2: {"enable": True, "vflip": False, "hflip": False, "ae_on": False, "awb": "auto"},
+            3: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
+        }, [0, 2], {"1": 0, "2": 0}),
+        (2, {
+            0: {"enable": True, "vflip": True, "hflip": False, "ae_on": True, "awb": "auto"},
+            1: {"enable": True, "vflip": False, "hflip": True, "ae_on": False, "awb": "off"},
+            2: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
+            3: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
+        }, [0, 1], {"1": 0, "2": 3}),
+        (3, {
+            0: {"enable": True, "vflip": True, "hflip": False, "ae_on": True, "awb": "auto"},
+            1: {"enable": True, "vflip": False, "hflip": True, "ae_on": False, "awb": "off"},
+            2: {"enable": True, "vflip": True, "hflip": True, "ae_on": True, "awb": "off"},
+            3: {"enable": True, "vflip": False, "hflip": False, "ae_on": False, "awb": "auto"},
+        }, [0, 1, 2, 3], {"1": 3, "2": 3}),
+    ],
+)
+def test_cleanroom_matrix_preserves_literal_abcd_settings_and_collector_masks(
+    tmp_path: Path, scenario_index: int, expected_channels: dict,
+    expected_enabled_channels: list[int], expected_masks: dict,
+) -> None:
+    """Catches any changed A/B/C/D assignment, setting value, or collector bus-mask input."""
+    adapter, context, manager, _ = _adapter(tmp_path)
+
+    adapter.collect_raw(context)
+
+    observed_channels = {
+        channel: {
+            key: manager.checked[scenario_index][".VHL_CAM.i2c{0}.ch{1}.{2}".format(
+                2 if channel < 2 else 1, channel, key,
+            )]
+            for key in ("enable", "vflip", "hflip", "ae_on", "awb")
+        }
+        for channel in range(4)
+    }
+    assert observed_channels == expected_channels
+    assert manager.collector_configs[scenario_index]["mixed_combo_evidence"] == {
+        "test_id": scenario_index + 1,
+        "enabled_channels": expected_enabled_channels,
+        "expected_mode_masks": expected_masks,
     }
 
 
@@ -192,6 +258,18 @@ def test_restoration_error_overrides_would_be_pass_and_runs_after_an_early_failu
     assert gate["restoration"]["verdict"] == "ERROR"
     assert gate["verdict"] == "ERROR"
     assert "restore hash mismatch" in json.dumps(gate["errors"])
+
+
+def test_baseexception_unwinds_the_one_campaign_restoration_without_changing_signal_semantics(
+    tmp_path: Path,
+) -> None:
+    """Catches swallowing signal-like BaseException or skipping its sole restore/reboot/hash attempt."""
+    adapter, context, _, events = _adapter(tmp_path, fatal_at=2)
+
+    with pytest.raises(SigtermLike, match="simulated SIGTERM"):
+        adapter.collect_raw(context)
+
+    assert events == ["snapshot", "journal", "apply-reboot-1", "apply-reboot-2", "restore-reboot-hash"]
 
 
 def test_legacy_entry_point_requires_central_pass_and_verified_restoration(
