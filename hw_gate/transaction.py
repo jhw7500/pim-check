@@ -417,6 +417,7 @@ class StrictHardwareTransaction:
         self._state_history = [TransactionState.NEW]
         self._manifest: Dict[str, Any] = {}
         self._original_sha = ""
+        self._restored_sha = ""
         self._entered = False
         self._restoring = False
         self._journal_deleted = False
@@ -436,6 +437,16 @@ class StrictHardwareTransaction:
     @property
     def manifest(self) -> Dict[str, Any]:
         return dict(self._manifest)
+
+    @property
+    def original_sha256(self) -> Optional[str]:
+        """Return the hash computed from the validated pre-mutation snapshot."""
+        return self._original_sha or None
+
+    @property
+    def restored_sha256(self) -> Optional[str]:
+        """Return the independently read post-reboot restoration hash."""
+        return self._restored_sha or None
 
     def _record_state(self, state: TransactionState) -> None:
         self._state = state
@@ -630,7 +641,8 @@ class StrictHardwareTransaction:
                 _reboot_for_restoration(
                     self.setup_manager, self.stabilize_sec, "post-restore reboot/readiness",
                 )
-                if _read_config_sha(self.setup_manager, self.conf_path) != self._original_sha:
+                self._restored_sha = _read_config_sha(self.setup_manager, self.conf_path)
+                if self._restored_sha != self._original_sha:
                     raise TransactionRestorationError("restored config SHA256 mismatch")
                 self._set_state(TransactionState.VERIFIED, restoration=True)
             if self._state is TransactionState.VERIFIED:

@@ -198,6 +198,32 @@ def test_identity_claims_must_be_populated_and_stable_across_runs() -> None:
     assert any("identity" in reason for reason in changed_candidate["reasons"])
 
 
+@pytest.mark.parametrize("mutation", ["duplicate", "malformed", "extra"])
+def test_candidate_rejects_duplicate_malformed_or_extra_identity_claims(
+    mutation: str,
+) -> None:
+    """Identity coverage must be one exact, well-formed claim per template ID."""
+    runs = [_run(1), _run(2), _run(3)]
+    claims = runs[1]["identity"]
+    if mutation == "duplicate":
+        claims.append(copy.deepcopy(claims[0]))
+    elif mutation == "malformed":
+        claims.append("not-an-identity-object")
+    else:
+        claims.append({
+            "id": "unexpected.module_sha256",
+            "kind": "module_sha256",
+            "module": "unexpected",
+            "actual": "e" * 64,
+        })
+
+    candidate = build_candidate(_template(), runs)
+
+    assert candidate["eligible"] is False
+    assert candidate["baseline"] is None
+    assert any("identity" in reason for reason in candidate["reasons"])
+
+
 def test_writer_creates_only_private_candidate_and_refuses_production_baseline(
     tmp_path: Path,
 ) -> None:
@@ -287,3 +313,102 @@ def test_calibrate_cli_requires_three_repetitions_and_uses_raw_collection(
                 "--output", str(tmp_path / ("candidate-" + invalid + ".json")),
             ])
         assert exc_info.value.code == 2
+
+
+def test_calibrate_cli_maps_ssh_close_failure_to_error_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An eligible candidate cannot turn an infrastructure close failure into exit 0."""
+    from hw_gate import cli
+
+    collected = []
+
+    class FailingCloseSsh:
+        def __init__(self, host: str) -> None:
+            assert host == "192.168.0.5"
+
+        def close(self) -> None:
+            raise RuntimeError("close transport failed")
+
+    class FakeIdentity:
+        def collect(self, ssh: object, config: dict) -> dict:
+            del ssh, config
+            return {"claims": copy.deepcopy(_run(1)["identity"]), "errors": []}
+
+    class FakeAdapter:
+        def collect_raw(self, context: object) -> dict:
+            run_number = len(collected) + 1
+            collected.append(context.run_id)
+            raw = copy.deepcopy(_run(run_number)["raw"])
+            raw["run_id"] = context.run_id
+            return raw
+
+    monkeypatch.setattr(cli, "SshClient", FailingCloseSsh)
+    monkeypatch.setattr(cli, "SetupManager", lambda ssh: object())
+    monkeypatch.setattr(cli, "recover_pending_transaction", lambda manager: False)
+    monkeypatch.setattr(cli, "TargetIdentityCheck", FakeIdentity)
+    monkeypatch.setattr(cli, "BpsAdapter", FakeAdapter)
+    output = tmp_path / "candidate.json"
+
+    result = cli.main([
+        "calibrate",
+        "--template", str(TEMPLATE_PATH),
+        "--target-host", "192.168.0.5",
+        "--repetitions", "3",
+        "--output", str(output),
+    ])
+
+    assert result == 2
+    assert json.loads(output.read_text(encoding="utf-8"))["eligible"] is True
+
+
+def test_calibrate_cli_retains_ineligible_candidate_on_identity_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identity preflight failure must remain reviewable without reaching mutation."""
+    from hw_gate import cli
+
+    class FakeSsh:
+        def __init__(self, host: str) -> None:
+            assert host == "192.168.0.5"
+
+        def close(self) -> None:
+            pass
+
+    class FailedIdentity:
+        def collect(self, ssh: object, config: dict) -> dict:
+            del ssh, config
+            return {"claims": [], "errors": ["modinfo module path not found"]}
+
+    class MutationMustNotRun:
+        def collect_raw(self, context: object) -> dict:
+            del context
+            raise AssertionError("identity failure must stop before BPS mutation")
+
+    monkeypatch.setattr(cli, "SshClient", FakeSsh)
+    monkeypatch.setattr(cli, "SetupManager", lambda ssh: object())
+    monkeypatch.setattr(cli, "recover_pending_transaction", lambda manager: False)
+    monkeypatch.setattr(cli, "TargetIdentityCheck", FailedIdentity)
+    monkeypatch.setattr(cli, "BpsAdapter", MutationMustNotRun)
+    output = tmp_path / "identity-error-candidate.json"
+
+    result = cli.main([
+        "calibrate",
+        "--template", str(TEMPLATE_PATH),
+        "--target-host", "192.168.0.5",
+        "--repetitions", "3",
+        "--output", str(output),
+    ])
+
+    assert result == 2
+    candidate = json.loads(output.read_text(encoding="utf-8"))
+    assert candidate["eligible"] is False
+    assert candidate["baseline"] is None
+    assert len(candidate["source_runs"]) == 1
+    assert candidate["source_runs"][0]["identity"] == []
+    assert candidate["source_runs"][0]["identity_errors"] == [
+        "modinfo module path not found"
+    ]
+    assert candidate["source_runs"][0]["raw"] is None

@@ -101,6 +101,7 @@ class BpsAdapter:
             changes[_BPS_PATH] = [setpoint, setpoint]
             cycle = {"setpoint_kbps": setpoint, "verdict": Verdict.ERROR.value}
             pending_sample: Optional[dict] = None
+            stop_after_cycle = False
             try:
                 transaction = self._transaction_factory(
                     manager,
@@ -162,19 +163,32 @@ class BpsAdapter:
                                     "actual_bps": actual_bps,
                                     "measurement": measurement,
                                 }
-                manifest = transaction.manifest
-                original_sha = manifest.get("original_sha256") if isinstance(manifest, dict) else None
-                if not isinstance(original_sha, str) or not _SHA256_RE.fullmatch(original_sha):
+                original_sha = transaction.original_sha256
+                restored_sha = transaction.restored_sha256
+                if (
+                    not isinstance(original_sha, str)
+                    or not _SHA256_RE.fullmatch(original_sha)
+                    or not isinstance(restored_sha, str)
+                    or not _SHA256_RE.fullmatch(restored_sha)
+                ):
                     errors.append(_error(
                         "bps.restoration_hash_missing",
                         "setpoint {0}: verified restoration SHA256 is unavailable".format(setpoint),
                     ))
+                    stop_after_cycle = True
                 else:
                     cycle.update({
                         "before_sha256": original_sha,
-                        "after_sha256": original_sha,
-                        "verdict": Verdict.PASS.value,
+                        "after_sha256": restored_sha,
                     })
+                    if restored_sha != original_sha:
+                        errors.append(_error(
+                            "bps.restoration_hash_mismatch",
+                            "setpoint {0}: restoration SHA256 mismatch".format(setpoint),
+                        ))
+                        stop_after_cycle = True
+                    else:
+                        cycle["verdict"] = Verdict.PASS.value
                 if pending_sample is not None and cycle["verdict"] == Verdict.PASS.value:
                     samples.append(pending_sample)
             except TransactionRestorationError as exc:
@@ -187,6 +201,8 @@ class BpsAdapter:
                     "setpoint {0}: {1}".format(setpoint, exc),
                 ))
             cycles.append(cycle)
+            if stop_after_cycle:
+                break
 
         restoration_verdict = (
             Verdict.PASS.value

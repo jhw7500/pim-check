@@ -711,6 +711,19 @@ def test_body_parse_and_assertion_failures_restore_then_preserve_original_error(
     assert manager.events.count("delete") == 1
 
 
+def test_successful_restoration_retains_the_independently_observed_hash() -> None:
+    """Adapters must receive the actual post-reboot hash, not a copied expectation."""
+    manager = FakeSetupManager()
+    transaction = _transaction(manager)
+
+    with transaction:
+        pass
+
+    assert transaction.original_sha256 == ORIGINAL_SHA
+    assert transaction.restored_sha256 == ORIGINAL_SHA
+    assert manager.events.count("hash") == 1
+
+
 def test_sigterm_style_baseexception_uses_the_same_restoration_path() -> None:
     """Signal unwinding is not limited to Exception subclasses."""
     manager = FakeSetupManager()

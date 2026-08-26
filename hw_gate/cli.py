@@ -709,6 +709,7 @@ def _calibrate_command(args: argparse.Namespace) -> int:
 
     calibration_runs = []
     ssh: Optional[object] = None
+    result = ERROR_EXIT
     try:
         with installed_termination_handlers():
             ssh = SshClient(args.target_host)
@@ -724,7 +725,18 @@ def _calibrate_command(args: argparse.Namespace) -> int:
                 claims = identity_evidence.get("claims") if isinstance(identity_evidence, dict) else None
                 errors = identity_evidence.get("errors") if isinstance(identity_evidence, dict) else None
                 if not isinstance(claims, list) or not claims or not isinstance(errors, list) or errors:
-                    raise EvidenceError("target identity collection failed before calibration mutation")
+                    identity_errors = (
+                        [str(error) for error in errors]
+                        if isinstance(errors, list) and errors
+                        else ["target identity collection returned malformed or empty evidence"]
+                    )
+                    calibration_runs.append({
+                        "run_id": run_id,
+                        "identity": claims if isinstance(claims, list) else [],
+                        "identity_errors": identity_errors,
+                        "raw": None,
+                    })
+                    break
                 raw = adapter.collect_raw(AdapterContext(
                     ssh=ssh,
                     baseline_gate={},
@@ -734,25 +746,26 @@ def _calibrate_command(args: argparse.Namespace) -> int:
                 calibration_runs.append({
                     "run_id": run_id,
                     "identity": claims,
+                    "identity_errors": [],
                     "raw": raw,
                 })
                 if raw.get("errors") or raw.get("restoration", {}).get("verdict") != Verdict.PASS.value:
                     break
         candidate = build_candidate(template, calibration_runs)
         write_candidate(output, candidate)
-        return PASS_EXIT if candidate["eligible"] else ERROR_EXIT
+        result = PASS_EXIT if candidate["eligible"] else ERROR_EXIT
     except TerminationRequested as exc:
         print("hw_gate calibrate: {0}".format(exc), file=sys.stderr)
-        return ERROR_EXIT
-    except (EvidenceError, Exception) as exc:
+    except Exception as exc:
         print("hw_gate calibrate: {0}".format(exc), file=sys.stderr)
-        return ERROR_EXIT
     finally:
         if ssh is not None:
             try:
                 ssh.close()  # type: ignore[attr-defined]
             except Exception as exc:
                 print("hw_gate calibrate: SSH close failed: {0}".format(exc), file=sys.stderr)
+                result = ERROR_EXIT
+    return result
 
 
 def _exit_for_verdict(verdict: Verdict) -> int:

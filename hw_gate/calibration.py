@@ -73,14 +73,20 @@ def _run_identity(template: dict, run: Mapping[str, Any]) -> List[Dict[str, Any]
     observed_claims = run.get("identity")
     if not isinstance(observed_claims, list):
         raise EvidenceError("calibration run identity is missing")
-    by_id = {
-        item.get("id"): item
+    if any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("id"), str)
+        or not item["id"]
         for item in observed_claims
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
+    ):
+        raise EvidenceError("calibration run identity contains a malformed claim")
+    identifiers = [item["id"] for item in observed_claims]
+    if len(identifiers) != len(set(identifiers)):
+        raise EvidenceError("calibration run identity contains duplicate claim IDs")
     template_claims = template["target_identity"]
-    if set(by_id) != {item["id"] for item in template_claims}:
+    if set(identifiers) != {item["id"] for item in template_claims}:
         raise EvidenceError("calibration run identity coverage is incomplete")
+    by_id = {item["id"]: item for item in observed_claims}
     return [_materialized_identity(item, by_id[item["id"]]) for item in template_claims]
 
 

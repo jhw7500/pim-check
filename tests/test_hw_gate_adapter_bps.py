@@ -65,6 +65,7 @@ class FakeTransaction:
         changes: dict,
         stabilize_sec: int,
         restore_failure: Optional[int],
+        restored_hash_mismatch: Optional[int],
     ) -> None:
         self.ssh = ssh
         self.calls = calls
@@ -73,6 +74,7 @@ class FakeTransaction:
         self.changes = copy.deepcopy(changes)
         self.stabilize_sec = stabilize_sec
         self.restore_failure = restore_failure
+        self.restored_hash_mismatch = restored_hash_mismatch
 
     def __enter__(self) -> "FakeTransaction":
         self.calls.append({
@@ -88,6 +90,16 @@ class FakeTransaction:
     def manifest(self) -> dict:
         digit = str(self.changes[BPS_PATH][0] // 1024)
         return {"original_sha256": digit * 64}
+
+    @property
+    def original_sha256(self) -> str:
+        return self.manifest["original_sha256"]
+
+    @property
+    def restored_sha256(self) -> str:
+        if self.changes[BPS_PATH][0] == self.restored_hash_mismatch:
+            return "f" * 64
+        return self.original_sha256
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
         del exc_type, exc, traceback
@@ -141,6 +153,7 @@ def _adapter(
     readback_overrides: Optional[Dict[str, object]] = None,
     collector_failure: Optional[str] = None,
     restore_failure: Optional[int] = None,
+    restored_hash_mismatch: Optional[int] = None,
     baseline_gate: Optional[dict] = None,
 ) -> tuple[BpsAdapter, AdapterContext, FakeSetupManager, list]:
     ssh = FakeSsh(readback_overrides)
@@ -156,6 +169,7 @@ def _adapter(
     ) -> FakeTransaction:
         return FakeTransaction(
             ssh, calls, setup_manager, run_id, changes, stabilize_sec, restore_failure,
+            restored_hash_mismatch,
         )
 
     collector = FakeCollector(actuals or _actuals(), collector_failure)
@@ -234,6 +248,23 @@ def test_run_normalizes_eight_metrics_and_hashes_the_exact_raw_output(tmp_path: 
     assert gate["restoration"]["verdict"] == "PASS"
     assert gate["verdict"] == "PASS"
     assert evaluate_bps_gate(gate, _baseline_gate()) is Verdict.PASS
+
+
+def test_raw_cycle_uses_independently_observed_post_restore_hash(tmp_path: Path) -> None:
+    """Copying the original hash into the after field must not fabricate restore evidence."""
+    adapter, context, _, _ = _adapter(tmp_path, restored_hash_mismatch=4096)
+
+    raw = adapter.collect_raw(context)
+
+    cycle = next(
+        item for item in raw["restoration"]["cycles"]
+        if item["setpoint_kbps"] == 4096
+    )
+    assert cycle["before_sha256"] == "4" * 64
+    assert cycle["after_sha256"] == "f" * 64
+    assert cycle["verdict"] == "ERROR"
+    assert raw["restoration"]["verdict"] == "ERROR"
+    assert "restoration SHA256 mismatch" in json.dumps(raw["errors"])
 
 
 @pytest.mark.parametrize(
