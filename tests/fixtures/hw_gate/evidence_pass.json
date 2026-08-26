@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-26T00:00:00Z",
+  "deployment": {"mode": "predeployed", "verified": false},
+  "gates": [
+    {
+      "id": "bps_quick",
+      "adapter_id": "bps_quick",
+      "adapter_schema_version": 1,
+      "process": {"exit_code": 0},
+      "raw_output": {
+        "path": "raw/bps_quick.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "identity": {"verdict": "PASS"},
+      "preconditions": [
+        {"id": "ch0.qp_min", "expected": [0, 0], "observed": [0, 0], "verdict": "PASS"}
+      ],
+      "metrics": [
+        {
+          "id": "bps.ch0.1024.baseline",
+          "value": 1025000,
+          "unit": "bps",
+          "baseline_value": 1024000,
+          "rule": {"kind": "relative", "reference": 1024000, "max_percent_delta": 5.0},
+          "delta": {"absolute": 1000, "percent": 0.09765625},
+          "verdict": "PASS"
+        }
+      ],
+      "restoration": {"cycles": [], "verdict": "PASS"},
+      "diagnostic_refs": [],
+      "errors": [],
+      "verdict": "PASS"
+    }
+  ],
+  "verdict": "PASS"
+}
