@@ -215,3 +215,27 @@ def test_collect_rejects_truncated_scan_row_before_transfers() -> None:
     assert data["mode_masks"] == {}
     assert data["register_words"] == {}
     assert data["errors"] == ["i2c scan evidence is invalid"]
+
+
+@pytest.mark.parametrize("column", [1, 2])
+def test_collect_rejects_uu_at_authoritative_i2c_address_before_transfers(column: int) -> None:
+    """A claimed 0x11/0x12 address is ambiguous evidence, never an absent address bit."""
+    from checks.mixed_combo_evidence import MixedComboEvidenceCheck
+
+    cells = ["--"] * 16
+    cells[column] = "UU"
+    scan = _scan(0).replace("10: " + " ".join(["--"] * 16), "10: " + " ".join(cells))
+    commands = []
+    ssh = MagicMock()
+
+    def run(command: str):
+        commands.append(command)
+        return scan if command.startswith("i2cdetect -y ") else "0x00 0x02\n"
+
+    ssh.run.side_effect = run
+    data = MixedComboEvidenceCheck().collect(ssh, _config(1, [1, 3], {1: 0, 2: 0}))
+
+    assert data["mode_masks"] == {}
+    assert data["register_words"] == {}
+    assert data["errors"] == ["i2c scan evidence is invalid"]
+    assert not any(command.startswith("i2ctransfer ") for command in commands)

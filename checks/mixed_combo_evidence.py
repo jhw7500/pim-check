@@ -35,6 +35,7 @@ def _parse_scan(output: object) -> Optional[int]:
         return None
     saw_header = False
     rows = set()
+    row_cells: Dict[str, List[str]] = {}
     for line in output.splitlines():
         if not line.strip():
             continue
@@ -44,13 +45,19 @@ def _parse_scan(output: object) -> Optional[int]:
             saw_header = True
             continue
         match = _SCAN_ROW_RE.fullmatch(line)
+        cells = match.group(2).split() if match is not None else []
         if (match is None or match.group(1) in rows
-                or len(match.group(2).split()) != _SCAN_ROW_CELL_COUNTS[match.group(1)]):
+                or len(cells) != _SCAN_ROW_CELL_COUNTS[match.group(1)]):
             return None
         rows.add(match.group(1))
+        row_cells[match.group(1)] = cells
     if not saw_header or rows != set(_SCAN_ROWS):
         return None
-    return parse_mode_mask(output)
+    address_11 = row_cells["10"][1]
+    address_12 = row_cells["10"][2]
+    if address_11 not in ("--", "11") or address_12 not in ("--", "12"):
+        return None
+    return (1 if address_11 == "11" else 0) | (2 if address_12 == "12" else 0)
 
 
 def _parse_word(output: object) -> Optional[int]:
