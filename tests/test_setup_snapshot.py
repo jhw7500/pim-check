@@ -21,6 +21,24 @@ def _mgr():
 
 
 class TestSnapshotConfig:
+    def test_validated_payload_is_available_through_read_only_api(self):
+        """Strict callers can consume only the payload that passed snapshot validation."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "eyJhIjogMX0="
+
+        assert mgr.snapshot_config(EDGECONF_PATH) is True
+        assert mgr.get_snapshot_payload(EDGECONF_PATH) == "eyJhIjogMX0="
+
+    def test_failed_resnapshot_does_not_export_a_stale_payload(self):
+        """A failed attempt must not leave an older payload looking newly validated."""
+        mgr = _mgr()
+        mgr.ssh.run.return_value = "eyJhIjogMX0="
+        assert mgr.snapshot_config(EDGECONF_PATH) is True
+
+        mgr.ssh.run.return_value = "truncated"
+        assert mgr.snapshot_config(EDGECONF_PATH) is False
+        assert mgr.get_snapshot_payload(EDGECONF_PATH) is None
+
     def test_stores_base64_of_remote_file(self):
         mgr = _mgr()
         mgr.ssh.run.return_value = "eyJhIjogMX0="
