@@ -23,10 +23,12 @@ setup:
     .VHL_CAM.muxer: mp4
     # 인코더 상태 명시 고정 — enc/qp 드리프트로 bitrate 검증이
     # 비결정화되는 것 차단 (2026-08-21 deploy-sync 분석. qp [0,0]=무클램프
-    # → rate control 이 목표 추종, ch3 실측 근거)
+    # → rate control 이 목표 추종, ch3 실측 근거). quant=-1 은
+    # 초기 QP auto를 고정해 드리프트를 제거하지만 인과적 fix 근거가 아님.
     .VHL_CAM.enc: "h265"
     .VHL_CAM.i2c2.ch0.qp_min: [0, 0]
     .VHL_CAM.i2c2.ch0.qp_max: [0, 0]
+    .VHL_CAM.i2c2.ch0.quant: [-1, -1]
     .VHL_CAM.i2c2.ch0.profile: [0, 0]
     .VHL_CAM.capture.enable: false
     .VHL_CAM.i2c2.exp_time: 5000

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "adapter_id": "bps_quick",
+  "fixture": "multi_1ch_0_720p",
+  "samples": [
+    {"setpoint_kbps": 1024, "actual_bps": 1025001},
+    {"setpoint_kbps": 2048, "actual_bps": 2050003},
+    {"setpoint_kbps": 4096, "actual_bps": 4100007},
+    {"setpoint_kbps": 8192, "actual_bps": 8200011}
+  ]
+}
