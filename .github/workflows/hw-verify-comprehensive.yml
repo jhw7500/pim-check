@@ -18,9 +18,9 @@ concurrency:
   group: pim-target-lock
   cancel-in-progress: false
 
-# 타겟 IP 단일 소스. 환경 변경 시 이 값만 수정하면 모든 SSH runner가 자동 적용됨.
+# 타겟 주소 단일 소스. GitHub Actions 저장소 변수 TARGET_HOST에서 관리한다.
 env:
-  TARGET_HOST: 192.168.0.5
+  TARGET_HOST: ${{ vars.TARGET_HOST }}
 
 jobs:
   comprehensive:
@@ -48,9 +48,13 @@ jobs:
 
       - name: Target reachability precheck
         run: |
-          ping -c 2 -W 2 192.168.0.5 >/dev/null || { echo "::error::target down"; exit 1; }
+          if [ -z "$TARGET_HOST" ]; then
+            echo "::error::Repository variable TARGET_HOST is not configured"
+            exit 1
+          fi
+          ping -c 2 -W 2 "$TARGET_HOST" >/dev/null || { echo "::error::target down"; exit 1; }
           sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-              -o LogLevel=ERROR root@192.168.0.5 "echo SSH_OK" \
+              -o LogLevel=ERROR root@"$TARGET_HOST" "echo SSH_OK" \
               | grep -q SSH_OK || { echo "::error::ssh fail"; exit 1; }
 
       - name: Clear stale results cache (avoid fake-success resume)
