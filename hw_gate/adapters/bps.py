@@ -102,6 +102,7 @@ class BpsAdapter:
             cycle = {"setpoint_kbps": setpoint, "verdict": Verdict.ERROR.value}
             pending_sample: Optional[dict] = None
             stop_after_cycle = False
+            transaction = None
             try:
                 transaction = self._transaction_factory(
                     manager,
@@ -192,6 +193,13 @@ class BpsAdapter:
                 if pending_sample is not None and cycle["verdict"] == Verdict.PASS.value:
                     samples.append(pending_sample)
             except TransactionRestorationError as exc:
+                if transaction is not None:
+                    original_sha = transaction.original_sha256
+                    restored_sha = transaction.restored_sha256
+                    if isinstance(original_sha, str) and _SHA256_RE.fullmatch(original_sha):
+                        cycle["before_sha256"] = original_sha
+                    if isinstance(restored_sha, str) and _SHA256_RE.fullmatch(restored_sha):
+                        cycle["after_sha256"] = restored_sha
                 errors.append(_error("bps.restoration_failed", str(exc)))
                 cycles.append(cycle)
                 break
