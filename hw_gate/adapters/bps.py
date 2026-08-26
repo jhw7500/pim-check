@@ -5,6 +5,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -24,6 +25,7 @@ BPS_SETPOINTS = (1024, 2048, 4096, 8192)
 _BPS_PATH = ".VHL_CAM.i2c2.ch0.bps"
 _FIXTURE_NAME = "multi_1ch_0_720p"
 _RAW_NAME = "bps_quick.json"
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _utc_now() -> str:
@@ -100,12 +102,13 @@ class BpsAdapter:
             cycle = {"setpoint_kbps": setpoint, "verdict": Verdict.ERROR.value}
             pending_sample: Optional[dict] = None
             try:
-                with self._transaction_factory(
+                transaction = self._transaction_factory(
                     manager,
                     "{0}-bps-{1}".format(context.run_id, setpoint),
                     changes,
                     stabilize_sec=stabilize_sec,
-                ):
+                )
+                with transaction:
                     complete_match = manager.check_current(changes)
                     setpoint_preconditions = []
                     for path, expected in changes.items():
@@ -159,8 +162,20 @@ class BpsAdapter:
                                     "actual_bps": actual_bps,
                                     "measurement": measurement,
                                 }
-                cycle["verdict"] = Verdict.PASS.value
-                if pending_sample is not None:
+                manifest = transaction.manifest
+                original_sha = manifest.get("original_sha256") if isinstance(manifest, dict) else None
+                if not isinstance(original_sha, str) or not _SHA256_RE.fullmatch(original_sha):
+                    errors.append(_error(
+                        "bps.restoration_hash_missing",
+                        "setpoint {0}: verified restoration SHA256 is unavailable".format(setpoint),
+                    ))
+                else:
+                    cycle.update({
+                        "before_sha256": original_sha,
+                        "after_sha256": original_sha,
+                        "verdict": Verdict.PASS.value,
+                    })
+                if pending_sample is not None and cycle["verdict"] == Verdict.PASS.value:
                     samples.append(pending_sample)
             except TransactionRestorationError as exc:
                 errors.append(_error("bps.restoration_failed", str(exc)))

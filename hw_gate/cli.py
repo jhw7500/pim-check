@@ -18,6 +18,12 @@ from hw_gate.adapters.base import AdapterContext
 from hw_gate.adapters.bps import BpsAdapter
 from hw_gate.adapters.mixed_combo import MixedComboAdapter
 from hw_gate.baseline import LoadedBaseline, load_baseline
+from hw_gate.calibration import (
+    build_candidate,
+    load_template,
+    validate_candidate_output_path,
+    write_candidate,
+)
 from hw_gate.diagnostics import bounded_diagnostic_text, collect_diagnostics
 from hw_gate.evidence import recompute_overall_verdict, validate_structure
 from hw_gate.render import render_markdown
@@ -106,6 +112,16 @@ def _child_exit_code(value: str) -> int:
     return parsed
 
 
+def _three_repetitions(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("calibration repetitions must be exactly 3") from exc
+    if parsed != 3:
+        raise argparse.ArgumentTypeError("calibration repetitions must be exactly 3")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python3 -m hw_gate", description="Durable predeployed hardware evidence")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +154,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--evidence", type=Path, required=True)
     validate.add_argument("--baseline", type=Path, required=True)
     validate.set_defaults(handler=_validate_command)
+
+    calibrate = commands.add_parser("calibrate", help="build a review-only three-run baseline candidate")
+    calibrate.add_argument("--template", type=Path, required=True)
+    calibrate.add_argument("--target-host", type=_target_host, required=True)
+    calibrate.add_argument("--repetitions", type=_three_repetitions, required=True)
+    calibrate.add_argument("--output", type=Path, required=True)
+    calibrate.set_defaults(handler=_calibrate_command)
     return parser
 
 
@@ -667,6 +690,69 @@ def _validate_command(args: argparse.Namespace) -> int:
     except EvidenceError as exc:
         print("hw_gate validate: {0}".format(exc), file=sys.stderr)
         return ERROR_EXIT
+
+
+def _calibration_run_id(index: int) -> str:
+    timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return "baseline-calibration-{0}-{1}".format(timestamp, index)
+
+
+def _calibrate_command(args: argparse.Namespace) -> int:
+    try:
+        output = validate_candidate_output_path(args.output)
+        template = load_template(args.template)
+        if template["comparability"]["target_host"] != args.target_host:
+            raise EvidenceError("target host does not match calibration comparability")
+    except EvidenceError as exc:
+        print("hw_gate calibrate: {0}".format(exc), file=sys.stderr)
+        return ERROR_EXIT
+
+    calibration_runs = []
+    ssh: Optional[object] = None
+    try:
+        with installed_termination_handlers():
+            ssh = SshClient(args.target_host)
+            manager = SetupManager(ssh)
+            recover_pending_transaction(manager)
+            identity_check = TargetIdentityCheck()
+            adapter = BpsAdapter()
+            for index in range(1, args.repetitions + 1):
+                run_id = _calibration_run_id(index)
+                identity_evidence = identity_check.collect(
+                    ssh, {"target_identity": template["target_identity"]},
+                )
+                claims = identity_evidence.get("claims") if isinstance(identity_evidence, dict) else None
+                errors = identity_evidence.get("errors") if isinstance(identity_evidence, dict) else None
+                if not isinstance(claims, list) or not claims or not isinstance(errors, list) or errors:
+                    raise EvidenceError("target identity collection failed before calibration mutation")
+                raw = adapter.collect_raw(AdapterContext(
+                    ssh=ssh,
+                    baseline_gate={},
+                    run_id=run_id,
+                    raw_dir=output.parent,
+                ))
+                calibration_runs.append({
+                    "run_id": run_id,
+                    "identity": claims,
+                    "raw": raw,
+                })
+                if raw.get("errors") or raw.get("restoration", {}).get("verdict") != Verdict.PASS.value:
+                    break
+        candidate = build_candidate(template, calibration_runs)
+        write_candidate(output, candidate)
+        return PASS_EXIT if candidate["eligible"] else ERROR_EXIT
+    except TerminationRequested as exc:
+        print("hw_gate calibrate: {0}".format(exc), file=sys.stderr)
+        return ERROR_EXIT
+    except (EvidenceError, Exception) as exc:
+        print("hw_gate calibrate: {0}".format(exc), file=sys.stderr)
+        return ERROR_EXIT
+    finally:
+        if ssh is not None:
+            try:
+                ssh.close()  # type: ignore[attr-defined]
+            except Exception as exc:
+                print("hw_gate calibrate: SSH close failed: {0}".format(exc), file=sys.stderr)
 
 
 def _exit_for_verdict(verdict: Verdict) -> int:

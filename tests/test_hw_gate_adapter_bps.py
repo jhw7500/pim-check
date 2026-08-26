@@ -84,6 +84,11 @@ class FakeTransaction:
         self.ssh.current_changes = copy.deepcopy(self.changes)
         return self
 
+    @property
+    def manifest(self) -> dict:
+        digit = str(self.changes[BPS_PATH][0] // 1024)
+        return {"original_sha256": digit * 64}
+
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
         del exc_type, exc, traceback
         if self.changes[BPS_PATH][0] == self.restore_failure:
@@ -191,6 +196,15 @@ def test_collect_raw_is_baseline_independent_and_uses_one_full_transaction_per_s
     assert len(raw["preconditions"]) == len(fixture) * len(BPS_SETPOINTS)
     assert all(item["verdict"] == "PASS" for item in raw["preconditions"])
     assert raw["restoration"]["verdict"] == "PASS"
+    assert raw["restoration"]["cycles"] == [
+        {
+            "setpoint_kbps": setpoint,
+            "before_sha256": str(setpoint // 1024) * 64,
+            "after_sha256": str(setpoint // 1024) * 64,
+            "verdict": "PASS",
+        }
+        for setpoint in BPS_SETPOINTS
+    ]
 
 
 def test_run_normalizes_eight_metrics_and_hashes_the_exact_raw_output(tmp_path: Path) -> None:
