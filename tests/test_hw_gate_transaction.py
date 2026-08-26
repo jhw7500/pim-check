@@ -39,6 +39,11 @@ class FakeSSH:
         self.root_kind = "directory"
         self.root_owner = "0:0"
         self.root_mode = "700"
+        self.lock_state = "absent"
+        self.lock_held = False
+        self.lock_cleanup_seen = False
+        self.journal_appears_before_persist = False
+        self.persist_lock_collision = False
         self.persist_root_kind = "directory"
         self.persist_root_owner = "0:0"
         self.persist_root_mode = "700"
@@ -49,6 +54,9 @@ class FakeSSH:
         self.fail_delete = False
         self.fail_states: Set[str] = set()
         self.config_sha = ORIGINAL_SHA
+        self.manifest_temp_collision: Optional[str] = None
+        self.config_temp_collision: Optional[str] = None
+        self.temp_overwrite_attempted = False
 
     @staticmethod
     def _ordered(command: str, tokens: List[str]) -> bool:
@@ -99,6 +107,8 @@ class FakeSSH:
                 return self._scan_success(command)
             if self._root_check_blocks(command, persistence=False):
                 return None
+            if self.lock_state != "absent" and "exit 73" in command:
+                return None
             return self._scan_success(command)
         if "PIM_JOURNAL_VALIDATE_OK:" in command:
             self.events.append("validate_journal")
@@ -130,15 +140,28 @@ class FakeSSH:
             return "PIM_JOURNAL_VALIDATE_OK:{0}".format(payload)
         if "PIM_JOURNAL_PERSIST_OK" in command:
             self.events.append("journal")
+            lock_path = "{0}/.publish.lock".format(JOURNAL_ROOT)
+            if "mkdir {0}".format(lock_path) in command:
+                if self.persist_lock_collision:
+                    return None
+                self.lock_held = True
+            if (
+                self.journal_appears_before_persist
+                and "pim-journal-recheck" in command
+                and '[ ! -s "$recheck_file" ]' in command
+            ):
+                if "rmdir {0}".format(lock_path) in command:
+                    self.lock_held = False
+                    self.lock_cleanup_seen = True
+                return None
             if self._root_check_blocks(command, persistence=True):
                 return None
             run_dir = "{0}/run-1".format(JOURNAL_ROOT)
-            original_tmp = "{0}/edgeconf_pim.json.original.tmp".format(run_dir)
             original = "{0}/edgeconf_pim.json.original".format(run_dir)
             failure_tokens = {
-                "copy": "base64 -d > {0}".format(original_tmp),
-                "hash": "sha256sum {0}".format(original_tmp),
-                "jq": "jq -e . {0}".format(original_tmp),
+                "copy": "base64 -d > \"$original_tmp\"",
+                "hash": "sha256sum \"$original_tmp\"",
+                "jq": "jq -e . \"$original_tmp\"",
                 "run_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(run_dir),
                 "run_owner": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(run_dir),
                 "file_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:600".format(original),
@@ -147,9 +170,21 @@ class FakeSSH:
             }
             required = failure_tokens.get(self.persist_failure or "")
             if required is not None and required in command:
+                if "rmdir {0}".format(lock_path) in command:
+                    self.lock_held = False
+                    self.lock_cleanup_seen = True
                 return None
+            if self.lock_held and "rmdir {0}".format(lock_path) in command:
+                self.lock_held = False
+                self.lock_cleanup_seen = True
             return "PIM_JOURNAL_PERSIST_OK"
         if "PIM_JOURNAL_STATE_OK" in command:
+            fixed_temp = "{0}/run-1/manifest.json.tmp".format(JOURNAL_ROOT)
+            if self.manifest_temp_collision is not None and fixed_temp in command:
+                if self.manifest_temp_collision == "symlink":
+                    self.temp_overwrite_attempted = True
+                else:
+                    return None
             match = re.search(r"--arg state '?([A-Z]+)'?", command)
             assert match is not None
             state = match.group(1)
@@ -159,6 +194,12 @@ class FakeSSH:
             return "PIM_JOURNAL_STATE_OK"
         if "PIM_JOURNAL_RESTORE_OK" in command:
             self.events.append("recover_restore")
+            fixed_temp = "{0}.pim-recover-dirty-1.tmp".format(EDGECONF_PATH)
+            if self.config_temp_collision is not None and fixed_temp in command:
+                if self.config_temp_collision == "symlink":
+                    self.temp_overwrite_attempted = True
+                else:
+                    return None
             return None if self.fail_recovery_restore else "PIM_JOURNAL_RESTORE_OK"
         if "PIM_CONFIG_HASH_OK" in command:
             self.events.append("hash")
@@ -279,6 +320,89 @@ def test_preflight_order_is_recovery_snapshot_journal_backup_apply() -> None:
         if event in {"scan", "snapshot", "journal", "backup", "apply", "measure"}
     ]
     assert significant == ["scan", "snapshot", "journal", "backup", "apply", "measure"]
+
+
+def test_scan_excludes_but_fail_closes_on_publication_lock() -> None:
+    manager = FakeSetupManager()
+
+    assert recover_pending_transaction(manager, stabilize_sec=0) is False
+
+    scan = manager.ssh.commands[0]
+    lock_path = "{0}/.publish.lock".format(JOURNAL_ROOT)
+    assert lock_path in scan
+    assert "exit 73" in scan
+    assert "! -path {0}".format(lock_path) in scan
+
+
+@pytest.mark.parametrize("lock_state", ["directory", "symlink", "file", "wrong_owner", "wrong_mode"])
+def test_stale_or_unsafe_publication_lock_fails_closed(lock_state: str) -> None:
+    manager = FakeSetupManager()
+    manager.ssh.lock_state = lock_state
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert manager.events == ["scan"]
+
+
+def test_interleaved_journal_after_preflight_blocks_publication_and_apply() -> None:
+    """The lock-protected final enumeration closes the scan-to-persist race."""
+    manager = FakeSetupManager()
+    manager.ssh.journal_appears_before_persist = True
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert "snapshot" in manager.events
+    assert "journal" in manager.events
+    assert "apply" not in manager.events
+    assert manager.ssh.lock_held is False
+
+
+def test_publication_lock_collision_blocks_apply_without_stealing_lock() -> None:
+    manager = FakeSetupManager()
+    manager.ssh.persist_lock_collision = True
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert "apply" not in manager.events
+    assert manager.ssh.lock_cleanup_seen is False
+
+
+def test_publication_failure_releases_only_the_acquired_lock() -> None:
+    manager = FakeSetupManager()
+    manager.ssh.persist_failure = "copy"
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert manager.ssh.lock_held is False
+    assert manager.ssh.lock_cleanup_seen is True
+
+
+def test_successful_publication_releases_lock_after_atomic_install() -> None:
+    manager = FakeSetupManager()
+
+    with _transaction(manager):
+        pass
+
+    assert manager.ssh.lock_held is False
+    assert manager.ssh.lock_cleanup_seen is True
+    persist = next(
+        command for command in manager.ssh.commands if "PIM_JOURNAL_PERSIST_OK" in command
+    )
+    assert FakeSSH._ordered(persist, [
+        "mkdir {0}/.publish.lock".format(JOURNAL_ROOT),
+        "chown 0:0", "chmod 700", "stat -c '%u:%g:%a'",
+        "pim-journal-recheck", "mkdir {0}/run-1".format(JOURNAL_ROOT),
+        "sync", "rmdir {0}/.publish.lock".format(JOURNAL_ROOT),
+        "PIM_JOURNAL_PERSIST_OK",
+    ])
 
 
 def test_absent_root_is_created_then_verified_before_enumeration() -> None:
@@ -402,6 +526,7 @@ def test_normal_transaction_persists_the_complete_state_machine() -> None:
         "state:CLOSED",
     ]
     assert transaction.state is TransactionState.CLOSED
+    assert transaction.terminal_state is TransactionState.CLOSED
     assert transaction.state_history == (
         TransactionState.NEW,
         TransactionState.SNAPSHOTTED,
@@ -428,7 +553,6 @@ def test_failed_preflight_records_an_honest_error_terminal_state() -> None:
         TransactionState.NEW,
         TransactionState.SNAPSHOTTED,
         TransactionState.JOURNALED,
-        TransactionState.ERROR,
     )
 
 
@@ -442,10 +566,7 @@ def test_body_failure_closes_recovery_then_records_error_outcome() -> None:
 
     assert transaction.state is TransactionState.CLOSED
     assert transaction.terminal_state is TransactionState.ERROR
-    assert transaction.state_history[-2:] == (
-        TransactionState.CLOSED,
-        TransactionState.ERROR,
-    )
+    assert transaction.state_history[-1] is TransactionState.CLOSED
 
 
 def test_pre_mutation_programmer_error_is_not_reclassified() -> None:
@@ -453,11 +574,14 @@ def test_pre_mutation_programmer_error_is_not_reclassified() -> None:
     manager = FakeSetupManager()
     manager.snapshot_error = AssertionError("programmer bug")
 
+    transaction = _transaction(manager)
     with pytest.raises(AssertionError, match="programmer bug"):
-        with _transaction(manager):
+        with transaction:
             pytest.fail("measurement body must not run")
 
     assert "apply" not in manager.events
+    assert transaction.terminal_state is TransactionState.ERROR
+    assert transaction.state_history == (TransactionState.NEW,)
 
 
 def test_journal_is_atomic_validated_mode_restricted_and_secret_free() -> None:
@@ -481,6 +605,11 @@ def test_journal_is_atomic_validated_mode_restricted_and_secret_free() -> None:
         assert "sync" in persist
         assert "mv" in persist
         assert "2000000" not in persist
+        run_dir = "{0}/unsafe-id-42".format(JOURNAL_ROOT)
+        assert "{0}/edgeconf_pim.json.original.tmp".format(run_dir) not in persist
+        assert "{0}/manifest.json.tmp".format(run_dir) not in persist
+        assert "mktemp" in persist
+        assert "trap" in persist
         assert FakeSSH._ordered(persist, [
             "[ ! -e", "[ ! -L", "mkdir", "chown 0:0", "chmod 700",
             "[ ! -L", "[ -d", "stat -c '%u:%g:%a'", "0:0:700",
@@ -488,6 +617,23 @@ def test_journal_is_atomic_validated_mode_restricted_and_secret_free() -> None:
             "base64 -d", "jq -e", "sha256sum", "mv",
             "base64 -d", "jq -e", "mv", "0:0:600", "sync",
         ])
+
+
+@pytest.mark.parametrize("collision", ["symlink", "directory"])
+def test_manifest_temp_collision_cannot_be_followed_or_overwritten(collision: str) -> None:
+    manager = FakeSetupManager()
+    manager.ssh.manifest_temp_collision = collision
+
+    with _transaction(manager):
+        pass
+
+    assert manager.ssh.temp_overwrite_attempted is False
+    state_command = next(
+        command for command in manager.ssh.commands if "PIM_JOURNAL_STATE_OK" in command
+    )
+    assert "mktemp {0}/run-1/.manifest.json.tmp.XXXXXX".format(JOURNAL_ROOT) in state_command
+    assert "trap" in state_command
+    assert "mv \"$manifest_tmp\"" in state_command
 
 
 @pytest.mark.parametrize(
@@ -542,13 +688,16 @@ def test_sigterm_style_baseexception_uses_the_same_restoration_path() -> None:
     """Signal unwinding is not limited to Exception subclasses."""
     manager = FakeSetupManager()
 
+    transaction = _transaction(manager)
     with pytest.raises(Termination, match="terminated"):
-        with _transaction(manager):
+        with transaction:
             raise Termination("terminated")
 
     assert manager.events.count("restore") == 1
     assert manager.events.count("hash") == 1
     assert manager.events.count("delete") == 1
+    assert transaction.terminal_state is TransactionState.ERROR
+    assert transaction.state_history[-1] is TransactionState.CLOSED
 
 
 def test_explicit_signal_unwind_and_context_exit_are_idempotent() -> None:
@@ -586,7 +735,7 @@ def test_cleanup_failure_overrides_a_successful_body_and_preserves_journal(failu
 
     assert caught.value.verdict == "ERROR"
     assert transaction.terminal_state is TransactionState.ERROR
-    assert transaction.state_history[-1] is TransactionState.ERROR
+    assert TransactionState.ERROR not in transaction.state_history
     if failure != "delete":
         assert "delete" not in manager.events
 
@@ -602,6 +751,26 @@ def test_cleanup_failure_overrides_and_chains_a_body_failure() -> None:
 
     assert isinstance(caught.value.__cause__, AssertionError)
     assert "measurement mismatch" in str(caught.value.__cause__)
+
+
+def test_error_outcome_is_sticky_after_successful_restore_retry() -> None:
+    """Durable cleanup may reach CLOSED without rewriting an escaped ERROR outcome."""
+    manager = FakeSetupManager()
+    manager.restore_ok = False
+    transaction = _transaction(manager)
+
+    with pytest.raises(TransactionRestorationError):
+        with transaction:
+            pass
+
+    assert transaction.terminal_state is TransactionState.ERROR
+    manager.restore_ok = True
+    transaction.restore_and_verify()
+
+    assert transaction.state is TransactionState.CLOSED
+    assert transaction.state_history[-1] is TransactionState.CLOSED
+    assert TransactionState.ERROR not in transaction.state_history
+    assert transaction.terminal_state is TransactionState.ERROR
 
 
 def test_delete_failure_can_be_retried_without_a_second_restore() -> None:
@@ -665,6 +834,24 @@ def test_one_valid_dirty_journal_restores_reboots_verifies_and_then_deletes() ->
     assert "stat -c" in validate
     assert "jq -e" in validate
     assert "sha256sum" in validate
+
+
+@pytest.mark.parametrize("collision", ["symlink", "directory"])
+def test_config_restore_temp_collision_cannot_be_followed_or_overwritten(collision: str) -> None:
+    manager = FakeSetupManager()
+    manager.ssh.scan_entries = ["dirty-1"]
+    manager.ssh.validation_manifest = _manifest()
+    manager.ssh.config_temp_collision = collision
+
+    assert recover_pending_transaction(manager, stabilize_sec=0) is True
+
+    assert manager.ssh.temp_overwrite_attempted is False
+    restore = next(
+        command for command in manager.ssh.commands if "PIM_JOURNAL_RESTORE_OK" in command
+    )
+    assert "mktemp {0}.pim-recover-dirty-1.XXXXXX".format(EDGECONF_PATH) in restore
+    assert "trap" in restore
+    assert "mv \"$restore_tmp\"" in restore
 
 
 @pytest.mark.parametrize(

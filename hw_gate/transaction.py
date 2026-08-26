@@ -16,6 +16,7 @@ from setup import EDGECONF_PATH
 JOURNAL_ROOT = "/root/shared_v/pim-check-recovery"
 _ORIGINAL_NAME = "edgeconf_pim.json.original"
 _MANIFEST_NAME = "manifest.json"
+_PUBLICATION_LOCK_NAME = ".publish.lock"
 _SAFE_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _PERSISTED_STATES = {"JOURNALED", "APPLIED", "REBOOTED", "RESTORED", "VERIFIED", "CLOSED"}
@@ -71,6 +72,10 @@ def _journal_paths(run_id: str) -> Dict[str, str]:
         "original": "{0}/{1}".format(directory, _ORIGINAL_NAME),
         "manifest": "{0}/{1}".format(directory, _MANIFEST_NAME),
     }
+
+
+def _publication_lock_path() -> str:
+    return "{0}/{1}".format(JOURNAL_ROOT, _PUBLICATION_LOCK_NAME)
 
 
 def _root_integrity_commands(*, create: bool) -> str:
@@ -129,17 +134,19 @@ def _run_restoration_remote(manager: object, command: str, stage: str) -> Option
 
 def _scan_journals(manager: object) -> list[str]:
     root = _quote(JOURNAL_ROOT)
+    lock = _quote(_publication_lock_path())
     prefix = "PIM_JOURNAL_SCAN_OK:"
     command = (
         "set -eu; "
         + _root_integrity_commands(create=True)
+        + "if [ -e {lock} ] || [ -L {lock} ]; then exit 73; fi; "
         + "scan_file=$(mktemp /tmp/pim-journal-scan.XXXXXX); "
         "trap 'rm -f \"$scan_file\"' EXIT HUP INT TERM; "
-        "find {root} -mindepth 1 -maxdepth 1 -print0 > \"$scan_file\"; "
+        "find {root} -mindepth 1 -maxdepth 1 ! -path {lock} -print0 > \"$scan_file\"; "
         "payload=$(base64 -w0 \"$scan_file\"); rm -f \"$scan_file\"; "
         "trap - EXIT HUP INT TERM; "
         "printf '{prefix}%s\\n' \"$payload\""
-    ).format(root=root, prefix=prefix)
+    ).format(root=root, lock=lock, prefix=prefix)
     output = _run_remote(manager, command, "journal scan")
     if not output or len(output.strip().splitlines()) != 1 or not output.startswith(prefix):
         raise TransactionError("journal scan did not complete")
@@ -234,26 +241,31 @@ def _write_manifest_state(
 ) -> None:
     paths = _journal_paths(run_id)
     manifest = _quote(paths["manifest"])
-    temporary = _quote(paths["manifest"] + ".tmp")
+    template = _quote(paths["directory"] + "/.manifest.json.tmp.XXXXXX")
     marker = "PIM_JOURNAL_STATE_OK"
     command = (
-        "set -eu; "
+        "set -eu; umask 077; manifest_tmp=''; "
         + _root_integrity_commands(create=False)
         + _owned_path_commands(paths["directory"], mode=700, directory=True)
         + _owned_path_commands(paths["original"], mode=600, directory=False)
         + _owned_path_commands(paths["manifest"], mode=600, directory=False)
         + "jq -e --arg current {current} '.state == $current' {manifest} >/dev/null; "
-        "jq --arg state {target} '.state = $state' {manifest} > {temporary}; "
-        "jq -e --arg state {target} '.state == $state and length == 6' {temporary} >/dev/null; "
-        "chown 0:0 {temporary}; chmod 600 {temporary}; "
-        + _owned_path_commands(paths["manifest"] + ".tmp", mode=600, directory=False)
-        + "mv {temporary} {manifest}; "
+        "cleanup_manifest_tmp() {{ [ -z \"$manifest_tmp\" ] || rm -f \"$manifest_tmp\"; }}; "
+        "trap cleanup_manifest_tmp EXIT; trap 'exit 1' HUP INT TERM; "
+        "manifest_tmp=$(mktemp {template}); "
+        "jq --arg state {target} '.state = $state' {manifest} > \"$manifest_tmp\"; "
+        "jq -e --arg state {target} '.state == $state and length == 6' "
+        "\"$manifest_tmp\" >/dev/null; chown 0:0 \"$manifest_tmp\"; "
+        "chmod 600 \"$manifest_tmp\"; [ ! -L \"$manifest_tmp\" ]; "
+        "[ -f \"$manifest_tmp\" ]; "
+        "[ \"$(stat -c '%u:%g:%a' \"$manifest_tmp\")\" = 0:0:600 ]; "
+        "mv \"$manifest_tmp\" {manifest}; manifest_tmp=''; trap - EXIT HUP INT TERM; "
         + _owned_path_commands(paths["manifest"], mode=600, directory=False)
         + _exact_entry_count_commands(paths["directory"], 2, run_id)
         + "sync; echo {marker}"
     ).format(
         current=_quote(current), target=_quote(target), manifest=manifest,
-        temporary=temporary, marker=marker,
+        template=template, marker=marker,
     )
     if restoration:
         output = _run_restoration_remote(manager, command, "journal state update")
@@ -308,22 +320,28 @@ def _delete_verified_journal(manager: object, run_id: str, conf_path: str, origi
 
 def _restore_from_journal(manager: object, run_id: str, conf_path: str, original_sha: str) -> None:
     paths = _journal_paths(run_id)
-    temporary = "{0}.pim-recover-{1}.tmp".format(conf_path, run_id)
+    template = "{0}.pim-recover-{1}.XXXXXX".format(conf_path, run_id)
     marker = "PIM_JOURNAL_RESTORE_OK"
     command = (
-        "set -eu; "
+        "set -eu; umask 077; restore_tmp=''; "
         + _root_integrity_commands(create=False)
         + _owned_path_commands(paths["directory"], mode=700, directory=True)
         + _owned_path_commands(paths["original"], mode=600, directory=False)
         + _owned_path_commands(paths["manifest"], mode=600, directory=False)
         + _exact_entry_count_commands(paths["directory"], 2, run_id)
-        + "cp {original} {temporary}; chown 0:0 {temporary}; chmod 600 {temporary}; "
-        + _owned_path_commands(temporary, mode=600, directory=False)
-        + "jq -e . {temporary} >/dev/null; "
-        "actual=$(sha256sum {temporary} | awk '{{print $1}}'); [ \"$actual\" = {expected} ]; "
-        "mv {temporary} {config}; sync; echo {marker}"
+        + "cleanup_restore_tmp() {{ [ -z \"$restore_tmp\" ] || rm -f \"$restore_tmp\"; }}; "
+        "trap cleanup_restore_tmp EXIT; trap 'exit 1' HUP INT TERM; "
+        "restore_tmp=$(mktemp {template}); "
+        "cp {original} \"$restore_tmp\"; chown 0:0 \"$restore_tmp\"; "
+        "chmod 600 \"$restore_tmp\"; [ ! -L \"$restore_tmp\" ]; "
+        "[ -f \"$restore_tmp\" ]; "
+        "[ \"$(stat -c '%u:%g:%a' \"$restore_tmp\")\" = 0:0:600 ]; "
+        "jq -e . \"$restore_tmp\" >/dev/null; "
+        "actual=$(sha256sum \"$restore_tmp\" | awk '{{print $1}}'); "
+        "[ \"$actual\" = {expected} ]; mv \"$restore_tmp\" {config}; "
+        "restore_tmp=''; trap - EXIT HUP INT TERM; sync; echo {marker}"
     ).format(
-        original=_quote(paths["original"]), temporary=_quote(temporary),
+        original=_quote(paths["original"]), template=_quote(template),
         expected=_quote(original_sha), config=_quote(conf_path), marker=marker,
     )
     output = _run_restoration_remote(manager, command, "persistent original restore")
@@ -421,14 +439,13 @@ class StrictHardwareTransaction:
 
     def _record_state(self, state: TransactionState) -> None:
         self._state = state
-        self._terminal_state = state
+        if self._terminal_state is not TransactionState.ERROR:
+            self._terminal_state = state
         if self._state_history[-1] is not state:
             self._state_history.append(state)
 
     def _record_error(self) -> None:
         self._terminal_state = TransactionState.ERROR
-        if self._state_history[-1] is not TransactionState.ERROR:
-            self._state_history.append(TransactionState.ERROR)
 
     def _persist_journal(self, snapshot_payload: str) -> None:
         try:
@@ -451,37 +468,55 @@ class StrictHardwareTransaction:
             json.dumps(self._manifest, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).decode("ascii")
         paths = _journal_paths(self.run_id)
-        original_tmp = paths["original"] + ".tmp"
-        manifest_tmp = paths["manifest"] + ".tmp"
+        lock_path = _publication_lock_path()
         marker = "PIM_JOURNAL_PERSIST_OK"
         command = (
             "set -eu; umask 077; "
             + _root_integrity_commands(create=True)
+            + "original_tmp=''; manifest_tmp=''; recheck_file=''; publication_lock_held=0; "
+            "cleanup_publication() {{ "
+            "[ -z \"$original_tmp\" ] || rm -f \"$original_tmp\"; "
+            "[ -z \"$manifest_tmp\" ] || rm -f \"$manifest_tmp\"; "
+            "[ -z \"$recheck_file\" ] || rm -f \"$recheck_file\"; "
+            "[ \"$publication_lock_held\" -eq 0 ] || rmdir {lock}; }}; "
+            "trap cleanup_publication EXIT; trap 'exit 1' HUP INT TERM; "
+            "[ ! -e {lock} ]; [ ! -L {lock} ]; mkdir {lock}; publication_lock_held=1; "
+            "chown 0:0 {lock}; chmod 700 {lock}; "
+            + _owned_path_commands(lock_path, mode=700, directory=True)
+            + _root_integrity_commands(create=False)
+            + "recheck_file=$(mktemp /tmp/pim-journal-recheck.XXXXXX); "
+            "find {root} -mindepth 1 -maxdepth 1 ! -path {lock} -print0 > \"$recheck_file\"; "
+            "[ ! -s \"$recheck_file\" ]; rm -f \"$recheck_file\"; recheck_file=''; "
             + "[ ! -e {directory} ]; [ ! -L {directory} ]; "
             "mkdir {directory}; chown 0:0 {directory}; chmod 700 {directory}; "
             + _owned_path_commands(paths["directory"], mode=700, directory=True)
             +
-            "printf '%s' {snapshot} | base64 -d > {original_tmp}; "
-            "chown 0:0 {original_tmp}; chmod 600 {original_tmp}; "
-            + _owned_path_commands(original_tmp, mode=600, directory=False)
-            + "jq -e . {original_tmp} >/dev/null; "
-            "actual=$(sha256sum {original_tmp} | awk '{{print $1}}'); "
-            "[ \"$actual\" = {expected} ]; mv {original_tmp} {original}; "
-            "printf '%s' {manifest_payload} | base64 -d > {manifest_tmp}; "
-            "chown 0:0 {manifest_tmp}; chmod 600 {manifest_tmp}; "
-            + _owned_path_commands(manifest_tmp, mode=600, directory=False)
-            +
+            "original_tmp=$(mktemp {directory}/.edgeconf_pim.json.original.tmp.XXXXXX); "
+            "printf '%s' {snapshot} | base64 -d > \"$original_tmp\"; "
+            "chown 0:0 \"$original_tmp\"; chmod 600 \"$original_tmp\"; "
+            "[ ! -L \"$original_tmp\" ]; [ -f \"$original_tmp\" ]; "
+            "[ \"$(stat -c '%u:%g:%a' \"$original_tmp\")\" = 0:0:600 ]; "
+            "jq -e . \"$original_tmp\" >/dev/null; "
+            "actual=$(sha256sum \"$original_tmp\" | awk '{{print $1}}'); "
+            "[ \"$actual\" = {expected} ]; mv \"$original_tmp\" {original}; original_tmp=''; "
+            "manifest_tmp=$(mktemp {directory}/.manifest.json.tmp.XXXXXX); "
+            "printf '%s' {manifest_payload} | base64 -d > \"$manifest_tmp\"; "
+            "chown 0:0 \"$manifest_tmp\"; chmod 600 \"$manifest_tmp\"; "
+            "[ ! -L \"$manifest_tmp\" ]; [ -f \"$manifest_tmp\" ]; "
+            "[ \"$(stat -c '%u:%g:%a' \"$manifest_tmp\")\" = 0:0:600 ]; "
             "jq -e 'type == \"object\" and length == 6 and .state == \"JOURNALED\"' "
-            "{manifest_tmp} >/dev/null; mv {manifest_tmp} {manifest}; "
+            "\"$manifest_tmp\" >/dev/null; mv \"$manifest_tmp\" {manifest}; manifest_tmp=''; "
             + _owned_path_commands(paths["original"], mode=600, directory=False)
             + _owned_path_commands(paths["manifest"], mode=600, directory=False)
             + _exact_entry_count_commands(paths["directory"], 2, self.run_id)
-            + "sync; echo {marker}"
+            + "sync; rmdir {lock}; publication_lock_held=0; "
+            "trap - EXIT HUP INT TERM; echo {marker}"
         ).format(
+            root=_quote(JOURNAL_ROOT), lock=_quote(lock_path),
             directory=_quote(paths["directory"]),
-            snapshot=_quote(snapshot_payload), original_tmp=_quote(original_tmp),
+            snapshot=_quote(snapshot_payload),
             expected=_quote(self._original_sha), original=_quote(paths["original"]),
-            manifest_payload=_quote(encoded_manifest), manifest_tmp=_quote(manifest_tmp),
+            manifest_payload=_quote(encoded_manifest),
             manifest=_quote(paths["manifest"]), marker=marker,
         )
         output = _run_remote(self.setup_manager, command, "journal persistence")
@@ -556,13 +591,12 @@ class StrictHardwareTransaction:
             self._entered = True
             if self._initial_changes is not None:
                 self._apply_and_reboot(self._initial_changes)
-        except TransactionError:
+        except BaseException:
             self._record_error()
             raise
         return self
 
-    def restore_and_verify(self) -> None:
-        """Idempotently restore, reboot, hash-verify, close, and delete the journal."""
+    def _restore_and_verify(self) -> None:
         if self._state is TransactionState.CLOSED and self._journal_deleted:
             return
         if self._state not in {
@@ -607,6 +641,14 @@ class StrictHardwareTransaction:
                 self._journal_deleted = True
         finally:
             self._restoring = False
+
+    def restore_and_verify(self) -> None:
+        """Restore durably while making any escaping outcome sticky ERROR."""
+        try:
+            self._restore_and_verify()
+        except BaseException:
+            self._record_error()
+            raise
 
     def unwind_for_signal(self) -> None:
         """Use the context manager's restoration path during explicit signal unwinding."""
