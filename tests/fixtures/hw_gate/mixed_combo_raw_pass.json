@@ -1,0 +1,8 @@
+{
+  "scenarios": [
+    {"test_id": 1, "legacy": {"all_pass": true, "exit_code": 0}, "evidence": {"test_id": 1, "mode_masks": {"1": 0, "2": 0}, "register_words": {"1": {"rotation": 2, "ae": 665, "awb": 4447}, "3": {"rotation": 1, "ae": 656, "awb": 4432}}, "errors": []}},
+    {"test_id": 2, "legacy": {"all_pass": true, "exit_code": 0}, "evidence": {"test_id": 2, "mode_masks": {"1": 0, "2": 0}, "register_words": {"0": {"rotation": 3, "ae": 665, "awb": 4432}, "2": {"rotation": 0, "ae": 656, "awb": 4447}}, "errors": []}},
+    {"test_id": 3, "legacy": {"all_pass": true, "exit_code": 0}, "evidence": {"test_id": 3, "mode_masks": {"1": 0, "2": 3}, "register_words": {"0": {"rotation": 2, "ae": 665, "awb": 4447}, "1": {"rotation": 1, "ae": 656, "awb": 4432}}, "errors": []}},
+    {"test_id": 4, "legacy": {"all_pass": true, "exit_code": 0}, "evidence": {"test_id": 4, "mode_masks": {"1": 3, "2": 3}, "register_words": {"0": {"rotation": 2, "ae": 665, "awb": 4447}, "1": {"rotation": 1, "ae": 656, "awb": 4432}, "2": {"rotation": 3, "ae": 665, "awb": 4432}, "3": {"rotation": 0, "ae": 656, "awb": 4447}}, "errors": []}}
+  ]
+}
