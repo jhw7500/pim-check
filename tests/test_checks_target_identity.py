@@ -32,6 +32,20 @@ def _ssh_for_module(*, path: str = "/lib/modules/5.10/max9296.ko", sha256: str =
     return ssh
 
 
+def _ssh_for_file(requested: str, resolved: str, sha256: str = SHA256) -> MagicMock:
+    ssh = MagicMock()
+
+    def run(command: str):
+        if command.startswith("readlink -f -- "):
+            return resolved + "\n"
+        if command.startswith("sha256sum -- "):
+            return sha256 + "  " + resolved + "\n"
+        return ""
+
+    ssh.run.side_effect = run
+    return ssh
+
+
 def test_collect_and_validate_module_sha256_claim() -> None:
     """Hashing the resolved max9296 module must produce an exact identity claim."""
     from checks.target_identity import TargetIdentityCheck
@@ -236,3 +250,50 @@ def test_collect_returns_structured_error_on_ssh_connection_failure() -> None:
     data = TargetIdentityCheck().collect(ssh, config)
 
     assert data == {"claims": [], "errors": ["SSH_ERROR: offline"]}
+
+
+def test_collect_and_validate_allowed_file_symlink_with_bound_requested_path() -> None:
+    """A configured symlink path stays bound while its resolved hash target remains allowlisted."""
+    from checks.target_identity import TargetIdentityCheck
+
+    requested = "/root/shared_v/edgeconf-current.json"
+    resolved = "/root/shared_v/releases/edgeconf-2026.json"
+    config = _config([{
+        "id": "edgeconf.file_sha256",
+        "kind": "file_sha256",
+        "path": requested,
+        "sha256": SHA256,
+    }])
+    check = TargetIdentityCheck()
+    data = check.collect(_ssh_for_file(requested, resolved), config)
+
+    assert data == {
+        "claims": [{
+            "id": "edgeconf.file_sha256",
+            "kind": "file_sha256",
+            "requested_path": requested,
+            "path": resolved,
+            "expected": SHA256,
+            "actual": SHA256,
+        }],
+        "errors": [],
+    }
+    assert check.validate(data, config) == (True, "OK")
+
+
+def test_file_symlink_resolving_outside_allowlist_fails_closed() -> None:
+    """An allowed requested path cannot smuggle an arbitrary resolved hash target."""
+    from checks.target_identity import TargetIdentityCheck
+
+    requested = "/root/shared_v/edgeconf-current.json"
+    config = _config([{
+        "id": "edgeconf.file_sha256",
+        "kind": "file_sha256",
+        "path": requested,
+        "sha256": SHA256,
+    }])
+
+    data = TargetIdentityCheck().collect(_ssh_for_file(requested, "/etc/shadow"), config)
+
+    assert data["claims"] == []
+    assert "allowlist" in data["errors"][0]

@@ -122,7 +122,8 @@ class TargetIdentityCheck(BaseCheck):
                 errors.append("{0}: sha256sum did not return one SHA-256".format(identifier))
                 continue
             claims.append({
-                "id": identifier, "kind": kind, "path": resolved,
+                "id": identifier, "kind": kind, "requested_path": path,
+                "path": resolved,
                 "expected": expected, "actual": actual,
             })
         return {"claims": claims, "errors": errors}
@@ -179,7 +180,8 @@ class TargetIdentityCheck(BaseCheck):
                     return False, "identity claim binding module context does not match descriptor"
                 descriptor_expected = descriptor.get("version")
             elif kind == "file_sha256":
-                if claim.get("path") != descriptor.get("path"):
+                if (claim.get("requested_path") != descriptor.get("path")
+                        or not _allowed_path(claim.get("path"))):
                     return False, "identity claim binding path context does not match descriptor"
                 descriptor_expected = descriptor.get("sha256")
             else:

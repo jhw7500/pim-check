@@ -38,12 +38,16 @@ def _config(test_id: int, channels: list[int], masks: dict[int, int]) -> dict:
 
 
 def _scan(mask: int) -> str:
-    tokens = []
-    if mask & 1:
-        tokens.append("11")
-    if mask & 2:
-        tokens.append("12")
-    return "     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n10: " + " ".join(tokens) + "\n"
+    rows = []
+    for row in range(0, 8):
+        cell_count = 13 if row == 0 else 8 if row == 7 else 16
+        cells = ["--"] * cell_count
+        if row == 1 and mask & 1:
+            cells[1] = "11"
+        if row == 1 and mask & 2:
+            cells[2] = "12"
+        rows.append("{0:02x}: {1}".format(row * 16, " ".join(cells)))
+    return "     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n" + "\n".join(rows) + "\n"
 
 
 def _word(value: int) -> str:
@@ -177,3 +181,37 @@ def test_collect_returns_structured_error_on_ssh_connection_failure() -> None:
         "register_words": {},
         "errors": ["SSH_ERROR: offline"],
     }
+
+
+def test_collect_rejects_header_with_malformed_scan_row_before_transfers() -> None:
+    """A plausible header plus arbitrary row text is not evidence of an empty I2C address mask."""
+    from checks.mixed_combo_evidence import MixedComboEvidenceCheck
+
+    malformed_scan = (
+        "     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n"
+        "10: nonsense\n"
+    )
+    ssh = MagicMock()
+    ssh.run.side_effect = lambda command: malformed_scan if command.startswith("i2cdetect -y ") else "0x00 0x02\n"
+
+    data = MixedComboEvidenceCheck().collect(ssh, _config(1, [1, 3], {1: 0, 2: 0}))
+
+    assert data["mode_masks"] == {}
+    assert data["register_words"] == {}
+    assert data["errors"] == ["i2c scan evidence is invalid"]
+
+
+def test_collect_rejects_truncated_scan_row_before_transfers() -> None:
+    """All expected scan cells must be present; a tokenized but short row is not mask evidence."""
+    from checks.mixed_combo_evidence import MixedComboEvidenceCheck
+
+    full_row = "20: " + " ".join(["--"] * 16)
+    truncated_scan = _scan(0).replace(full_row, "20: " + " ".join(["--"] * 15))
+    ssh = MagicMock()
+    ssh.run.side_effect = lambda command: truncated_scan if command.startswith("i2cdetect -y ") else "0x00 0x02\n"
+
+    data = MixedComboEvidenceCheck().collect(ssh, _config(1, [1, 3], {1: 0, 2: 0}))
+
+    assert data["mode_masks"] == {}
+    assert data["register_words"] == {}
+    assert data["errors"] == ["i2c scan evidence is invalid"]

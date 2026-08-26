@@ -19,6 +19,10 @@ def _finite_nonnegative_number(value: object) -> bool:
             and math.isfinite(value) and value >= 0)
 
 
+def _finite_positive_number(value: object) -> bool:
+    return _finite_nonnegative_number(value) and value > 0
+
+
 def _finite_epoch(value: str) -> Optional[float]:
     try:
         parsed = float(value)
@@ -127,7 +131,7 @@ class BpsEvidenceCheck(BaseCheck):
         timeout = settings.get("poll_timeout_sec", 120)
         interval = settings.get("poll_interval_sec", 5)
         minimum_size = settings.get("min_size_bytes", _MINIMUM_SIZE_BYTES)
-        if not isinstance(timeout, (int, float)) or timeout < 0 or not isinstance(interval, (int, float)) or interval <= 0:
+        if not _finite_nonnegative_number(timeout) or not _finite_positive_number(interval):
             result["errors"] = ["poll settings are invalid"]
             return result
         if (not isinstance(minimum_size, int) or isinstance(minimum_size, bool)

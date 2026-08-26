@@ -13,6 +13,14 @@ _REGISTER_ADDRESSES = {
     "ae": ("0x50", "0x02"),
     "awb": ("0x51", "0x00"),
 }
+_SCAN_ROWS = ("00", "10", "20", "30", "40", "50", "60", "70")
+_SCAN_ROW_CELL_COUNTS = {"00": 13, "10": 16, "20": 16, "30": 16,
+                         "40": 16, "50": 16, "60": 16, "70": 8}
+_SCAN_HEADER_RE = re.compile(
+    r"^\s*0\s+1\s+2\s+3\s+4\s+5\s+6\s+7\s+8\s+9\s+a\s+b\s+c\s+d\s+e\s+f\s*$",
+    re.IGNORECASE,
+)
+_SCAN_ROW_RE = re.compile(r"^([0-7][0]):\s*((?:--|UU|[0-9A-Fa-f]{2})(?:\s+(?:--|UU|[0-9A-Fa-f]{2})){0,15})\s*$")
 
 
 def parse_mode_mask(output: object) -> int:
@@ -25,11 +33,22 @@ def parse_mode_mask(output: object) -> int:
 def _parse_scan(output: object) -> Optional[int]:
     if not isinstance(output, str) or not output.strip():
         return None
-    if not re.search(
-            r"(?m)^\s*0\s+1\s+2\s+3\s+4\s+5\s+6\s+7\s+8\s+9\s+a\s+b\s+c\s+d\s+e\s+f\s*$",
-            output):
-        return None
-    if not re.search(r"(?m)^[0-9A-Fa-f]{2}:", output):
+    saw_header = False
+    rows = set()
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        if _SCAN_HEADER_RE.fullmatch(line):
+            if saw_header:
+                return None
+            saw_header = True
+            continue
+        match = _SCAN_ROW_RE.fullmatch(line)
+        if (match is None or match.group(1) in rows
+                or len(match.group(2).split()) != _SCAN_ROW_CELL_COUNTS[match.group(1)]):
+            return None
+        rows.add(match.group(1))
+    if not saw_header or rows != set(_SCAN_ROWS):
         return None
     return parse_mode_mask(output)
 

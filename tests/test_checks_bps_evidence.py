@@ -204,3 +204,28 @@ def test_collect_returns_structured_error_on_ssh_timeout() -> None:
     assert data["video"] is None
     assert data["actual_bps"] is None
     assert data["errors"] == ["SSH_ERROR: timed out"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("poll_timeout_sec", float("nan")),
+        ("poll_timeout_sec", float("inf")),
+        ("poll_timeout_sec", float("-inf")),
+        ("poll_interval_sec", float("nan")),
+        ("poll_interval_sec", float("inf")),
+        ("poll_interval_sec", float("-inf")),
+    ],
+)
+def test_collect_rejects_non_finite_poll_controls_before_polling(field: str, value: object) -> None:
+    """NaN and infinity cannot enter deadline arithmetic or trigger a poll/sleep loop."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    clock = _Clock()
+    data = BpsEvidenceCheck(clock=clock, sleeper=clock.sleep).collect(
+        _ssh(listing="100\t100000\t/recordings/case-ch0.mp4\n"), _config(**{field: value}))
+
+    assert data["video"] is None
+    assert data["actual_bps"] is None
+    assert data["errors"] == ["poll settings are invalid"]
+    assert clock.value == 0
