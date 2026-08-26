@@ -1,6 +1,6 @@
 # Hardware Evidence Gate Design
 
-**Status:** Draft — in-chat design approved; written-spec review pending
+**Status:** Approved
 **Date:** 2026-08-26
 **Task:** `tsk-01a03ce1-5095-7930-8989-9d90be635fb8`
 **Issue:** [#115](https://github.com/jhw7500/pim-check/issues/115)
