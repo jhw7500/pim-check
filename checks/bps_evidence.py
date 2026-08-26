@@ -7,9 +7,16 @@ import time
 from typing import Callable, Dict, List, Optional, Tuple
 
 from checks.base_check import BaseCheck
+from ssh import SshConnectionError, SshTimeoutError
 
 
 _POSITIVE_INTEGER_RE = re.compile(r"^[1-9][0-9]*$")
+_MINIMUM_SIZE_BYTES = 100000
+
+
+def _finite_nonnegative_number(value: object) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0)
 
 
 def _finite_epoch(value: str) -> Optional[float]:
@@ -80,6 +87,16 @@ class BpsEvidenceCheck(BaseCheck):
         return candidates
 
     def collect(self, ssh, config: dict) -> dict:
+        try:
+            return self._collect(ssh, config)
+        except (SshConnectionError, SshTimeoutError) as exc:
+            return {
+                "boot_id": "", "board_epoch": None, "setpoint_anchor": None,
+                "video": None, "mtime": None, "size_bytes": None,
+                "actual_bps": None, "errors": ["SSH_ERROR: {0}".format(exc)],
+            }
+
+    def _collect(self, ssh, config: dict) -> dict:
         settings = self._settings(config)
         channel = settings.get("channel", 0)
         paths = self._paths(settings)
@@ -101,7 +118,7 @@ class BpsEvidenceCheck(BaseCheck):
         if not isinstance(channel, int) or isinstance(channel, bool) or channel < 0:
             result["errors"] = ["channel is invalid"]
             return result
-        if not boot_id or board_epoch is None or not isinstance(anchor, (int, float)) or isinstance(anchor, bool):
+        if not boot_id or not _finite_nonnegative_number(board_epoch) or not _finite_nonnegative_number(anchor):
             result["errors"] = ["boot identity or setpoint anchor is invalid"]
             return result
         if not paths:
@@ -109,12 +126,13 @@ class BpsEvidenceCheck(BaseCheck):
             return result
         timeout = settings.get("poll_timeout_sec", 120)
         interval = settings.get("poll_interval_sec", 5)
-        minimum_size = settings.get("min_size_bytes", 100000)
+        minimum_size = settings.get("min_size_bytes", _MINIMUM_SIZE_BYTES)
         if not isinstance(timeout, (int, float)) or timeout < 0 or not isinstance(interval, (int, float)) or interval <= 0:
             result["errors"] = ["poll settings are invalid"]
             return result
-        if not isinstance(minimum_size, int) or isinstance(minimum_size, bool) or minimum_size < 0:
-            result["errors"] = ["minimum file size is invalid"]
+        if (not isinstance(minimum_size, int) or isinstance(minimum_size, bool)
+                or minimum_size < _MINIMUM_SIZE_BYTES):
+            result["errors"] = ["minimum file size must be at least 100000 bytes"]
             return result
         deadline = self._clock() + timeout
         last_probe_error = ""
@@ -152,9 +170,9 @@ class BpsEvidenceCheck(BaseCheck):
             return False, "; ".join(str(error) for error in errors)
         if not isinstance(data.get("boot_id"), str) or not data["boot_id"]:
             return False, "boot id is missing"
-        if not isinstance(data.get("board_epoch"), int) or isinstance(data["board_epoch"], bool):
+        if not _finite_nonnegative_number(data.get("board_epoch")):
             return False, "board epoch is invalid"
-        if not isinstance(data.get("setpoint_anchor"), (int, float)) or isinstance(data["setpoint_anchor"], bool):
+        if not _finite_nonnegative_number(data.get("setpoint_anchor")):
             return False, "setpoint anchor is invalid"
         settings = self._settings(config)
         channel = settings.get("channel", 0)
@@ -168,7 +186,7 @@ class BpsEvidenceCheck(BaseCheck):
             return False, "video mtime is invalid"
         if mtime < data["setpoint_anchor"]:
             return False, "video is not fresh for the setpoint anchor"
-        if not isinstance(data.get("size_bytes"), int) or data["size_bytes"] < 100000:
+        if not isinstance(data.get("size_bytes"), int) or data["size_bytes"] < _MINIMUM_SIZE_BYTES:
             return False, "video size is invalid"
         actual_bps = data.get("actual_bps")
         if not isinstance(actual_bps, int) or isinstance(actual_bps, bool) or actual_bps <= 0:

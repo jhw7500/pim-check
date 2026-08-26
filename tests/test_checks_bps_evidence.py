@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from ssh import SshTimeoutError
+
 
 class _Clock:
     def __init__(self) -> None:
@@ -128,3 +132,75 @@ def test_validate_rejects_claimed_evidence_that_is_stale() -> None:
 
     assert not passed
     assert "fresh" in reason
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("board_epoch", -1),
+        ("setpoint_anchor", -1),
+        ("setpoint_anchor", float("nan")),
+        ("setpoint_anchor", float("inf")),
+    ],
+)
+def test_validate_rejects_non_finite_or_negative_anchors(field: str, value: object) -> None:
+    """Anchor fields must be finite non-negative target time, never permissive numeric lookalikes."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    data = {
+        "boot_id": "boot-123",
+        "board_epoch": 100,
+        "setpoint_anchor": 100,
+        "video": "/recordings/case-ch0.mp4",
+        "mtime": 100,
+        "size_bytes": 100000,
+        "actual_bps": 1024000,
+        "errors": [],
+    }
+    data[field] = value
+
+    passed, reason = BpsEvidenceCheck().validate(data, _config())
+
+    assert not passed
+    assert "epoch" in reason or "anchor" in reason
+
+
+@pytest.mark.parametrize("anchor", [float("nan"), float("inf"), -1, "100"])
+def test_collect_rejects_invalid_setpoint_anchor_before_polling(anchor: object) -> None:
+    """Invalid configuration anchors must stop collection before a candidate can become evidence."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    clock = _Clock()
+    data = BpsEvidenceCheck(clock=clock, sleeper=clock.sleep).collect(
+        _ssh(listing="100\t100000\t/recordings/case-ch0.mp4\n"), _config(setpoint_anchor=anchor))
+
+    assert data["video"] is None
+    assert data["actual_bps"] is None
+    assert "anchor" in data["errors"][0]
+
+
+def test_collect_rejects_minimum_size_config_below_hard_floor() -> None:
+    """A caller cannot weaken the evidence floor below 100000 bytes."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    clock = _Clock()
+    data = BpsEvidenceCheck(clock=clock, sleeper=clock.sleep).collect(
+        _ssh(listing="100\t99999\t/recordings/tiny-ch0.mp4\n"), _config(min_size_bytes=0))
+
+    assert data["video"] is None
+    assert data["actual_bps"] is None
+    assert "minimum file size" in data["errors"][0]
+
+
+def test_collect_returns_structured_error_on_ssh_timeout() -> None:
+    """A transport timeout must become a failed BPS evidence payload rather than an exception leak."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    ssh = MagicMock()
+    ssh.run.side_effect = SshTimeoutError("timed out")
+
+    data = BpsEvidenceCheck().collect(ssh, _config())
+
+    assert data["video"] is None
+    assert data["actual_bps"] is None
+    assert data["errors"] == ["SSH_ERROR: timed out"]

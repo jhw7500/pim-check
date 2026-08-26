@@ -4,6 +4,7 @@ import re
 from typing import Dict, List, Optional
 
 from checks.base_check import BaseCheck
+from ssh import SshConnectionError, SshTimeoutError
 
 
 _REGISTER_NAMES = ("rotation", "ae", "awb")
@@ -19,6 +20,18 @@ def parse_mode_mask(output: object) -> int:
     text = output if isinstance(output, str) else ""
     tokens = set(re.findall(r"(?<![0-9A-Fa-f])(?:11|12)(?![0-9A-Fa-f])", text))
     return (1 if "11" in tokens else 0) | (2 if "12" in tokens else 0)
+
+
+def _parse_scan(output: object) -> Optional[int]:
+    if not isinstance(output, str) or not output.strip():
+        return None
+    if not re.search(
+            r"(?m)^\s*0\s+1\s+2\s+3\s+4\s+5\s+6\s+7\s+8\s+9\s+a\s+b\s+c\s+d\s+e\s+f\s*$",
+            output):
+        return None
+    if not re.search(r"(?m)^[0-9A-Fa-f]{2}:", output):
+        return None
+    return parse_mode_mask(output)
 
 
 def _parse_word(output: object) -> Optional[int]:
@@ -81,6 +94,19 @@ class MixedComboEvidenceCheck(BaseCheck):
     def collect(self, ssh, config: dict) -> dict:
         settings = self._settings(config)
         test_id = settings.get("test_id")
+        try:
+            return self._collect(ssh, config)
+        except (SshConnectionError, SshTimeoutError) as exc:
+            return {
+                "test_id": test_id,
+                "mode_masks": {},
+                "register_words": {},
+                "errors": ["SSH_ERROR: {0}".format(exc)],
+            }
+
+    def _collect(self, ssh, config: dict) -> dict:
+        settings = self._settings(config)
+        test_id = settings.get("test_id")
         channels = self._channels(settings)
         expected_masks = self._expected_masks(settings)
         result: Dict[str, object] = {
@@ -92,8 +118,13 @@ class MixedComboEvidenceCheck(BaseCheck):
         if not isinstance(test_id, int) or isinstance(test_id, bool) or test_id < 1 or channels is None or expected_masks is None:
             result["errors"] = ["mixed-combo collection settings are invalid"]
             return result
-        mode_masks = {str(bus): parse_mode_mask(ssh.run("i2cdetect -y {0} 2>/dev/null".format(bus)))
-                      for bus in (1, 2)}
+        mode_masks: Dict[str, int] = {}
+        for bus in (1, 2):
+            mask = _parse_scan(ssh.run("i2cdetect -y {0} 2>/dev/null".format(bus)))
+            if mask is None:
+                result["errors"] = ["i2c scan evidence is invalid"]
+                return result
+            mode_masks[str(bus)] = mask
         result["mode_masks"] = mode_masks
         errors: List[str] = []
         registers: Dict[str, Dict[str, int]] = {}

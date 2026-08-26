@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ssh import SshConnectionError
+
 
 SHA256 = "a" * 64
 
@@ -166,3 +168,71 @@ def test_no_identity_claims_fail_closed() -> None:
 
     assert not passed
     assert "no identity claims" in reason
+
+
+def test_validate_rejects_self_consistent_claim_unbound_to_descriptor() -> None:
+    """An attacker cannot replace the descriptor's expected digest with a matching forged pair."""
+    from checks.target_identity import TargetIdentityCheck
+
+    config = _config([{
+        "id": "max9296.module_sha256",
+        "kind": "module_sha256",
+        "module": "max9296",
+        "sha256": SHA256,
+    }])
+    data = {
+        "errors": [],
+        "claims": [{
+            "id": "forged.module_sha256",
+            "kind": "module_sha256",
+            "module": "other_module",
+            "path": "/lib/modules/5.10/other.ko",
+            "expected": "b" * 64,
+            "actual": "b" * 64,
+        }],
+    }
+
+    passed, reason = TargetIdentityCheck().validate(data, config)
+
+    assert not passed
+    assert "binding" in reason
+
+
+def test_validate_rejects_duplicate_and_missing_claim_ids() -> None:
+    """Claim IDs are a one-to-one binding, not just a length check."""
+    from checks.target_identity import TargetIdentityCheck
+
+    config = _config([
+        {"id": "one", "kind": "module_version", "module": "max9296", "version": "2.5"},
+        {"id": "two", "kind": "module_version", "module": "max96724", "version": "1.0"},
+    ])
+    data = {
+        "errors": [],
+        "claims": [
+            {"id": "one", "kind": "module_version", "module": "max9296", "expected": "2.5", "actual": "2.5"},
+            {"id": "one", "kind": "module_version", "module": "max9296", "expected": "2.5", "actual": "2.5"},
+        ],
+    }
+
+    passed, reason = TargetIdentityCheck().validate(data, config)
+
+    assert not passed
+    assert "duplicate" in reason or "binding" in reason
+
+
+def test_collect_returns_structured_error_on_ssh_connection_failure() -> None:
+    """An SSH transport failure must become identity evidence, not escape the collector."""
+    from checks.target_identity import TargetIdentityCheck
+
+    ssh = MagicMock()
+    ssh.run.side_effect = SshConnectionError("offline")
+    config = _config([{
+        "id": "max9296.module_sha256",
+        "kind": "module_sha256",
+        "module": "max9296",
+        "sha256": SHA256,
+    }])
+
+    data = TargetIdentityCheck().collect(ssh, config)
+
+    assert data == {"claims": [], "errors": ["SSH_ERROR: offline"]}

@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ssh import SshConnectionError
+
 
 FIXTURES = [
     (1, [1, 3], {1: 0, 2: 0}, {
@@ -41,7 +43,7 @@ def _scan(mask: int) -> str:
         tokens.append("11")
     if mask & 2:
         tokens.append("12")
-    return "     " + " ".join(tokens) + "\n"
+    return "     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n10: " + " ".join(tokens) + "\n"
 
 
 def _word(value: int) -> str:
@@ -138,3 +140,40 @@ def test_validate_rejects_missing_required_register_word(missing: str) -> None:
 
     assert not passed
     assert missing in reason
+
+
+@pytest.mark.parametrize("scan", [None, "", "i2cdetect: failed to read adapter", "10: nonsense"])
+def test_collect_rejects_invalid_scan_before_register_transfers(scan: object) -> None:
+    """An absent or malformed scan is an error, never proof of mode-mask zero."""
+    from checks.mixed_combo_evidence import MixedComboEvidenceCheck
+
+    ssh = MagicMock()
+
+    def run(command: str):
+        if command.startswith("i2cdetect -y "):
+            return scan
+        return "0x00 0x02\n"
+
+    ssh.run.side_effect = run
+    data = MixedComboEvidenceCheck().collect(ssh, _config(1, [1, 3], {1: 0, 2: 0}))
+
+    assert data["mode_masks"] == {}
+    assert data["register_words"] == {}
+    assert data["errors"] == ["i2c scan evidence is invalid"]
+
+
+def test_collect_returns_structured_error_on_ssh_connection_failure() -> None:
+    """A scan transport failure must return a normal mixed-combo evidence payload."""
+    from checks.mixed_combo_evidence import MixedComboEvidenceCheck
+
+    ssh = MagicMock()
+    ssh.run.side_effect = SshConnectionError("offline")
+
+    data = MixedComboEvidenceCheck().collect(ssh, _config(1, [1, 3], {1: 0, 2: 0}))
+
+    assert data == {
+        "test_id": 1,
+        "mode_masks": {},
+        "register_words": {},
+        "errors": ["SSH_ERROR: offline"],
+    }

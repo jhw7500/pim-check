@@ -5,6 +5,7 @@ import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from checks.base_check import BaseCheck
+from ssh import SshConnectionError, SshTimeoutError
 
 
 _ALLOWED_KINDS = {"module_sha256", "module_version", "file_sha256"}
@@ -45,6 +46,12 @@ class TargetIdentityCheck(BaseCheck):
         return _sha256_from_output(ssh.run("sha256sum -- {0}".format(shlex.quote(path))))
 
     def collect(self, ssh, config: dict) -> dict:
+        try:
+            return self._collect(ssh, config)
+        except (SshConnectionError, SshTimeoutError) as exc:
+            return {"claims": [], "errors": ["SSH_ERROR: {0}".format(exc)]}
+
+    def _collect(self, ssh, config: dict) -> dict:
         descriptors = config.get("target_identity")
         errors: List[str] = []
         claims: List[Dict[str, Any]] = []
@@ -133,14 +140,54 @@ class TargetIdentityCheck(BaseCheck):
         if not isinstance(descriptors, list) or not descriptors:
             return False, "no identity claims configured"
         if not isinstance(claims, list) or len(claims) != len(descriptors):
-            return False, "identity claims are incomplete"
+            return False, "identity claim binding is incomplete"
+        descriptor_by_id: Dict[str, dict] = {}
+        for descriptor in descriptors:
+            if not isinstance(descriptor, dict):
+                return False, "identity descriptor is malformed"
+            identifier = descriptor.get("id")
+            kind = descriptor.get("kind")
+            if not isinstance(identifier, str) or not identifier or kind not in _ALLOWED_KINDS:
+                return False, "identity descriptor is malformed"
+            if identifier in descriptor_by_id:
+                return False, "identity descriptor ids are duplicate"
+            descriptor_by_id[identifier] = descriptor
+        seen_ids = set()
         for claim in claims:
             if not isinstance(claim, dict):
                 return False, "identity claim is malformed"
+            identifier = claim.get("id")
+            if not isinstance(identifier, str) or identifier not in descriptor_by_id:
+                return False, "identity claim binding has an unknown id"
+            if identifier in seen_ids:
+                return False, "identity claim binding has duplicate ids"
+            seen_ids.add(identifier)
+            descriptor = descriptor_by_id[identifier]
+            kind = claim.get("kind")
+            if kind != descriptor.get("kind"):
+                return False, "identity claim binding kind does not match descriptor"
             expected = claim.get("expected")
             actual = claim.get("actual")
             if not isinstance(expected, str) or not isinstance(actual, str):
                 return False, "identity claim has no comparable value"
+            if kind == "module_sha256":
+                if claim.get("module") != descriptor.get("module") or not _allowed_path(claim.get("path")):
+                    return False, "identity claim binding module context does not match descriptor"
+                descriptor_expected = descriptor.get("sha256")
+            elif kind == "module_version":
+                if claim.get("module") != descriptor.get("module"):
+                    return False, "identity claim binding module context does not match descriptor"
+                descriptor_expected = descriptor.get("version")
+            elif kind == "file_sha256":
+                if claim.get("path") != descriptor.get("path"):
+                    return False, "identity claim binding path context does not match descriptor"
+                descriptor_expected = descriptor.get("sha256")
+            else:
+                return False, "identity claim binding kind is unsupported"
+            if expected != descriptor_expected:
+                return False, "identity claim binding expected value does not match descriptor"
             if expected != actual:
                 return False, "identity claim {0} mismatch".format(claim.get("id", "unknown"))
+        if seen_ids != set(descriptor_by_id):
+            return False, "identity claim binding is incomplete"
         return True, "OK"
