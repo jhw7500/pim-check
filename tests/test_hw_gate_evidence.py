@@ -53,6 +53,16 @@ def test_deployment_must_be_predeployed_and_unverified() -> None:
         validate_structure(document)
 
 
+@pytest.mark.parametrize("schema_version", [1.0, True])
+def test_schema_version_requires_non_boolean_integer_one(schema_version: object) -> None:
+    """Treating a float lookalike schema version as schema-v1 must fail."""
+    document = load_document()
+    document["schema_version"] = schema_version
+
+    with pytest.raises(EvidenceError, match="schema_version"):
+        validate_structure(document)
+
+
 @pytest.mark.parametrize("mutation", ["duplicate_gate", "duplicate_metric"])
 def test_duplicate_stable_ids_are_rejected(mutation: str) -> None:
     """Allowing ambiguous gate or metric identity must fail."""
@@ -150,6 +160,16 @@ def test_pass_claim_with_failed_gate_component_recomputes_fail(field: str) -> No
         gate["identity"]["verdict"] = "FAIL"
 
     assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.FAIL
+
+
+@pytest.mark.parametrize("component", ["identity", "restoration"])
+def test_component_error_precedes_another_component_fail(component: str) -> None:
+    """Collapsing an ERROR component into FAIL must fail this precedence check."""
+    document = load_document()
+    document["gates"][0][component]["verdict"] = "ERROR"
+    document["gates"][0]["preconditions"][0]["observed"] = [1, 0]
+
+    assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.ERROR
 
 
 def test_precondition_observation_mismatch_recomputes_fail_despite_producer_pass() -> None:

@@ -153,7 +153,7 @@ def _validate_gate(gate: object, field: str) -> None:
 def validate_structure(document: Dict[str, Any]) -> None:
     """Raise :class:`EvidenceError` when a schema-v1 document is unsafe."""
     payload = _require_mapping(document, "document")
-    if payload.get("schema_version") != 1 or isinstance(payload.get("schema_version"), bool):
+    if _require_integer(payload.get("schema_version"), "schema_version") != 1:
         raise EvidenceError("schema_version must be 1")
     _validate_timestamp(payload.get("created_at"), "created_at")
     deployment = _require_mapping(payload.get("deployment"), "deployment")
@@ -226,8 +226,12 @@ def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any]) -> Verdic
         if result["verdict"] == Verdict.FAIL.value:
             has_fail = True
     for component in ("identity", "restoration"):
-        if component in gate and gate[component].get("verdict") != Verdict.PASS.value:
-            has_fail = True
+        if component in gate:
+            component_verdict = gate[component].get("verdict")
+            if component_verdict == Verdict.ERROR.value:
+                return Verdict.ERROR
+            if component_verdict != Verdict.PASS.value:
+                has_fail = True
     for precondition in gate.get("preconditions", []):
         if not _precondition_matches(precondition.get("expected"), precondition.get("observed")):
             has_fail = True
