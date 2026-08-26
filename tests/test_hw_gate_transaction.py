@@ -33,30 +33,122 @@ class FakeSSH:
         self.events = events
         self.commands: List[str] = []
         self.scan_entries: List[str] = []
+        self.scan_command_failure = False
+        self.scan_raw_output: Optional[str] = None
+        self.scan_raw_output_set = False
+        self.root_kind = "directory"
+        self.root_owner = "0:0"
+        self.root_mode = "700"
+        self.persist_root_kind = "directory"
+        self.persist_root_owner = "0:0"
+        self.persist_root_mode = "700"
         self.validation_manifest: Optional[Dict[str, object]] = None
-        self.fail_persist = False
+        self.persist_failure: Optional[str] = None
+        self.validation_failure: Optional[str] = None
         self.fail_recovery_restore = False
         self.fail_delete = False
         self.fail_states: Set[str] = set()
         self.config_sha = ORIGINAL_SHA
 
+    @staticmethod
+    def _ordered(command: str, tokens: List[str]) -> bool:
+        cursor = 0
+        for token in tokens:
+            position = command.find(token, cursor)
+            if position < 0:
+                return False
+            cursor = position + len(token)
+        return True
+
+    def _scan_success(self, command: str) -> str:
+        if "PIM_JOURNAL_SCAN_OK:" not in command:
+            body = "\n".join(self.scan_entries)
+            return "{0}\nPIM_JOURNAL_SCAN_OK".format(body) if body else "PIM_JOURNAL_SCAN_OK"
+        raw = b"".join(
+            ("{0}/{1}".format(JOURNAL_ROOT, entry)).encode("utf-8") + b"\0"
+            for entry in self.scan_entries
+        )
+        return "PIM_JOURNAL_SCAN_OK:{0}".format(base64.b64encode(raw).decode("ascii"))
+
+    def _root_check_blocks(self, command: str, *, persistence: bool) -> bool:
+        kind = self.persist_root_kind if persistence else self.root_kind
+        owner = self.persist_root_owner if persistence else self.root_owner
+        mode = self.persist_root_mode if persistence else self.root_mode
+        symlink_check = "[ ! -L {0} ]".format(JOURNAL_ROOT)
+        directory_check = "[ -d {0} ]".format(JOURNAL_ROOT)
+        ownership_check = "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(JOURNAL_ROOT)
+        if kind == "symlink" and command.count(symlink_check) >= 2:
+            return True
+        if kind != "directory" and directory_check in command:
+            return True
+        if owner != "0:0" and ownership_check in command:
+            return True
+        if mode != "700" and ownership_check in command:
+            return True
+        return False
+
     def run(self, command: str, **_kwargs: object) -> Optional[str]:
         self.commands.append(command)
         if "PIM_JOURNAL_SCAN_OK" in command:
             self.events.append("scan")
-            body = "\n".join(self.scan_entries)
-            return "{0}\nPIM_JOURNAL_SCAN_OK".format(body) if body else "PIM_JOURNAL_SCAN_OK"
+            if self.scan_raw_output_set:
+                return self.scan_raw_output
+            if self.scan_command_failure:
+                if command.startswith("set -eu;") and "find " in command and "base64 -w0" in command:
+                    return None
+                return self._scan_success(command)
+            if self._root_check_blocks(command, persistence=False):
+                return None
+            return self._scan_success(command)
         if "PIM_JOURNAL_VALIDATE_OK:" in command:
             self.events.append("validate_journal")
             if self.validation_manifest is None:
                 return "PIM_JOURNAL_VALIDATE_FAIL"
+            dirty_dir = "{0}/dirty-1".format(JOURNAL_ROOT)
+            original = "{0}/edgeconf_pim.json.original".format(dirty_dir)
+            failure_tokens = {
+                "root_symlink": "[ ! -L {0} ]".format(JOURNAL_ROOT),
+                "root_owner": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(JOURNAL_ROOT),
+                "root_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(JOURNAL_ROOT),
+                "run_symlink": "[ ! -L {0} ]".format(dirty_dir),
+                "run_owner": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(dirty_dir),
+                "run_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(dirty_dir),
+                "file_symlink": "[ ! -L {0} ]".format(original),
+                "file_owner": "stat -c '%u:%g:%a' {0})\" = 0:0:600".format(original),
+                "file_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:600".format(original),
+                "count": "find {0} -mindepth 1 -maxdepth 1 -printf x".format(dirty_dir),
+                "jq": "jq -e 'type == \"object\"",
+                "hash": "sha256sum {0}".format(original),
+                "command": "set -eu;",
+            }
+            required = failure_tokens.get(self.validation_failure or "")
+            if required is not None and required in command:
+                return None
             payload = base64.b64encode(
                 json.dumps(self.validation_manifest, separators=(",", ":")).encode("utf-8")
             ).decode("ascii")
             return "PIM_JOURNAL_VALIDATE_OK:{0}".format(payload)
         if "PIM_JOURNAL_PERSIST_OK" in command:
             self.events.append("journal")
-            return None if self.fail_persist else "PIM_JOURNAL_PERSIST_OK"
+            if self._root_check_blocks(command, persistence=True):
+                return None
+            run_dir = "{0}/run-1".format(JOURNAL_ROOT)
+            original_tmp = "{0}/edgeconf_pim.json.original.tmp".format(run_dir)
+            original = "{0}/edgeconf_pim.json.original".format(run_dir)
+            failure_tokens = {
+                "copy": "base64 -d > {0}".format(original_tmp),
+                "hash": "sha256sum {0}".format(original_tmp),
+                "jq": "jq -e . {0}".format(original_tmp),
+                "run_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(run_dir),
+                "run_owner": "stat -c '%u:%g:%a' {0})\" = 0:0:700".format(run_dir),
+                "file_mode": "stat -c '%u:%g:%a' {0})\" = 0:0:600".format(original),
+                "file_owner": "stat -c '%u:%g:%a' {0})\" = 0:0:600".format(original),
+                "command": "set -eu;",
+            }
+            required = failure_tokens.get(self.persist_failure or "")
+            if required is not None and required in command:
+                return None
+            return "PIM_JOURNAL_PERSIST_OK"
         if "PIM_JOURNAL_STATE_OK" in command:
             match = re.search(r"--arg state '?([A-Z]+)'?", command)
             assert match is not None
@@ -160,8 +252,10 @@ def test_each_pre_mutation_gate_aborts_before_apply(failure: str) -> None:
         manager.snapshot_ok = False
     elif failure == "payload":
         manager.snapshot_payload = None
-    elif failure in {"persistent_copy", "persistent_hash"}:
-        manager.ssh.fail_persist = True
+    elif failure == "persistent_copy":
+        manager.ssh.persist_failure = "copy"
+    elif failure == "persistent_hash":
+        manager.ssh.persist_failure = "hash"
     else:
         manager.backup_ok = False
 
@@ -187,6 +281,111 @@ def test_preflight_order_is_recovery_snapshot_journal_backup_apply() -> None:
     assert significant == ["scan", "snapshot", "journal", "backup", "apply", "measure"]
 
 
+def test_absent_root_is_created_then_verified_before_enumeration() -> None:
+    """Creation is safe only when ownership/type/mode are verified before find."""
+    manager = FakeSetupManager()
+
+    assert recover_pending_transaction(manager, stabilize_sec=0) is False
+
+    scan = manager.ssh.commands[0]
+    assert FakeSSH._ordered(scan, [
+        "[ ! -e", "[ ! -L", "mkdir", "chown 0:0", "chmod 700",
+        "[ ! -L", "[ -d", "stat -c '%u:%g:%a'", "0:0:700", "find ", "base64 -w0",
+    ])
+
+
+@pytest.mark.parametrize(
+    "attribute,value",
+    [
+        ("root_kind", "symlink"),
+        ("root_kind", "file"),
+        ("root_owner", "1000:1000"),
+        ("root_mode", "755"),
+    ],
+)
+def test_unsafe_scan_root_fails_before_snapshot(attribute: str, value: str) -> None:
+    """An existing unsafe root is rejected, never followed or repaired."""
+    manager = FakeSetupManager()
+    setattr(manager.ssh, attribute, value)
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert manager.events == ["scan"]
+
+
+def test_find_failure_cannot_be_masked_by_a_trailing_success_marker() -> None:
+    """A non-zero enumeration command must prevent any apparent scan success."""
+    manager = FakeSetupManager()
+    manager.ssh.scan_command_failure = True
+
+    with pytest.raises(TransactionError):
+        recover_pending_transaction(manager, stabilize_sec=0)
+
+    assert manager.events == ["scan"]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "",
+        "PIM_JOURNAL_SCAN_OK",
+        "PIM_JOURNAL_SCAN_OK:ZmFrZS10cnVuY2F0ZWQ",
+        "partial-entry\nPIM_JOURNAL_SCAN_OK:",
+    ],
+)
+def test_empty_or_partial_scan_output_is_an_error(output: str) -> None:
+    """Only one complete base64/NUL envelope can authorize an empty or exact scan."""
+    manager = FakeSetupManager()
+    manager.ssh.scan_raw_output_set = True
+    manager.ssh.scan_raw_output = output
+
+    with pytest.raises(TransactionError):
+        recover_pending_transaction(manager, stabilize_sec=0)
+
+    assert manager.events == ["scan"]
+
+
+@pytest.mark.parametrize(
+    "attribute,value",
+    [
+        ("persist_root_kind", "symlink"),
+        ("persist_root_kind", "file"),
+        ("persist_root_owner", "1000:1000"),
+        ("persist_root_mode", "755"),
+    ],
+)
+def test_root_toctou_before_persistence_aborts_apply(attribute: str, value: str) -> None:
+    """Persistence revalidates the root instead of trusting the earlier scan."""
+    manager = FakeSetupManager()
+    setattr(manager.ssh, attribute, value)
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert "snapshot" in manager.events
+    assert "apply" not in manager.events
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["copy", "hash", "jq", "run_mode", "run_owner", "file_mode", "file_owner", "command"],
+)
+def test_distinct_persistence_safety_failures_abort_apply(failure: str) -> None:
+    """Every copy/hash/JSON/mode/owner/command gate independently blocks mutation."""
+    manager = FakeSetupManager()
+    manager.ssh.persist_failure = failure
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run")
+
+    assert "journal" in manager.events
+    assert "apply" not in manager.events
+
+
 def test_normal_transaction_persists_the_complete_state_machine() -> None:
     """Omitting a durable lifecycle state would make crash diagnosis ambiguous."""
     manager = FakeSetupManager()
@@ -203,6 +402,50 @@ def test_normal_transaction_persists_the_complete_state_machine() -> None:
         "state:CLOSED",
     ]
     assert transaction.state is TransactionState.CLOSED
+    assert transaction.state_history == (
+        TransactionState.NEW,
+        TransactionState.SNAPSHOTTED,
+        TransactionState.JOURNALED,
+        TransactionState.APPLIED,
+        TransactionState.REBOOTED,
+        TransactionState.RESTORED,
+        TransactionState.VERIFIED,
+        TransactionState.CLOSED,
+    )
+
+
+def test_failed_preflight_records_an_honest_error_terminal_state() -> None:
+    manager = FakeSetupManager()
+    manager.backup_ok = False
+    transaction = _transaction(manager)
+
+    with pytest.raises(TransactionError):
+        with transaction:
+            pytest.fail("measurement body must not run")
+
+    assert transaction.terminal_state is TransactionState.ERROR
+    assert transaction.state_history == (
+        TransactionState.NEW,
+        TransactionState.SNAPSHOTTED,
+        TransactionState.JOURNALED,
+        TransactionState.ERROR,
+    )
+
+
+def test_body_failure_closes_recovery_then_records_error_outcome() -> None:
+    manager = FakeSetupManager()
+    transaction = _transaction(manager)
+
+    with pytest.raises(ValueError, match="parse failed"):
+        with transaction:
+            raise ValueError("parse failed")
+
+    assert transaction.state is TransactionState.CLOSED
+    assert transaction.terminal_state is TransactionState.ERROR
+    assert transaction.state_history[-2:] == (
+        TransactionState.CLOSED,
+        TransactionState.ERROR,
+    )
 
 
 def test_pre_mutation_programmer_error_is_not_reclassified() -> None:
@@ -238,6 +481,13 @@ def test_journal_is_atomic_validated_mode_restricted_and_secret_free() -> None:
         assert "sync" in persist
         assert "mv" in persist
         assert "2000000" not in persist
+        assert FakeSSH._ordered(persist, [
+            "[ ! -e", "[ ! -L", "mkdir", "chown 0:0", "chmod 700",
+            "[ ! -L", "[ -d", "stat -c '%u:%g:%a'", "0:0:700",
+            "mkdir", "chown 0:0", "chmod 700", "0:0:700",
+            "base64 -d", "jq -e", "sha256sum", "mv",
+            "base64 -d", "jq -e", "mv", "0:0:600", "sync",
+        ])
 
 
 @pytest.mark.parametrize(
@@ -329,11 +579,14 @@ def test_cleanup_failure_overrides_a_successful_body_and_preserves_journal(failu
     else:
         manager.ssh.fail_delete = True
 
+    transaction = _transaction(manager)
     with pytest.raises(TransactionRestorationError) as caught:
-        with _transaction(manager):
+        with transaction:
             manager.events.append("pass")
 
     assert caught.value.verdict == "ERROR"
+    assert transaction.terminal_state is TransactionState.ERROR
+    assert transaction.state_history[-1] is TransactionState.ERROR
     if failure != "delete":
         assert "delete" not in manager.events
 
@@ -412,6 +665,43 @@ def test_one_valid_dirty_journal_restores_reboots_verifies_and_then_deletes() ->
     assert "stat -c" in validate
     assert "jq -e" in validate
     assert "sha256sum" in validate
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "root_symlink", "root_owner", "root_mode", "run_symlink", "run_owner", "run_mode",
+        "file_symlink", "file_owner", "file_mode", "count", "jq", "hash", "command",
+    ],
+)
+def test_each_dirty_journal_integrity_failure_blocks_restore(failure: str) -> None:
+    """Skipping any root/run/file/count/JSON/hash check makes this regression fail."""
+    manager = FakeSetupManager()
+    manager.ssh.scan_entries = ["dirty-1"]
+    manager.ssh.validation_manifest = _manifest()
+    manager.ssh.validation_failure = failure
+
+    with pytest.raises(TransactionError):
+        recover_pending_transaction(manager, stabilize_sec=0)
+
+    assert "validate_journal" in manager.events
+    assert "recover_restore" not in manager.events
+
+
+def test_journal_validation_checks_are_ordered_before_manifest_export() -> None:
+    manager = FakeSetupManager()
+    manager.ssh.scan_entries = ["dirty-1"]
+    manager.ssh.validation_manifest = _manifest()
+
+    assert recover_pending_transaction(manager, stabilize_sec=0) is True
+
+    validate = next(
+        command for command in manager.ssh.commands if "PIM_JOURNAL_VALIDATE_OK:" in command
+    )
+    assert FakeSSH._ordered(validate, [
+        "[ ! -L", "[ -d", "stat -c '%u:%g:%a'", "0:0:700",
+        "-mindepth 1 -maxdepth 1", "0:0:600", "jq -e", "sha256sum", "base64 -w0",
+    ])
 
 
 def test_multiple_dirty_journals_fail_closed_before_restore() -> None:

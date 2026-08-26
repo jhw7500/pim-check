@@ -33,6 +33,7 @@ class TransactionState(Enum):
     RESTORED = "RESTORED"
     VERIFIED = "VERIFIED"
     CLOSED = "CLOSED"
+    ERROR = "ERROR"
 
 
 class TransactionError(RuntimeError):
@@ -72,6 +73,40 @@ def _journal_paths(run_id: str) -> Dict[str, str]:
     }
 
 
+def _root_integrity_commands(*, create: bool) -> str:
+    root = _quote(JOURNAL_ROOT)
+    create_commands = ""
+    if create:
+        create_commands = (
+            "if [ ! -e {root} ]; then [ ! -L {root} ]; mkdir {root}; "
+            "chown 0:0 {root}; chmod 700 {root}; fi; "
+        ).format(root=root)
+    return (
+        create_commands
+        + "[ ! -L {root} ]; [ -d {root} ]; "
+        "[ \"$(stat -c '%u:%g:%a' {root})\" = 0:0:700 ]; "
+    ).format(root=root)
+
+
+def _owned_path_commands(path: str, *, mode: int, directory: bool) -> str:
+    quoted = _quote(path)
+    type_test = "-d" if directory else "-f"
+    return (
+        "[ ! -L {path} ]; [ {type_test} {path} ]; "
+        "[ \"$(stat -c '%u:%g:%a' {path})\" = 0:0:{mode} ]; "
+    ).format(path=quoted, type_test=type_test, mode=mode)
+
+
+def _exact_entry_count_commands(directory: str, count: int, label: str) -> str:
+    quoted = _quote(directory)
+    template = _quote("/tmp/pim-journal-count-{0}.XXXXXX".format(label))
+    return (
+        "count_file=$(mktemp {template}); "
+        "find {directory} -mindepth 1 -maxdepth 1 -printf x > \"$count_file\"; "
+        "[ \"$(wc -c < \"$count_file\")\" -eq {count} ]; rm -f \"$count_file\"; "
+    ).format(directory=quoted, template=template, count=count)
+
+
 def _has_marker(output: Optional[str], marker: str) -> bool:
     return bool(output) and output.strip().splitlines()[-1] == marker
 
@@ -94,20 +129,43 @@ def _run_restoration_remote(manager: object, command: str, stage: str) -> Option
 
 def _scan_journals(manager: object) -> list[str]:
     root = _quote(JOURNAL_ROOT)
-    marker = "PIM_JOURNAL_SCAN_OK"
+    prefix = "PIM_JOURNAL_SCAN_OK:"
     command = (
-        "if [ ! -e {root} ]; then :; "
-        "elif [ ! -d {root} ]; then printf '%s\\n' PIM_INVALID_JOURNAL_ROOT; "
-        "else find {root} -mindepth 1 -maxdepth 1 -printf '%f\\n'; fi; "
-        "printf '%s\\n' {marker}"
-    ).format(root=root, marker=marker)
+        "set -eu; "
+        + _root_integrity_commands(create=True)
+        + "scan_file=$(mktemp /tmp/pim-journal-scan.XXXXXX); "
+        "trap 'rm -f \"$scan_file\"' EXIT HUP INT TERM; "
+        "find {root} -mindepth 1 -maxdepth 1 -print0 > \"$scan_file\"; "
+        "payload=$(base64 -w0 \"$scan_file\"); rm -f \"$scan_file\"; "
+        "trap - EXIT HUP INT TERM; "
+        "printf '{prefix}%s\\n' \"$payload\""
+    ).format(root=root, prefix=prefix)
     output = _run_remote(manager, command, "journal scan")
-    if not _has_marker(output, marker):
+    if not output or len(output.strip().splitlines()) != 1 or not output.startswith(prefix):
         raise TransactionError("journal scan did not complete")
-    assert output is not None
-    entries = [line.strip() for line in output.strip().splitlines()[:-1] if line.strip()]
-    if "PIM_INVALID_JOURNAL_ROOT" in entries:
-        raise TransactionError("malformed journal root")
+    encoded = output.strip()[len(prefix):]
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except ValueError as exc:
+        raise TransactionError("journal scan output is malformed") from exc
+    if raw and not raw.endswith(b"\0"):
+        raise TransactionError("journal scan output is truncated")
+    raw_paths = raw[:-1].split(b"\0") if raw else []
+    entries = []
+    expected_prefix = (JOURNAL_ROOT + "/").encode("ascii")
+    for raw_path in raw_paths:
+        if not raw_path.startswith(expected_prefix):
+            raise TransactionError("journal scan path is outside the recovery root")
+        raw_name = raw_path[len(expected_prefix):]
+        try:
+            entry = raw_name.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise TransactionError("journal scan directory name is malformed") from exc
+        if not _SAFE_RUN_ID_RE.fullmatch(entry):
+            raise TransactionError("journal scan directory name is malformed")
+        entries.append(entry)
+    if len(entries) != len(set(entries)):
+        raise TransactionError("journal scan output is ambiguous")
     return entries
 
 
@@ -151,11 +209,15 @@ def _load_valid_journal(manager: object, entry: str, conf_path: str) -> Dict[str
     original = _quote(paths["original"])
     manifest = _quote(paths["manifest"])
     command = (
-        "set -eu; [ \"$(stat -c '%a' {directory})\" = 700 ]; "
-        "[ \"$(stat -c '%a' {original})\" = 600 ]; "
-        "[ \"$(stat -c '%a' {manifest})\" = 600 ]; "
-        "[ \"$(find {directory} -mindepth 1 -maxdepth 1 | wc -l)\" = 2 ]; "
-        "jq -e 'type == \"object\" and length == 6' {manifest} >/dev/null; "
+        "set -eu; "
+        + _root_integrity_commands(create=False)
+        + _owned_path_commands(paths["directory"], mode=700, directory=True)
+        + _exact_entry_count_commands(paths["directory"], 2, entry)
+        + _owned_path_commands(paths["original"], mode=600, directory=False)
+        + _owned_path_commands(paths["manifest"], mode=600, directory=False)
+        + "jq -e 'type == \"object\" and "
+        "(keys == [\"config_path\",\"created_at\",\"original_sha256\",\"run_id\","
+        "\"schema_version\",\"state\"])' {manifest} >/dev/null; "
         "expected=$(jq -er '.original_sha256' {manifest}); "
         "actual=$(sha256sum {original} | awk '{{print $1}}'); [ \"$actual\" = \"$expected\" ]; "
         "payload=$(base64 -w0 {manifest}); printf 'PIM_JOURNAL_VALIDATE_OK:%s\\n' \"$payload\""
@@ -175,10 +237,20 @@ def _write_manifest_state(
     temporary = _quote(paths["manifest"] + ".tmp")
     marker = "PIM_JOURNAL_STATE_OK"
     command = (
-        "set -eu; jq -e --arg current {current} '.state == $current' {manifest} >/dev/null; "
+        "set -eu; "
+        + _root_integrity_commands(create=False)
+        + _owned_path_commands(paths["directory"], mode=700, directory=True)
+        + _owned_path_commands(paths["original"], mode=600, directory=False)
+        + _owned_path_commands(paths["manifest"], mode=600, directory=False)
+        + "jq -e --arg current {current} '.state == $current' {manifest} >/dev/null; "
         "jq --arg state {target} '.state = $state' {manifest} > {temporary}; "
         "jq -e --arg state {target} '.state == $state and length == 6' {temporary} >/dev/null; "
-        "chmod 600 {temporary}; mv {temporary} {manifest}; sync; echo {marker}"
+        "chown 0:0 {temporary}; chmod 600 {temporary}; "
+        + _owned_path_commands(paths["manifest"] + ".tmp", mode=600, directory=False)
+        + "mv {temporary} {manifest}; "
+        + _owned_path_commands(paths["manifest"], mode=600, directory=False)
+        + _exact_entry_count_commands(paths["directory"], 2, run_id)
+        + "sync; echo {marker}"
     ).format(
         current=_quote(current), target=_quote(target), manifest=manifest,
         temporary=temporary, marker=marker,
@@ -213,7 +285,15 @@ def _delete_verified_journal(manager: object, run_id: str, conf_path: str, origi
     paths = _journal_paths(run_id)
     marker = "PIM_JOURNAL_DELETE_OK"
     command = (
-        "set -eu; jq -e '.state == \"CLOSED\"' {manifest} >/dev/null; "
+        "set -eu; "
+        + _root_integrity_commands(create=False)
+        + _owned_path_commands(paths["directory"], mode=700, directory=True)
+        + _owned_path_commands(paths["original"], mode=600, directory=False)
+        + _owned_path_commands(paths["manifest"], mode=600, directory=False)
+        + _exact_entry_count_commands(paths["directory"], 2, run_id)
+        + "jq -e '.state == \"CLOSED\"' {manifest} >/dev/null; "
+        "journal_sha=$(sha256sum {original} | awk '{{print $1}}'); "
+        "[ \"$journal_sha\" = {expected} ]; "
         "actual=$(sha256sum {config} | awk '{{print $1}}'); [ \"$actual\" = {expected} ]; "
         "rm -f {original} {manifest}; rmdir {directory}; sync; echo {marker}"
     ).format(
@@ -231,7 +311,15 @@ def _restore_from_journal(manager: object, run_id: str, conf_path: str, original
     temporary = "{0}.pim-recover-{1}.tmp".format(conf_path, run_id)
     marker = "PIM_JOURNAL_RESTORE_OK"
     command = (
-        "set -eu; cp {original} {temporary}; chmod 600 {temporary}; jq -e . {temporary} >/dev/null; "
+        "set -eu; "
+        + _root_integrity_commands(create=False)
+        + _owned_path_commands(paths["directory"], mode=700, directory=True)
+        + _owned_path_commands(paths["original"], mode=600, directory=False)
+        + _owned_path_commands(paths["manifest"], mode=600, directory=False)
+        + _exact_entry_count_commands(paths["directory"], 2, run_id)
+        + "cp {original} {temporary}; chown 0:0 {temporary}; chmod 600 {temporary}; "
+        + _owned_path_commands(temporary, mode=600, directory=False)
+        + "jq -e . {temporary} >/dev/null; "
         "actual=$(sha256sum {temporary} | awk '{{print $1}}'); [ \"$actual\" = {expected} ]; "
         "mv {temporary} {config}; sync; echo {marker}"
     ).format(
@@ -307,6 +395,8 @@ class StrictHardwareTransaction:
         self.stabilize_sec = stabilize_sec
         self._initial_changes = changes
         self._state = TransactionState.NEW
+        self._terminal_state = TransactionState.NEW
+        self._state_history = [TransactionState.NEW]
         self._manifest: Dict[str, Any] = {}
         self._original_sha = ""
         self._entered = False
@@ -318,8 +408,27 @@ class StrictHardwareTransaction:
         return self._state
 
     @property
+    def terminal_state(self) -> TransactionState:
+        return self._terminal_state
+
+    @property
+    def state_history(self) -> tuple[TransactionState, ...]:
+        return tuple(self._state_history)
+
+    @property
     def manifest(self) -> Dict[str, Any]:
         return dict(self._manifest)
+
+    def _record_state(self, state: TransactionState) -> None:
+        self._state = state
+        self._terminal_state = state
+        if self._state_history[-1] is not state:
+            self._state_history.append(state)
+
+    def _record_error(self) -> None:
+        self._terminal_state = TransactionState.ERROR
+        if self._state_history[-1] is not TransactionState.ERROR:
+            self._state_history.append(TransactionState.ERROR)
 
     def _persist_journal(self, snapshot_payload: str) -> None:
         try:
@@ -346,18 +455,30 @@ class StrictHardwareTransaction:
         manifest_tmp = paths["manifest"] + ".tmp"
         marker = "PIM_JOURNAL_PERSIST_OK"
         command = (
-            "set -eu; umask 077; mkdir -p {root}; test ! -e {directory}; "
-            "mkdir {directory}; chmod 700 {directory}; "
+            "set -eu; umask 077; "
+            + _root_integrity_commands(create=True)
+            + "[ ! -e {directory} ]; [ ! -L {directory} ]; "
+            "mkdir {directory}; chown 0:0 {directory}; chmod 700 {directory}; "
+            + _owned_path_commands(paths["directory"], mode=700, directory=True)
+            +
             "printf '%s' {snapshot} | base64 -d > {original_tmp}; "
-            "jq -e . {original_tmp} >/dev/null; chmod 600 {original_tmp}; "
+            "chown 0:0 {original_tmp}; chmod 600 {original_tmp}; "
+            + _owned_path_commands(original_tmp, mode=600, directory=False)
+            + "jq -e . {original_tmp} >/dev/null; "
             "actual=$(sha256sum {original_tmp} | awk '{{print $1}}'); "
             "[ \"$actual\" = {expected} ]; mv {original_tmp} {original}; "
             "printf '%s' {manifest_payload} | base64 -d > {manifest_tmp}; "
+            "chown 0:0 {manifest_tmp}; chmod 600 {manifest_tmp}; "
+            + _owned_path_commands(manifest_tmp, mode=600, directory=False)
+            +
             "jq -e 'type == \"object\" and length == 6 and .state == \"JOURNALED\"' "
-            "{manifest_tmp} >/dev/null; chmod 600 {manifest_tmp}; "
-            "mv {manifest_tmp} {manifest}; sync; echo {marker}"
+            "{manifest_tmp} >/dev/null; mv {manifest_tmp} {manifest}; "
+            + _owned_path_commands(paths["original"], mode=600, directory=False)
+            + _owned_path_commands(paths["manifest"], mode=600, directory=False)
+            + _exact_entry_count_commands(paths["directory"], 2, self.run_id)
+            + "sync; echo {marker}"
         ).format(
-            root=_quote(JOURNAL_ROOT), directory=_quote(paths["directory"]),
+            directory=_quote(paths["directory"]),
             snapshot=_quote(snapshot_payload), original_tmp=_quote(original_tmp),
             expected=_quote(self._original_sha), original=_quote(paths["original"]),
             manifest_payload=_quote(encoded_manifest), manifest_tmp=_quote(manifest_tmp),
@@ -366,7 +487,7 @@ class StrictHardwareTransaction:
         output = _run_remote(self.setup_manager, command, "journal persistence")
         if not _has_marker(output, marker):
             raise TransactionError("persistent journal validation failed")
-        self._state = TransactionState.JOURNALED
+        self._record_state(TransactionState.JOURNALED)
 
     def _set_state(self, target: TransactionState, *, restoration: bool = False) -> None:
         current = self._state
@@ -374,7 +495,7 @@ class StrictHardwareTransaction:
             self.setup_manager, self.run_id, current.value, target.value,
             restoration=restoration,
         )
-        self._state = target
+        self._record_state(target)
         self._manifest["state"] = target.value
 
     def _prepare(self) -> None:
@@ -386,7 +507,7 @@ class StrictHardwareTransaction:
         )
         if not snapshotted:
             raise TransactionError("host snapshot validation failed")
-        self._state = TransactionState.SNAPSHOTTED
+        self._record_state(TransactionState.SNAPSHOTTED)
         payload = self.setup_manager.get_snapshot_payload(  # type: ignore[attr-defined]
             self.conf_path
         )
@@ -401,7 +522,9 @@ class StrictHardwareTransaction:
         try:
             self.restore_and_verify()
         except TransactionRestorationError as restoration:
+            self._record_error()
             raise restoration from original
+        self._record_error()
         raise original
 
     def _apply_and_reboot(self, changes: dict) -> None:
@@ -428,10 +551,14 @@ class StrictHardwareTransaction:
     def __enter__(self) -> "StrictHardwareTransaction":
         if self._entered:
             raise TransactionError("transaction context cannot be re-entered")
-        self._prepare()
-        self._entered = True
-        if self._initial_changes is not None:
-            self._apply_and_reboot(self._initial_changes)
+        try:
+            self._prepare()
+            self._entered = True
+            if self._initial_changes is not None:
+                self._apply_and_reboot(self._initial_changes)
+        except TransactionError:
+            self._record_error()
+            raise
         return self
 
     def restore_and_verify(self) -> None:
@@ -483,7 +610,12 @@ class StrictHardwareTransaction:
 
     def unwind_for_signal(self) -> None:
         """Use the context manager's restoration path during explicit signal unwinding."""
-        self.restore_and_verify()
+        try:
+            self.restore_and_verify()
+        except TransactionRestorationError:
+            self._record_error()
+            raise
+        self._record_error()
 
     def __exit__(
         self, exc_type: Optional[type], exc: Optional[BaseException], traceback: object,
@@ -492,7 +624,10 @@ class StrictHardwareTransaction:
         try:
             self.restore_and_verify()
         except TransactionRestorationError as restoration:
+            self._record_error()
             if exc is not None:
                 raise restoration from exc
             raise
+        if exc is not None:
+            self._record_error()
         return False
