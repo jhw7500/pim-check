@@ -622,8 +622,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
             _prof = load_profile(profiles_dir, case=_cn)
         except FileNotFoundError:
             continue    # 실행 루프가 PROFILE_NOT_FOUND 로 케이스 단위 보고한다
-        _rt = resolve_runtime_profile(
-            _prof, plan_global=None, cli_args=cli_args)
+        _rt = resolve_runtime_profile(_prof, plan_global=None, cli_args=cli_args)
         _hosts.setdefault((_rt.get("target") or {}).get("host", DEFAULT_TARGET_HOST), _cn)
     if len(_hosts) > 1:
         _detail = ", ".join(f"{h} ({c})" for h, c in sorted(_hosts.items()))

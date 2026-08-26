@@ -194,7 +194,8 @@ def _run_plan(args) -> int:
     Exit code: 0=PASS, 1=FAIL, 2=WARN, 3=plan lint/실행 에러.
     """
     from plan import (
-        load_plan, execute_plan, load_baseline, evaluate_gate, render_reports,
+        MixedTargetError, load_plan, execute_plan, load_baseline, evaluate_gate,
+        render_reports,
     )
     from setup import SetupManager
     from engine import Engine
@@ -400,7 +401,7 @@ def _run_plan(args) -> int:
             progress=on_progress,
             on_case_start=on_case_start,
         )
-    except ValueError as exc:
+    except MixedTargetError as exc:
         # plan 수준 거부(#96) — 케이스 시작 전이라 보드는 건드리지 않았다.
         # load_plan lint 실패와 같은 채널(ERROR + exit 3)로 표면화한다. 이 타입만
         # 잡는다 — 하위(Engine 등)의 무관한 ValueError 를 설정 오류로 오보하지 않게.
