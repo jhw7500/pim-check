@@ -15,6 +15,9 @@ from checks.log import LogCheck
 from checks.recording import RecordingCheck
 from checks.custom import CustomCommandCheck
 from checks.base_check import BaseCheck
+from checks.target_identity import TargetIdentityCheck
+from checks.bps_evidence import BpsEvidenceCheck
+from checks.mixed_combo_evidence import MixedComboEvidenceCheck
 
 ALL_CHECKS = [
     ProcessCheck(),
@@ -27,7 +30,15 @@ ALL_CHECKS = [
     LogCheck(),
     RecordingCheck(),
     CustomCommandCheck(),
+    TargetIdentityCheck(),
+    BpsEvidenceCheck(),
+    MixedComboEvidenceCheck(),
 ]
+
+
+def checks_for_scope(scope: str) -> list[BaseCheck]:
+    """Return only checks explicitly registered for one execution scope."""
+    return [check for check in ALL_CHECKS if check.scope == scope]
 
 
 def load_plugins(plugin_dir: str | None = None) -> list:

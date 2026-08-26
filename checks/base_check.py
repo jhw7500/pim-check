@@ -7,6 +7,7 @@ from verify_retry import is_stabilization_reason
 
 class BaseCheck(ABC):
     name: str = "unnamed"
+    scope: str = "snapshot"
 
     @abstractmethod
     def collect(self, ssh, config: dict) -> dict:
