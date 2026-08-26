@@ -21,9 +21,17 @@ def baseline_for(document: dict) -> dict:
     gate = document["gates"][0]
     metric = gate["metrics"][0]
     return {
+        "id": gate["id"],
         "adapter_id": gate["adapter_id"],
         "adapter_schema_version": gate["adapter_schema_version"],
-        "metrics": [{"id": metric["id"], "value": metric["baseline_value"], "unit": metric["unit"]}],
+        "metrics": [
+            {
+                "id": metric["id"],
+                "value": metric["baseline_value"],
+                "unit": metric["unit"],
+                "rule": copy.deepcopy(metric["rule"]),
+            }
+        ],
     }
 
 
@@ -89,6 +97,26 @@ def test_adapter_schema_mismatch_recomputes_error() -> None:
     assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
 
 
+def test_evidence_cannot_loosen_immutable_baseline_rule() -> None:
+    """Using producer thresholds instead of the baseline's 5% rule must fail."""
+    document = load_document()
+    baseline = baseline_for(document)
+    document["gates"][0]["metrics"][0]["value"] = 1126400
+    document["gates"][0]["metrics"][0]["rule"]["max_percent_delta"] = 100.0
+
+    assert recompute_overall_verdict(document, baseline) is Verdict.FAIL
+
+
+def test_baseline_gate_absent_from_evidence_recomputes_error() -> None:
+    """Ignoring a committed baseline gate with no evidence must fail."""
+    document = load_document()
+    baseline = {"gates": [baseline_for(document), copy.deepcopy(baseline_for(document))]}
+    baseline["gates"][1]["id"] = "second_gate"
+    baseline["gates"][1]["adapter_id"] = "second_adapter"
+
+    assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
+
+
 @pytest.mark.parametrize(
     "path, value, message",
     [
@@ -115,13 +143,29 @@ def test_pass_claim_with_failed_gate_component_recomputes_fail(field: str) -> No
     document = load_document()
     gate = document["gates"][0]
     if field == "preconditions":
-        gate["preconditions"][0]["verdict"] = "FAIL"
+        gate["preconditions"][0]["observed"] = [1, 0]
     elif field == "restoration":
         gate["restoration"]["verdict"] = "FAIL"
     else:
         gate["identity"]["verdict"] = "FAIL"
 
     assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.FAIL
+
+
+def test_precondition_observation_mismatch_recomputes_fail_despite_producer_pass() -> None:
+    """Trusting a producer PASS after its observed precondition changed must fail."""
+    document = load_document()
+    document["gates"][0]["preconditions"][0]["observed"] = [1, 0]
+
+    assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.FAIL
+
+
+def test_unsupported_precondition_shape_recomputes_error() -> None:
+    """Comparing ambiguous nested mappings as preconditions must fail closed."""
+    document = load_document()
+    document["gates"][0]["preconditions"][0]["observed"] = {"value": 0}
+
+    assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.ERROR
 
 
 def test_error_precedes_fail() -> None:

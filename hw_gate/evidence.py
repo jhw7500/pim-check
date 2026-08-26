@@ -62,6 +62,29 @@ def _validate_unique_ids(items: Iterable[object], field: str) -> None:
         seen.add(identifier)
 
 
+def _is_safe_precondition_value(value: object) -> bool:
+    if value is None or isinstance(value, (bool, str)):
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            _finite_number(value, "precondition value")
+        except EvidenceError:
+            return False
+        return True
+    return isinstance(value, list) and all(_is_safe_precondition_value(item) for item in value)
+
+
+def _precondition_matches(expected: object, observed: object) -> bool:
+    if type(expected) is not type(observed):
+        return False
+    if isinstance(expected, list):
+        return len(expected) == len(observed) and all(
+            _precondition_matches(expected_item, observed_item)
+            for expected_item, observed_item in zip(expected, observed)
+        )
+    return expected == observed
+
+
 def _validate_rule(metric: Dict[str, Any], field: str) -> None:
     value = _finite_number(metric.get("value"), "{0}.value".format(field))
     unit = _require_string(metric.get("unit"), "{0}.unit".format(field))
@@ -107,6 +130,8 @@ def _validate_gate(gate: object, field: str) -> None:
         item = _require_mapping(precondition, "{0}.preconditions[{1}]".format(field, index))
         if "expected" not in item or "observed" not in item:
             raise EvidenceError("{0}.preconditions[{1}] requires expected and observed".format(field, index))
+        if not _is_safe_precondition_value(item["expected"]) or not _is_safe_precondition_value(item["observed"]):
+            raise EvidenceError("{0}.preconditions[{1}] has an unsafe comparison shape".format(field, index))
         _validate_verdict(item.get("verdict"), "{0}.preconditions[{1}].verdict".format(field, index), _COMPONENT_VERDICTS)
 
     metrics = _require_list(payload.get("metrics"), "{0}.metrics".format(field))
@@ -157,9 +182,9 @@ def _baseline_gates(baseline: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(raw_gates, list) or not raw_gates:
         raise EvidenceError("baseline must contain gates")
     gates = [_require_mapping(gate, "baseline gate") for gate in raw_gates]
-    adapter_ids = [gate.get("adapter_id") for gate in gates]
-    if len(adapter_ids) != len(set(adapter_ids)):
-        raise EvidenceError("baseline contains duplicate adapter ids")
+    gate_ids = [_require_string(gate.get("id"), "baseline gate.id") for gate in gates]
+    if len(gate_ids) != len(set(gate_ids)):
+        raise EvidenceError("baseline contains duplicate gate ids")
     return gates
 
 
@@ -192,10 +217,11 @@ def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any]) -> Verdic
         expected_baseline = _finite_number(baseline_metric.get("value"), "baseline metric.value")
         if item.get("baseline_value") != expected_baseline:
             return Verdict.ERROR
+        baseline_rule = _require_mapping(baseline_metric.get("rule"), "baseline metric.rule")
         result = evaluate_rule(
             _finite_number(item.get("value"), "metric.value"),
             _require_string(item.get("unit"), "metric.unit"),
-            {"value": expected_baseline, "unit": baseline_metric.get("unit"), "rule": item.get("rule")},
+            {"value": expected_baseline, "unit": baseline_metric.get("unit"), "rule": baseline_rule},
         )
         if result["verdict"] == Verdict.FAIL.value:
             has_fail = True
@@ -203,7 +229,7 @@ def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any]) -> Verdic
         if component in gate and gate[component].get("verdict") != Verdict.PASS.value:
             has_fail = True
     for precondition in gate.get("preconditions", []):
-        if precondition.get("verdict") != Verdict.PASS.value:
+        if not _precondition_matches(precondition.get("expected"), precondition.get("observed")):
             has_fail = True
     return Verdict.FAIL if has_fail else Verdict.PASS
 
@@ -216,10 +242,13 @@ def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[
             return Verdict.BUSY
         if baseline is None:
             return Verdict.ERROR
-        baseline_by_adapter = {gate["adapter_id"]: gate for gate in _baseline_gates(baseline)}
+        baseline_by_id = {gate["id"]: gate for gate in _baseline_gates(baseline)}
+        evidence_gate_ids = {gate["id"] for gate in document["gates"]}
+        if evidence_gate_ids != set(baseline_by_id):
+            return Verdict.ERROR
         verdicts: List[Verdict] = []
         for gate in document["gates"]:
-            baseline_gate = baseline_by_adapter.get(gate["adapter_id"])
+            baseline_gate = baseline_by_id.get(gate["id"])
             if baseline_gate is None:
                 return Verdict.ERROR
             verdicts.append(_gate_verdict(gate, baseline_gate))
