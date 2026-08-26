@@ -44,6 +44,9 @@ class FakeSSH:
         self.lock_cleanup_seen = False
         self.journal_appears_before_persist = False
         self.persist_lock_collision = False
+        self.successor_acquires_during_release = False
+        self.successor_lock_held = False
+        self.predecessor_removed_successor_lock = False
         self.persist_root_kind = "directory"
         self.persist_root_owner = "0:0"
         self.persist_root_mode = "700"
@@ -177,6 +180,16 @@ class FakeSSH:
             if self.lock_held and "rmdir {0}".format(lock_path) in command:
                 self.lock_held = False
                 self.lock_cleanup_seen = True
+            if self.successor_acquires_during_release:
+                release_rmdir = command.rfind("rmdir {0}".format(lock_path))
+                release_disarm = command.rfind("publication_lock_held=0")
+                assert release_rmdir >= 0
+                assert release_disarm >= 0
+                self.successor_lock_held = True
+                if release_rmdir < release_disarm:
+                    self.successor_lock_held = False
+                    self.predecessor_removed_successor_lock = True
+                return None
             return "PIM_JOURNAL_PERSIST_OK"
         if "PIM_JOURNAL_STATE_OK" in command:
             fixed_temp = "{0}/run-1/manifest.json.tmp".format(JOURNAL_ROOT)
@@ -403,6 +416,20 @@ def test_successful_publication_releases_lock_after_atomic_install() -> None:
         "sync", "rmdir {0}/.publish.lock".format(JOURNAL_ROOT),
         "PIM_JOURNAL_PERSIST_OK",
     ])
+
+
+def test_release_handoff_never_removes_a_successor_publication_lock() -> None:
+    """A predecessor signal after handoff must not clean up its successor's lock."""
+    manager = FakeSetupManager()
+    manager.ssh.successor_acquires_during_release = True
+
+    with pytest.raises(TransactionError):
+        with _transaction(manager):
+            pytest.fail("measurement body must not run after release signal")
+
+    assert manager.ssh.successor_lock_held is True
+    assert manager.ssh.predecessor_removed_successor_lock is False
+    assert "apply" not in manager.events
 
 
 def test_absent_root_is_created_then_verified_before_enumeration() -> None:

@@ -509,7 +509,7 @@ class StrictHardwareTransaction:
             + _owned_path_commands(paths["original"], mode=600, directory=False)
             + _owned_path_commands(paths["manifest"], mode=600, directory=False)
             + _exact_entry_count_commands(paths["directory"], 2, self.run_id)
-            + "sync; rmdir {lock}; publication_lock_held=0; "
+            + "sync; publication_lock_held=0; rmdir {lock}; "
             "trap - EXIT HUP INT TERM; echo {marker}"
         ).format(
             root=_quote(JOURNAL_ROOT), lock=_quote(lock_path),
