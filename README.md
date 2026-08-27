@@ -406,7 +406,7 @@ reports:
 | `run_smart_verify.py` (668줄) | (v1.2 예정) | 9 combos × A/B 패턴은 case schema 확장 필요. 현 multi case가 부분 coverage. |
 | `run_mixed_combo_verify.py` (315줄) | `--plan mixed_combo` | 부분 마이그레이션 — full mixed-combo는 case schema 확장으로 v1.2. |
 | `run_channel_verify.py` (160줄) | `--plan channel_verify` | 32개 1:1 매핑 (vflip + ae 토글). |
-| `run_bps_quick.py` (호환 entry point) | `--plan bps_quick` | `hw_gate`의 결정적 BPS transaction을 사용한다. 각 setpoint는 적용 → 재부팅 → 측정 → 정확한 snapshot 복원 → 재부팅·hash 검증을 거치며, 결과는 committed baseline으로 중앙 평가된다. |
+| `run_bps_quick.py` (호환 entry point) | `hw-verify-plan.yml`에서 `inputs.plan=bps_quick`일 때 직접 호출 | `hw_gate`의 결정적 BPS transaction을 사용한다. 각 setpoint는 적용 → 재부팅 → 측정 → 정확한 snapshot 복원 → 재부팅·hash 검증을 거치며, 결과는 committed baseline으로 중앙 평가된다. `pim_check.py --plan bps_quick`에는 이 호환 runner dispatch가 없다. |
 | `run_failed_retry.py` (139줄) | `--retry-failed` (v1.1 예정) | retry는 plan보다 CLI 플래그로 표현이 자연스러움. |
 
 **마이그레이션 검증 워크플로우**:
@@ -536,7 +536,7 @@ publisher marker upsert, stale-HEAD 처리를 검증한다.
 ```bash
 python3 -m hw_gate validate \
   --evidence tests/fixtures/hw_gate/evidence_pass.json \
-  --baseline tests/fixtures/hw_gate/baseline.json
+  --baseline baselines/hw-baseline.json
 ```
 
 ## 라이선스
