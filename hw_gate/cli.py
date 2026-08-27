@@ -245,14 +245,12 @@ def _validate_envelope(envelope: dict) -> None:
         raise EvidenceError("envelope baseline path is missing")
 
 
-def _load_bound_envelope(envelope_path: Path, output_dir: Path) -> dict:
+def _load_bound_envelope(envelope_path: Path) -> dict:
     envelope = _load_json(envelope_path)
     _validate_envelope(envelope)
     head = envelope["run"]["pr_head_sha"]
     if envelope_path.name != head + ".candidate.json":
         raise EvidenceError("envelope path is not bound to the PR HEAD")
-    if envelope_path.parent.resolve() != output_dir.resolve():
-        raise EvidenceError("output directory does not match the envelope directory")
     return envelope
 
 
@@ -265,8 +263,8 @@ def _load_bound_baseline(envelope: dict) -> LoadedBaseline:
     return loaded
 
 
-def _bound_envelope(envelope_path: Path, output_dir: Path) -> tuple[dict, LoadedBaseline]:
-    envelope = _load_bound_envelope(envelope_path, output_dir)
+def _bound_envelope(envelope_path: Path) -> tuple[dict, LoadedBaseline]:
+    envelope = _load_bound_envelope(envelope_path)
     loaded = _load_bound_baseline(envelope)
     return envelope, loaded
 
@@ -497,7 +495,7 @@ def _finish_run_protected(document: dict, loaded: LoadedBaseline, output_dir: Pa
 
 def _measure_command(args: argparse.Namespace) -> int:
     try:
-        envelope, loaded = _bound_envelope(args.envelope, args.output_dir)
+        envelope, loaded = _bound_envelope(args.envelope)
         if loaded.data["comparability"]["target_host"] != args.target_host:
             raise EvidenceError("target host does not match baseline comparability")
     except EvidenceError as exc:
@@ -630,7 +628,7 @@ def _finalizer_document(
 
 def _finalize_command(args: argparse.Namespace) -> int:
     try:
-        envelope = _load_bound_envelope(args.envelope, args.output_dir)
+        envelope = _load_bound_envelope(args.envelope)
     except EvidenceError as exc:
         print("hw_gate finalize: {0}".format(exc), file=sys.stderr)
         return ERROR_EXIT

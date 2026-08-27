@@ -285,6 +285,29 @@ def test_measure_orders_recovery_identity_adapters_diagnostics_and_close(
     assert document["deployment"] == {"mode": "predeployed", "verified": False, "artifacts": []}
 
 
+def test_measure_reuses_bound_envelope_for_an_isolated_case_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Requiring the candidate parent would block isolated acceptance-case evidence."""
+    from hw_gate.cli import main
+
+    envelope, prepared_dir = _prepare(tmp_path)
+    case_dir = tmp_path / "termination"
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+
+    assert main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
+        "--output-dir", str(case_dir), "--gates", "bps_quick",
+    ]) == 2
+
+    assert events == [
+        "ssh-open", "recover", "identity", "adapter:bps_quick", "diagnostics", "ssh-close",
+    ]
+    assert (case_dir / (FULL_SHA + ".json")).is_file()
+    assert not (prepared_dir / (FULL_SHA + ".json")).exists()
+
+
 def test_measure_accepts_and_records_the_fixed_wired_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
