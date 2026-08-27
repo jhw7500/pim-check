@@ -13,6 +13,7 @@ from hw_gate.baseline import (
     load_baseline,
     validate_baseline,
 )
+from hw_gate.cli import main as hw_gate_main
 from hw_gate.evidence import EvidenceError, recompute_overall_verdict, validate_structure
 from hw_gate.rules import Verdict
 
@@ -78,12 +79,17 @@ def test_load_baseline_returns_content_addressed_contract() -> None:
 
 
 def test_committed_production_baseline_recomputes_the_reviewed_evidence_as_pass() -> None:
-    """A missing or mismatched approved policy must not authorize the reviewed PASS fixture."""
+    """A changed production-fixture binding must not authorize its reviewed PASS claim."""
     loaded = load_baseline(PRODUCTION_BASELINE)
     document = json.loads(REVIEWED_PASS_FIXTURE.read_text(encoding="utf-8"))
 
     validate_structure(document)
     assert recompute_overall_verdict(document, loaded.data) is Verdict.PASS
+    assert hw_gate_main([
+        "validate",
+        "--evidence", str(REVIEWED_PASS_FIXTURE),
+        "--baseline", str(PRODUCTION_BASELINE),
+    ]) == 0
 
 
 def test_baseline_sha256_is_sha256_of_exact_file_bytes(tmp_path: Path) -> None:

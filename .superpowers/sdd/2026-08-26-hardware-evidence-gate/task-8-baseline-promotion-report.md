@@ -93,3 +93,44 @@ Checked the complete diff against the promotion brief:
 None. The one integration issue found by the required matrix was a test helper
 coupled to the prior intentionally incomplete fixture; it was corrected and
 the focused, matrix, and full suites pass.
+
+## Fix round 1/5: production-fixture binding and BPS prerequisites
+
+Addressed the two review findings without changing production runtime behavior,
+calibration data, thresholds, target identity, or mixed-combo expectations.
+
+### Changes
+
+- `tests/test_hw_gate_baseline.py` now calls the real `hw_gate.cli.main()`
+  `validate` command with the committed evidence and baseline paths, asserting
+  exit `0`. This specifically exercises the CLI binding check for both
+  `baseline.sha256` and `baseline.source_commit`, which is intentionally beyond
+  `validate_structure()` and `recompute_overall_verdict()`.
+- `tests/fixtures/hw_gate/evidence_pass.json` now retains all controlled BPS
+  encoder prerequisites: `ch0.qp_min=[0,0]`, `ch0.qp_max=[0,0]`, and
+  `ch0.quant=[-1,-1]`, each with identical observed values and `PASS` verdict.
+
+### TDD and validation evidence
+
+- Test correction pre-data run:
+  `rtk pytest tests/test_hw_gate_baseline.py::test_committed_production_baseline_recomputes_the_reviewed_evidence_as_pass -q`
+  -> 1 passed. This legitimately passed before the fixture-only addition
+  because the production CLI binding enforcement already existed; the review
+  finding was that the previous test did not invoke that boundary, not that the
+  runtime implementation was missing.
+- Focused amended coverage:
+  `rtk pytest tests/test_hw_gate_baseline.py tests/test_hw_gate_evidence.py tests/test_hw_gate_adapter_bps.py -q`
+  -> 64 passed.
+- Real command:
+  `rtk python3 -m hw_gate validate --evidence tests/fixtures/hw_gate/evidence_pass.json --baseline baselines/hw-baseline.json`
+  -> exit 0.
+- `rtk ruff check tests/test_hw_gate_baseline.py` -> no findings.
+- `rtk git diff --check` -> clean.
+
+### Fix-round self-review and concerns
+
+The test invokes the real CLI command handler, so a changed fixture digest or
+source commit now makes this test fail through the production binding gate. The
+fixture values match `profiles/cases/multi_1ch_0_720p.yaml` exactly. No runtime
+or policy file changed, and no hardware or external-state command was invoked.
+There are no remaining concerns.
