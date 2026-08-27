@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,16 +15,22 @@ def _config(claims: list[dict]) -> dict:
     return {"target_identity": claims}
 
 
-def _ssh_for_module(*, path: str = "/lib/modules/5.10/max9296.ko", sha256: str = SHA256) -> MagicMock:
+def _ssh_for_module(
+    *,
+    path: str = "/lib/modules/5.10/max9296.ko",
+    resolved_path: Optional[str] = None,
+    sha256: str = SHA256,
+) -> MagicMock:
     ssh = MagicMock()
+    canonical_path = resolved_path if resolved_path is not None else path
 
     def run(command: str):
         if command == "modinfo -n max9296":
             return path + "\n"
         if command.startswith("readlink -f -- "):
-            return path + "\n"
+            return canonical_path + "\n"
         if command.startswith("sha256sum -- "):
-            return sha256 + "  " + path + "\n"
+            return sha256 + "  " + canonical_path + "\n"
         if command == "modinfo max9296":
             return "filename: " + path + "\nversion: 2.5\n"
         return ""
@@ -72,6 +79,39 @@ def test_collect_and_validate_module_sha256_claim() -> None:
         "module": "max9296",
         "sha256": SHA256,
     }])) == (True, "OK")
+
+
+def test_collect_accepts_usr_merged_canonical_module_path() -> None:
+    """Dropping /usr after readlink would reject a legitimate usr-merged kernel module."""
+    from checks.target_identity import TargetIdentityCheck
+
+    requested = "/lib/modules/5.10/max9296.ko"
+    resolved = "/usr/lib/modules/5.10/max9296.ko"
+    config = _config([{
+        "id": "max9296.module_sha256",
+        "kind": "module_sha256",
+        "module": "max9296",
+        "sha256": SHA256,
+    }])
+    check = TargetIdentityCheck()
+
+    data = check.collect(
+        _ssh_for_module(path=requested, resolved_path=resolved),
+        config,
+    )
+
+    assert data == {
+        "claims": [{
+            "id": "max9296.module_sha256",
+            "kind": "module_sha256",
+            "module": "max9296",
+            "path": resolved,
+            "expected": SHA256,
+            "actual": SHA256,
+        }],
+        "errors": [],
+    }
+    assert check.validate(data, config) == (True, "OK")
 
 
 def test_collect_and_validate_module_version_claim() -> None:

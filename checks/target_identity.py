@@ -9,7 +9,12 @@ from ssh import SshConnectionError, SshTimeoutError
 
 
 _ALLOWED_KINDS = {"module_sha256", "module_version", "file_sha256"}
-_ALLOWED_PATH_PREFIXES = ("/boot/", "/lib/modules/", "/root/shared_v/")
+_ALLOWED_PATH_PREFIXES = (
+    "/boot/",
+    "/lib/modules/",
+    "/usr/lib/modules/",
+    "/root/shared_v/",
+)
 _MODULE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 

@@ -234,7 +234,7 @@ def checks_for_scope(scope: str) -> list[BaseCheck]:
 
 - [ ] Write a RED engine test proving adding hardware-evidence checks does not change normal snapshot results and that all new checks are discoverable in the hardware scope.
 - [ ] Implement the scoped registry and update `Engine.__init__`.
-- [ ] Write RED identity tests for a valid `max9296` module version/SHA, missing `modinfo`, malformed module names, paths outside `/boot`, `/lib/modules`, and `/root/shared_v`, SHA mismatch, and no claims.
+- [ ] Write RED identity tests for a valid `max9296` module version/SHA, missing `modinfo`, malformed module names, paths outside `/boot`, `/lib/modules`, canonical usr-merge `/usr/lib/modules`, and `/root/shared_v`, SHA mismatch, and no claims.
 - [ ] Implement `TargetIdentityCheck`: only `module_sha256`, `module_version`, and `file_sha256` descriptor kinds are accepted; validate module names with `^[A-Za-z0-9_-]+$`, validate resolved paths before `sha256sum`, and use only `SshClient.run()`.
 - [ ] Write RED BPS collector tests using mocked `ssh.run`: read boot ID and board epoch, discover a finalized `*-ch0.mp4` with mtime at or after the setpoint anchor, require size >=100000 bytes, parse exactly one finite positive integer from `ffprobe`, and reject stale, `.part`, missing, or malformed files.
 - [ ] Implement `BpsEvidenceCheck.collect()` as a bounded poll with injected clock/sleeper for tests; `validate()` checks evidence integrity only and owns no tolerance policy.
