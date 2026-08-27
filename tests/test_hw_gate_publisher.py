@@ -102,6 +102,7 @@ def publish(client: FakeGithubClient, artifact: bytes):
     return publish_evidence(
         client=client,
         repository=REPOSITORY,
+        github_repository=REPOSITORY,
         workflow_run_id=RUN_ID,
         workflow_run_attempt=RUN_ATTEMPT,
         evidence_bytes=artifact,
@@ -158,6 +159,26 @@ def test_repository_argument_must_be_the_github_environment_repository() -> None
     assert client.mutations == []
 
 
+def test_missing_github_repository_authority_fails_without_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A direct caller cannot nominate a repository when the trusted environment is absent."""
+    from hw_gate.publisher import PublisherError, publish_evidence
+
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    client = FakeGithubClient()
+
+    with pytest.raises(PublisherError, match="GITHUB_REPOSITORY.*required"):
+        publish_evidence(
+            client=client,
+            repository=REPOSITORY,
+            workflow_run_id=RUN_ID,
+            workflow_run_attempt=RUN_ATTEMPT,
+            evidence_bytes=evidence_bytes(),
+        )
+    assert client.mutations == []
+
+
 @pytest.mark.parametrize("permission", ["read", "triage", "none"])
 def test_manual_dispatch_requires_write_or_higher_actor_permission(permission: str) -> None:
     """A read-only actor must not turn manual dispatch into a PR write primitive."""
@@ -196,16 +217,40 @@ def test_manual_dispatch_accepts_default_branch_source_and_authorized_actor(perm
     assert client.mutations[0][0] == "POST"
 
 
-def test_workflow_run_pull_request_disagreement_fails_without_comment() -> None:
+@pytest.mark.parametrize(
+    "associations",
+    [
+        [],
+        {},
+        "",
+        [{"number": 116}],
+        [{"number": []}],
+        [{"number": True}],
+        [{}],
+    ],
+)
+def test_supplied_workflow_run_pull_requests_must_be_well_typed_and_contain_destination(
+    associations: object,
+) -> None:
     """Associated PR metadata must not disagree with the strict trusted run name."""
     from hw_gate.publisher import PublisherError
 
     client = FakeGithubClient()
-    client.run["pull_requests"] = [{"number": 116}]
+    client.run["pull_requests"] = associations
 
     with pytest.raises(PublisherError, match="pull_requests"):
         publish(client, evidence_bytes())
     assert client.mutations == []
+
+
+def test_absent_workflow_run_pull_requests_is_allowed() -> None:
+    """GitHub omitting optional association metadata must not block the strict run-name binding."""
+    client = FakeGithubClient()
+    del client.run["pull_requests"]
+
+    result = publish(client, evidence_bytes())
+
+    assert result.verdict == "PASS"
 
 
 def test_pull_request_target_requires_same_repository_head() -> None:
@@ -321,6 +366,32 @@ def test_producer_publisher_verdict_disagreement_publishes_error() -> None:
 
     assert result.verdict == "ERROR"
     assert "trusted recomputation" in mutation_body(client)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rule", {"kind": "exact", "reference": 1020657}),
+        ("delta", {"absolute": 123, "percent": 123}),
+        ("verdict", "FAIL"),
+    ],
+)
+def test_metric_canonical_fields_must_match_trusted_baseline_evaluation(
+    field: str,
+    value: object,
+) -> None:
+    """Artifact-controlled metric presentation must not survive trusted overall recomputation."""
+    client = FakeGithubClient()
+    document = json.loads(evidence_bytes())
+    metric = document["gates"][0]["metrics"][0]
+    metric[field] = value
+
+    result = publish(client, json.dumps(document).encode("utf-8"))
+
+    assert result.verdict == "ERROR"
+    body = mutation_body(client)
+    assert "metric bps.ch0.1024.baseline {0}".format(field) in body
+    assert "trusted baseline evaluation" in body
 
 
 def test_malformed_artifact_with_trusted_destination_publishes_bounded_error() -> None:

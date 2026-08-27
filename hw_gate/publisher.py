@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from .baseline import validate_baseline
 from .evidence import recompute_overall_verdict, validate_structure
 from .render import render_markdown
-from .rules import EvidenceError
+from .rules import EvidenceError, evaluate_rule
 
 
 EXPECTED_WORKFLOW = "Hardware Evidence Measurement"
@@ -201,11 +201,18 @@ def _trusted_destination(
     if not isinstance(source_sha, str) or _SHA_RE.fullmatch(source_sha) is None:
         raise PublisherError("trusted workflow source SHA is malformed")
 
-    associated = run.get("pull_requests")
-    if associated:
-        if not isinstance(associated, list) or pr_number not in {
-            item.get("number") for item in associated if isinstance(item, dict)
-        }:
+    if event == "pull_request_target" and "pull_requests" in run:
+        associated = run["pull_requests"]
+        if not isinstance(associated, list):
+            raise PublisherError("workflow_run.pull_requests must be a list")
+        associated_numbers = []
+        for item in associated:
+            if not isinstance(item, dict):
+                raise PublisherError("workflow_run.pull_requests entries must be objects")
+            associated_numbers.append(_positive_integer(
+                item.get("number"), "workflow_run.pull_requests PR number",
+            ))
+        if pr_number not in associated_numbers:
             raise PublisherError("workflow_run.pull_requests disagrees with trusted run name")
 
     if event == "workflow_dispatch":
@@ -321,6 +328,27 @@ def _validate_internal_binding(
     return pr_head_sha
 
 
+def _validate_metric_presentations(document: dict, baseline: dict) -> None:
+    baseline_gates = baseline["gates"]
+    for gate in document["gates"]:
+        baseline_gate = baseline_gates.get(gate["id"])
+        if not isinstance(baseline_gate, dict):
+            continue
+        baseline_metrics = baseline_gate["metrics"]
+        for metric in gate["metrics"]:
+            baseline_metric = baseline_metrics.get(metric["id"])
+            if not isinstance(baseline_metric, dict):
+                continue
+            expected = evaluate_rule(metric["value"], metric["unit"], baseline_metric)
+            for field in ("baseline_value", "rule", "delta", "verdict"):
+                if metric.get(field) != expected[field]:
+                    raise EvidenceError(
+                        "metric {0} {1} disagrees with trusted baseline evaluation".format(
+                            metric["id"], field,
+                        )
+                    )
+
+
 def _error_comment(run: dict, current_head: str, message: str) -> str:
     bounded = message.replace("\r", " ").replace("\n", " ")[:512]
     run_url = "https://github.com/{0}/actions/runs/{1}/attempts/{2}".format(
@@ -383,7 +411,9 @@ def publish_evidence(
     """Validate one triggering run and upsert its evidence on the API-bound PR."""
     environment_repository = github_repository
     if environment_repository is None:
-        environment_repository = os.environ.get("GITHUB_REPOSITORY", repository)
+        environment_repository = os.environ.get("GITHUB_REPOSITORY")
+    if not environment_repository:
+        raise PublisherError("GITHUB_REPOSITORY is required")
     if repository != environment_repository:
         raise PublisherError("repository must equal GITHUB_REPOSITORY")
     if _REPOSITORY_RE.fullmatch(repository) is None:
@@ -408,6 +438,7 @@ def publish_evidence(
             workflow_run_attempt,
         )
         validate_structure(document)
+        _validate_metric_presentations(document, baseline)
         recomputed = recompute_overall_verdict(document, baseline).value
         if document.get("verdict") != recomputed or document.get("overall_verdict") != recomputed:
             raise EvidenceError("producer verdict disagrees with trusted recomputation")
