@@ -27,6 +27,7 @@ PIM 보드 점유, 개발 워크플로 도구를 각각의 실행 환경에 맞�
 |------|-------------|
 | `equivalence_check.py` | run_*.py 결과 vs plan-driven 결과 동등성 비교 (binary). MATCHED / MISMATCHED / LEFT_ONLY / RIGHT_ONLY 카테고리 분류. `--mapping` JSON 옵션으로 도메인 case_name 매핑 지원. |
 | `generate_comprehensive_mapping.py` | run_comprehensive_verify의 96 scenario를 8 mandatory multi case로 자동 매핑 JSON 생성. `profiles/plans/comprehensive_mapping.json` 출력. |
+| `publish_hw_evidence.py` | GitHub-hosted publisher thin entry point. Triggering workflow run/attempt와 downloaded evidence를 `hw_gate.publisher`에 전달하며, self-hosted measurement job에서는 실행하지 않는다. |
 
 ### PIM 보드 점유 도구 (Shell/Python)
 
@@ -105,6 +106,28 @@ SIGHUP을 받아도 같은 SIGTERM→teardown→KILL→reap 경로를 마친 뒤
 보드가 busy이면 exit 4로 즉시 실패한다. `board wait`, 재시도 루프, `|| true`, 직접
 `jhw-control board acquire`는 사용하지 않는다. lease는 advisory이며 #108은 persistent
 web dashboard, Docker runner, non-plan CLI 모드를 소급 적용하지 않는다.
+
+### Hardware evidence gate
+
+`python3 -m hw_gate measure`와 `calibrate`는 hardware runner다. 반드시 one-shot
+`scripts/with_pim_board.sh --for 3h --purpose "..." -- ...` lease로 실행하며, BUSY
+exit 4는 그대로 caller에 반환한다. `prepare`, `finalize`, `validate`는 local
+non-hardware helpers다. HEAD-bound envelope/result paths are
+`hw-results/<40-char-pr-head>.candidate.json`, `hw-results/<40-char-pr-head>.json`,
+`hw-results/<40-char-pr-head>.md`, and `hw-results/raw/<40-char-pr-head>/`; never
+reintroduce a shared `envelope.json` path.
+
+The BPS and mixed-combo adapters own strict transaction restoration, including
+the target-persistent `/root/shared_v/pim-check-recovery/` journal. A dirty
+journal is restored and verified before the next measurement; recovery failure
+is ERROR. The predeployed phase does not copy, activate, or roll back PR
+artifacts.
+
+`publish_hw_evidence.py` belongs only to the GitHub-hosted publisher workflow,
+which owns `pull-requests: write` and the `<!-- pim-check:hardware-evidence -->`
+marker. The self-hosted measurement workflow has read-only permissions and no
+repository/board secret; it uploads evidence but does not comment. Never move
+publisher credentials or PR-write behavior into a board-facing script.
 
 ### Plan 도구 사용 패턴
 

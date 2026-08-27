@@ -406,7 +406,7 @@ reports:
 | `run_smart_verify.py` (668줄) | (v1.2 예정) | 9 combos × A/B 패턴은 case schema 확장 필요. 현 multi case가 부분 coverage. |
 | `run_mixed_combo_verify.py` (315줄) | `--plan mixed_combo` | 부분 마이그레이션 — full mixed-combo는 case schema 확장으로 v1.2. |
 | `run_channel_verify.py` (160줄) | `--plan channel_verify` | 32개 1:1 매핑 (vflip + ae 토글). |
-| `run_bps_quick.py` (173줄) | `--plan bps_quick` | killcam 방식 → reboot 방식 (시간 trade-off, 동일 검증). |
+| `run_bps_quick.py` (호환 entry point) | `--plan bps_quick` | `hw_gate`의 결정적 BPS transaction을 사용한다. 각 setpoint는 적용 → 재부팅 → 측정 → 정확한 snapshot 복원 → 재부팅·hash 검증을 거치며, 결과는 committed baseline으로 중앙 평가된다. |
 | `run_failed_retry.py` (139줄) | `--retry-failed` (v1.1 예정) | retry는 plan보다 CLI 플래그로 표현이 자연스러움. |
 
 **마이그레이션 검증 워크플로우**:
@@ -431,6 +431,113 @@ python3 scripts/equivalence_check.py \
 ```
 
 **기존 러너 코드는 당분간 남아있음** (v1 출시 시점). v1.1에서 동등성 확정 후 deprecation 결정. CI(`hw-verify.yml`, `hw-verify-comprehensive.yml`)는 기존 러너 그대로 사용 — `hw-verify-plan.yml`이 plan-driven 대안 추가.
+
+## Hardware Evidence Gate
+
+`hw_gate`는 이미 배포된 PIM 보드에서 BPS와 mixed-combo를 측정해, review된
+`baselines/hw-baseline.json`과 비교하는 별도 하드웨어 증거 게이트다. 프로세스의
+exit 0은 진단 정보일 뿐 PASS 증거가 아니다. 모든 identity, precondition,
+numeric metric, baseline coverage, 그리고 복원 검증이 통과해야 PASS가 된다.
+
+### Trigger와 trust boundary
+
+`.github/workflows/hw-evidence-measure.yml`은 다음 경우에만 동작한다.
+
+- 같은 저장소 PR에 `needs-hw-verify` 라벨을 붙이거나 해당 PR이 synchronize될 때
+  (`pull_request_target`)
+- 기본 브랜치에서 `workflow_dispatch`로 PR 번호를 명시할 때
+
+측정 job은 self-hosted PIM runner에서 trusted default-branch workflow/code를
+사용하며 PR HEAD는 evidence binding으로만 조회한다. PR HEAD를 checkout하거나
+실행하지 않는다. 이 job은 `contents: read`/`pull-requests: read`만 가지며 PR
+write 권한, repository secret, board secret을 받지 않는다. 측정 산출물을
+게시하는 권한은 GitHub-hosted
+`.github/workflows/hw-evidence-publish.yml`에만 있으며, 이 publisher가
+workflow run·attempt·same-repository PR·현재 HEAD·baseline·재계산 verdict를
+검증한 뒤에만 comment를 갱신한다.
+
+Comment의 소유 marker는 `<!-- pim-check:hardware-evidence -->`이다. publisher는
+`github-actions[bot]`이 소유한 marker comment만 upsert하므로 사람이 쓴 comment를
+대체하지 않는다. 측정 뒤 PR HEAD가 바뀌면 같은 marker block을 `STALE`로
+교체한다.
+
+### 운영 계약
+
+보드 mutation은 한 번의 fail-fast lease 안에서만 실행한다.
+
+```bash
+scripts/with_pim_board.sh --for 3h --purpose "manual hardware evidence" -- \
+  python3 -m hw_gate measure \
+    --envelope "hw-results/<full-pr-head-sha>.candidate.json" \
+    --target-host 192.168.214.4 \
+    --output-dir hw-results
+```
+
+`measure` 및 `calibrate`는 hardware subcommand이므로 반드시 wrapper를 사용한다.
+`board wait`, retry loop, `jhw-control board acquire`, `|| true`는 금지된다. 보드가
+이미 점유되어 lease가 시작되지 않으면 exit 4와 `BUSY`가 그대로 보이는 실패이며,
+재시도하지 않는다. `prepare`, `finalize`, `validate`는 target을 건드리지 않는
+로컬 단계다.
+
+`prepare`는 lease 전에 정확한 PR HEAD와 baseline bytes에 bind된 private envelope
+`hw-results/<full-pr-head-sha>.candidate.json`을 쓴다. Ruling 7에 따라 이
+candidate 경로와 최종 결과는 full 40-character PR HEAD를 파일명으로 사용한다;
+이전의 공유 `envelope.json` 경로를 사용하지 않는다. terminal evidence는 항상
+다음 경로에 남는다.
+
+- `hw-results/<full-pr-head-sha>.json` — canonical evidence
+- `hw-results/<full-pr-head-sha>.md` — rendered report
+- `hw-results/raw/<full-pr-head-sha>/` — bounded raw diagnostics/output
+
+`finalize`는 child가 시작 전 BUSY가 되었거나 부분 실패해도 HEAD-bound terminal
+artifact를 만든다. runtime `hw-results/`는 ignored이며, baseline만 저장소에
+commit한다.
+
+| Verdict | 의미 |
+|---|---|
+| `PASS` | identity, precondition, baseline-backed metrics, restoration이 모두 검증됨 |
+| `FAIL` | 완전하고 유효한 측정값이 committed rule을 위반함 |
+| `ERROR` | evidence/baseline/identity/infrastructure 또는 복원 검증이 불완전·실패함 |
+| `BUSY` | lease가 child 시작 전에 exit 4로 거절됨; PASS가 될 수 없음 |
+| `STALE` | publisher 시점의 PR HEAD가 측정된 HEAD와 다름 |
+
+BPS는 `multi_1ch_0_720p` fixture에서 1024/2048/4096/8192 kbps를 각각 독립적으로
+실행한다. QP min/max `[0, 0]`, quant `[-1, -1]`, profile `[0, 0]` 및 fixture의
+명시 상태를 read-back한 뒤 재부팅해 측정하고, 각 cycle 후 정확한 edgeconf
+snapshot을 복원·재부팅·hash 검증한다. mixed-combo도 A–D campaign 전체를 strict
+snapshot/restore transaction으로 실행한다. SIGKILL처럼 cleanup을 실행할 수 없는
+종료를 대비해 target의 `/root/shared_v/pim-check-recovery/<run-id>/`에 mode-600
+원본과 manifest journal을 남긴다. 다음 lease holder는 probe나 mutation 전에
+dirty journal을 복원·재부팅·hash 검증해야 하며, recovery가 실패하면 ERROR로
+중단한다.
+
+### Baseline review와 phase boundary
+
+`baselines/hw-baseline.json`은 자동 promote 대상이 아니다. BPS baseline 변경은
+`python3 -m hw_gate calibrate`로 만든 별도 review-only candidate를 사람이 검토하고
+commit하는 절차다. candidate는 정확히 세 개의 독립적이고 완전히 복원된 run,
+setpoint별 target 10% 이내, median 대비 최대 5% 편차, source run ID와 samples를
+요구한다. 후보 output은 production baseline 경로에 쓸 수 없다. 누락 baseline은
+PASS가 아니라 ERROR다.
+
+현재 scope는 **predeployed measurement** (`deployment.verified=false`)이다.
+target identity와 측정이 현재 배포된 보드에 맞는지만 증명하며 PR의 DTB나 kernel
+module이 배포되었다고 주장하지 않는다. artifact deployment, activation, rollback은
+phase two의 별도 reviewed design 전까지 제외된다.
+
+새 `pull_request_target` workflow는 merge 전 PR에서는 trusted default-branch code로
+실행되지 않는다. 구현 PR의 bootstrap은 mocked workflow-contract tests와 수동 leased
+phase-one measurement만 사용하며, 이를 automated trusted PR gate라고 표시하지
+않는다. merge 뒤 same-repository follow-up PR에서 label-triggered measurement,
+publisher marker upsert, stale-HEAD 처리를 검증한다.
+
+로컬 evidence schema/baseline 검증은 보드 없이 실행할 수 있다.
+
+```bash
+python3 -m hw_gate validate \
+  --evidence tests/fixtures/hw_gate/evidence_pass.json \
+  --baseline tests/fixtures/hw_gate/baseline.json
+```
 
 ## 라이선스
 
