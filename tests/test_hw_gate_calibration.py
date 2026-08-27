@@ -293,26 +293,67 @@ def test_calibrate_cli_requires_three_repetitions_and_uses_raw_collection(
     assert cli.main([
         "calibrate",
         "--template", str(TEMPLATE_PATH),
-        "--target-host", "192.168.0.5",
+        "--target-host", "192.168.214.4",
         "--repetitions", "3",
         "--output", str(output),
     ]) == 0
     assert events == [
-        "ssh:192.168.0.5", "recover",
+        "ssh:192.168.214.4", "recover",
         "identity", "collect", "identity", "collect", "identity", "collect", "close",
     ]
-    assert json.loads(output.read_text(encoding="utf-8"))["eligible"] is True
+    candidate = json.loads(output.read_text(encoding="utf-8"))
+    assert candidate["eligible"] is True
+    assert candidate["baseline"]["comparability"]["target_host"] == "192.168.214.4"
 
     for invalid in ("2", "4"):
         with pytest.raises(SystemExit) as exc_info:
             cli.main([
                 "calibrate",
                 "--template", str(TEMPLATE_PATH),
-                "--target-host", "192.168.0.5",
+                "--target-host", "192.168.214.4",
                 "--repetitions", invalid,
                 "--output", str(tmp_path / ("candidate-" + invalid + ".json")),
             ])
         assert exc_info.value.code == 2
+
+
+@pytest.mark.parametrize("host", ["192.168.0.5", "192.168.214.5"])
+def test_calibrate_rejects_legacy_wireless_and_other_targets(host: str) -> None:
+    """Accepting a non-wired host would make candidate provenance incomparable."""
+    from hw_gate import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.build_parser().parse_args([
+            "calibrate",
+            "--template", str(TEMPLATE_PATH),
+            "--target-host", host,
+            "--repetitions", "3",
+            "--output", "candidate.json",
+        ])
+
+    assert exc_info.value.code == 2
+
+
+@pytest.mark.parametrize("template_host", ["192.168.0.5", "192.168.214.5"])
+def test_calibrate_rejects_a_template_bound_to_another_target(
+    tmp_path: Path,
+    template_host: str,
+) -> None:
+    """Ignoring template host comparability could calibrate a different control path."""
+    from hw_gate import cli
+
+    template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+    template["comparability"]["target_host"] = template_host
+    template_path = tmp_path / "other-host-template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+
+    assert cli.main([
+        "calibrate",
+        "--template", str(template_path),
+        "--target-host", "192.168.214.4",
+        "--repetitions", "3",
+        "--output", str(tmp_path / "candidate.json"),
+    ]) == 2
 
 
 def test_calibrate_cli_maps_ssh_close_failure_to_error_exit(
@@ -326,7 +367,7 @@ def test_calibrate_cli_maps_ssh_close_failure_to_error_exit(
 
     class FailingCloseSsh:
         def __init__(self, host: str) -> None:
-            assert host == "192.168.0.5"
+            assert host == "192.168.214.4"
 
         def close(self) -> None:
             raise RuntimeError("close transport failed")
@@ -354,7 +395,7 @@ def test_calibrate_cli_maps_ssh_close_failure_to_error_exit(
     result = cli.main([
         "calibrate",
         "--template", str(TEMPLATE_PATH),
-        "--target-host", "192.168.0.5",
+        "--target-host", "192.168.214.4",
         "--repetitions", "3",
         "--output", str(output),
     ])
@@ -372,7 +413,7 @@ def test_calibrate_cli_retains_ineligible_candidate_on_identity_error(
 
     class FakeSsh:
         def __init__(self, host: str) -> None:
-            assert host == "192.168.0.5"
+            assert host == "192.168.214.4"
 
         def close(self) -> None:
             pass
@@ -397,7 +438,7 @@ def test_calibrate_cli_retains_ineligible_candidate_on_identity_error(
     result = cli.main([
         "calibrate",
         "--template", str(TEMPLATE_PATH),
-        "--target-host", "192.168.0.5",
+        "--target-host", "192.168.214.4",
         "--repetitions", "3",
         "--output", str(output),
     ])

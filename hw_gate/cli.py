@@ -38,7 +38,7 @@ FAIL_EXIT = 1
 ERROR_EXIT = 2
 BUSY_EXIT = 4
 MAX_EVIDENCE_BYTES = 1_048_576
-TARGET_HOST = "192.168.0.5"
+TARGET_HOST = "192.168.214.4"
 ADAPTER_ORDER = ("bps_quick", "mixed_combo")
 ADAPTER_FACTORIES: Dict[str, Callable[[], object]] = {
     "bps_quick": BpsAdapter,

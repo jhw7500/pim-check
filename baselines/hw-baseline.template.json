@@ -2,7 +2,7 @@
   "schema_version": 1,
   "baseline_version": "2026-08-26.1",
   "source_commit": "0000000000000000000000000000000000000000",
-  "comparability": {"board_id": "pim", "target_host": "192.168.0.5", "bps_fixture": "multi_1ch_0_720p", "encoder": "h265"},
+  "comparability": {"board_id": "pim", "target_host": "192.168.214.4", "bps_fixture": "multi_1ch_0_720p", "encoder": "h265"},
   "target_identity": [
     {"id": "max9296.module_sha256", "kind": "module_sha256", "module": "max9296", "calibration_required": true}
   ],

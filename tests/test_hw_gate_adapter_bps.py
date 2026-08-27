@@ -404,3 +404,41 @@ def test_legacy_entry_point_rejects_pass_when_restoration_is_not_verified(
 
     assert run_bps_quick.main() == 1
     assert json.loads(result_path.read_text(encoding="utf-8"))["verdict"] == "PASS"
+
+
+def test_legacy_local_bps_defaults_to_the_fixed_wired_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Falling back through the legacy profile must not silently select WiFi."""
+    import hw_gate.adapters.bps as bps_module
+
+    opened: list[str] = []
+    closed: list[bool] = []
+
+    class BoundarySsh:
+        def __init__(self, host: str, **_credentials: object) -> None:
+            opened.append(host)
+
+        def close(self) -> None:
+            closed.append(True)
+
+    class StubAdapter:
+        def run(self, _context: AdapterContext) -> dict:
+            return {"verdict": "ERROR", "restoration": {"verdict": "PASS"}}
+
+    loaded = type("Loaded", (), {"data": {"gates": {"bps_quick": {}}}})()
+    monkeypatch.delenv("TARGET_HOST", raising=False)
+    monkeypatch.setattr(bps_module, "load_baseline", lambda _path: loaded)
+    monkeypatch.setattr(
+        bps_module,
+        "load_profile",
+        lambda *_args: {"target": {"host": "192.168.0.5", "user": "root", "password": "root"}},
+    )
+    monkeypatch.setattr(bps_module, "SshClient", BoundarySsh)
+    monkeypatch.setattr(bps_module, "BpsAdapter", StubAdapter)
+    monkeypatch.setattr(bps_module, "evaluate_bps_gate", lambda *_args: Verdict.ERROR)
+
+    bps_module.run_local_bps(tmp_path / "result.json")
+
+    assert opened == ["192.168.214.4"]
+    assert closed == [True]

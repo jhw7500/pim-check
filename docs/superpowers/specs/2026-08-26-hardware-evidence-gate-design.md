@@ -215,7 +215,7 @@ The phase-one JSON has schema version 1 and the following logical structure:
   },
   "board": {
     "id": "pim",
-    "target_host": "192.168.0.5",
+    "target_host": "192.168.214.4",
     "lease_session": "<session>",
     "identity": []
   },

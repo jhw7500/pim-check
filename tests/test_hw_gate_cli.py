@@ -112,9 +112,9 @@ def test_cli_requires_every_prepare_field_and_rejects_unknown_arguments(tmp_path
     assert unknown_error.value.code == 2
 
 
-@pytest.mark.parametrize("host", ["localhost", "192.168.0.6", "192.168.0.5 "])
+@pytest.mark.parametrize("host", ["192.168.0.5", "localhost", "192.168.214.5", "192.168.214.4 "])
 def test_measure_accepts_only_the_fixed_target_host(tmp_path: Path, host: str) -> None:
-    """A caller must not redirect trusted measurement to another SSH target."""
+    """Accepting legacy WiFi, arbitrary, or padded hosts would redirect trusted measurement."""
     from hw_gate.cli import main
 
     envelope, output_dir = _prepare(tmp_path)
@@ -134,7 +134,7 @@ def test_measure_rejects_unknown_duplicate_or_empty_gate_selection(tmp_path: Pat
     envelope, output_dir = _prepare(tmp_path)
     with pytest.raises(SystemExit) as exc_info:
         main([
-            "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+            "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
             "--output-dir", str(output_dir), "--gates", gates,
         ])
     assert exc_info.value.code == 2
@@ -265,7 +265,7 @@ def test_measure_orders_recovery_identity_adapters_diagnostics_and_close(
     states = _patch_measure_runtime(monkeypatch, events)
 
     assert main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir), "--gates", "mixed_combo,bps_quick",
     ]) == 2
 
@@ -285,6 +285,54 @@ def test_measure_orders_recovery_identity_adapters_diagnostics_and_close(
     assert document["deployment"] == {"mode": "predeployed", "verified": False, "artifacts": []}
 
 
+def test_measure_accepts_and_records_the_fixed_wired_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keeping the old fixed-host parser would reject the approved wired control endpoint."""
+    from hw_gate.cli import main
+
+    baseline = json.loads((FIXTURES / "baseline.json").read_text(encoding="utf-8"))
+    baseline["comparability"]["target_host"] = "192.168.214.4"
+    baseline_path = tmp_path / "wired-baseline.json"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    output_dir = tmp_path / "hw-results"
+    assert main(_prepare_args(tmp_path, baseline=baseline_path)) == 0
+    envelope = output_dir / (FULL_SHA + ".candidate.json")
+    events: list[str] = []
+    _patch_measure_runtime(monkeypatch, events)
+
+    assert main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
+        "--output-dir", str(output_dir),
+    ]) == 2
+
+    document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
+    assert document["board"]["target_host"] == "192.168.214.4"
+
+
+@pytest.mark.parametrize("baseline_host", ["192.168.0.5", "192.168.214.5"])
+def test_measure_rejects_a_baseline_bound_to_another_target(
+    tmp_path: Path,
+    baseline_host: str,
+) -> None:
+    """Ignoring baseline host comparability could authorize evidence from another control path."""
+    from hw_gate.cli import main
+
+    baseline = json.loads((FIXTURES / "baseline.json").read_text(encoding="utf-8"))
+    baseline["comparability"]["target_host"] = baseline_host
+    baseline_path = tmp_path / "other-host-baseline.json"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    output_dir = tmp_path / "hw-results"
+    assert main(_prepare_args(tmp_path, baseline=baseline_path)) == 0
+    envelope = output_dir / (FULL_SHA + ".candidate.json")
+
+    assert main([
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
+        "--output-dir", str(output_dir),
+    ]) == 2
+
+
 def test_recovery_error_checkpoints_numeric_error_and_stops_before_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -297,7 +345,7 @@ def test_recovery_error_checkpoints_numeric_error_and_stops_before_identity(
     _patch_measure_runtime(monkeypatch, events, recovery_error=TransactionError("dirty journal"))
 
     assert main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
 
@@ -325,7 +373,7 @@ def test_ssh_open_failure_finishes_numeric_error_checkpoint(tmp_path: Path, monk
     )
 
     assert main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     document = json.loads((output_dir / (FULL_SHA + ".json")).read_text(encoding="utf-8"))
@@ -344,7 +392,7 @@ def test_identity_error_checkpoints_numeric_error_and_stops_before_adapters(
     _patch_measure_runtime(monkeypatch, events, identity_valid=False)
 
     assert main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
 
@@ -387,7 +435,7 @@ def test_invalid_adapter_evidence_becomes_one_numeric_error_and_stops_mutation(
     })
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert "adapter:mixed_combo" not in events
@@ -415,7 +463,7 @@ def test_baseline_digest_and_source_binding_fail_before_ssh(
     monkeypatch.setattr("hw_gate.cli.SshClient", lambda host: opened.append(host))
 
     assert main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert opened == []
@@ -432,7 +480,7 @@ def test_internal_termination_becomes_error_after_diagnostics_and_ssh_close(
     _patch_measure_runtime(monkeypatch, events, terminate_adapter="bps_quick")
 
     assert main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert events.index("transaction-restore") < events.index("diagnostics")
@@ -459,7 +507,7 @@ def test_termination_during_diagnostics_still_closes_and_checkpoints_signal_erro
     monkeypatch.setattr(cli, "collect_diagnostics", interrupted_diagnostics)
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert events[-1] == "ssh-close"
@@ -492,7 +540,7 @@ def test_termination_during_ssh_close_retries_close_and_checkpoints_signal_error
     monkeypatch.setattr(cli, "SshClient", lambda host: CloseInterruptedSsh(events))
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert events[-2:] == ["ssh-close:1", "ssh-close:2"]
@@ -522,7 +570,7 @@ def test_termination_during_terminal_checkpoint_retries_canonical_signal_checkpo
     monkeypatch.setattr(cli, "atomic_write_json", interrupt_complete)
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert interrupted is True
@@ -553,7 +601,7 @@ def test_termination_during_adapter_checkpoint_stops_before_next_adapter(
     monkeypatch.setattr(cli, "atomic_write_json", interrupt_first_adapter)
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert interrupted is True
@@ -584,7 +632,7 @@ def test_termination_during_terminal_timestamp_retries_complete_signal_checkpoin
     monkeypatch.setattr(cli, "_utc_now", interrupt_after_close)
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     assert interrupted is True
@@ -816,7 +864,7 @@ def test_oversized_diagnostic_collector_exception_still_finishes_bounded_evidenc
     monkeypatch.setattr(cli, "collect_diagnostics", exploding_diagnostics)
 
     assert cli.main([
-        "measure", "--envelope", str(envelope), "--target-host", "192.168.0.5",
+        "measure", "--envelope", str(envelope), "--target-host", "192.168.214.4",
         "--output-dir", str(output_dir),
     ]) == 2
     result = output_dir / (FULL_SHA + ".json")
@@ -853,7 +901,7 @@ def test_markdown_is_deterministic_complete_and_escapes_measured_controls() -> N
             "run_url": "https://github.com/jhw7500/pim-check/actions/runs/123/attempts/2",
         },
         "baseline": {"sha256": "b" * 64, "source_commit": SOURCE_SHA, "path": "baselines/hw-baseline.json"},
-        "board": {"id": "pim", "target_host": "192.168.0.5", "identity": [{"id": "<driver>|*x*", "actual": "a[b]`c`"}]},
+        "board": {"id": "pim", "target_host": "192.168.214.4", "identity": [{"id": "<driver>|*x*", "actual": "a[b]`c`"}]},
         "diagnostics": [{"id": "dmesg", "output": "<bad>|**bold**"}],
     })
     gate = document["gates"][0]

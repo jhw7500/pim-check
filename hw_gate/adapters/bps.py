@@ -342,7 +342,7 @@ def run_local_bps(output_path: Path) -> dict:
     loaded = load_baseline(baseline_path)
     profile = load_profile("profiles", _FIXTURE_NAME)
     target = profile.get("target", {})
-    host = os.environ.get("TARGET_HOST", target.get("host", "192.168.0.5"))
+    host = os.environ.get("TARGET_HOST", "192.168.214.4")
     ssh = SshClient(
         host,
         user=target.get("user", "root"),

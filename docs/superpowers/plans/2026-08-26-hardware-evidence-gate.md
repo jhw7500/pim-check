@@ -179,7 +179,7 @@ Each BPS observation is asserted twice with distinct stable IDs: `.target` uses 
   "source_commit": "0000000000000000000000000000000000000000",
   "comparability": {
     "board_id": "pim",
-    "target_host": "192.168.0.5",
+    "target_host": "192.168.214.4",
     "bps_fixture": "multi_1ch_0_720p",
     "encoder": "h265"
   },
@@ -394,7 +394,7 @@ Exit codes are fixed: 0 PASS, 1 FAIL, 2 ERROR, 4 BUSY. STALE is a publisher pres
 rtk scripts/with_pim_board.sh --for 3h --purpose "pim-check#115 baseline calibration" -- \
   python3 -m hw_gate calibrate \
     --template baselines/hw-baseline.template.json \
-    --target-host 192.168.0.5 \
+    --target-host 192.168.214.4 \
     --repetitions 3 \
     --output hw-results/baseline-candidate.json
 ```
@@ -516,7 +516,7 @@ rtk python3 -m hw_gate prepare \
 rtk scripts/with_pim_board.sh --for 3h --purpose "pim-check#115 controlled acceptance" -- \
   python3 -m hw_gate measure \
     --envelope hw-results/acceptance/envelope.json \
-    --target-host 192.168.0.5 \
+    --target-host 192.168.214.4 \
     --output-dir hw-results/acceptance
 ```
 
@@ -529,7 +529,7 @@ rtk timeout --signal=TERM --kill-after=35m 8m \
   scripts/with_pim_board.sh --for 45m --purpose "pim-check#115 termination acceptance" -- \
   python3 -m hw_gate measure \
     --envelope hw-results/acceptance/envelope.json \
-    --target-host 192.168.0.5 \
+    --target-host 192.168.214.4 \
     --output-dir hw-results/termination \
     --gates bps_quick
 ```
@@ -541,7 +541,7 @@ Expected: timeout/nonzero result, ERROR evidence, released lease, restored hash,
 rtk scripts/with_pim_board.sh --for 90m --purpose "pim-check#115 recovery preflight acceptance" -- \
   python3 -m hw_gate measure \
     --envelope hw-results/acceptance/envelope.json \
-    --target-host 192.168.0.5 \
+    --target-host 192.168.214.4 \
     --output-dir hw-results/recovery-preflight \
     --gates bps_quick
 ```
@@ -564,7 +564,7 @@ rtk python3 -m hw_gate prepare \
 rtk scripts/with_pim_board.sh --for 30m --purpose "pim-check#115 wrong identity acceptance" -- \
   python3 -m hw_gate measure \
     --envelope hw-results/wrong-identity/envelope.json \
-    --target-host 192.168.0.5 \
+    --target-host 192.168.214.4 \
     --output-dir hw-results/wrong-identity \
     --gates bps_quick
 ```
@@ -588,7 +588,7 @@ rtk python3 -m hw_gate prepare \
 rtk scripts/with_pim_board.sh --for 90m --purpose "pim-check#115 tightened BPS acceptance" -- \
   python3 -m hw_gate measure \
     --envelope hw-results/tight-bps/envelope.json \
-    --target-host 192.168.0.5 \
+    --target-host 192.168.214.4 \
     --output-dir hw-results/tight-bps \
     --gates bps_quick
 ```

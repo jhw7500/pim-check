@@ -158,6 +158,16 @@ def test_template_calibration_marker_is_not_a_production_baseline() -> None:
         validate_baseline(template)
 
 
+def test_template_and_synthetic_baseline_bind_the_fixed_wired_target() -> None:
+    """Leaving either source contract on legacy WiFi would make wired runs incomparable."""
+    template = json.loads(
+        (Path(__file__).parents[1] / "baselines" / "hw-baseline.template.json").read_text(encoding="utf-8")
+    )
+
+    assert template["comparability"]["target_host"] == "192.168.214.4"
+    assert load_fixture()["comparability"]["target_host"] == "192.168.214.4"
+
+
 def test_gate_coverage_requires_exact_metric_set_and_units() -> None:
     """Missing, new, or differently-unit measurements must fail before rule evaluation."""
     baseline = load_fixture()

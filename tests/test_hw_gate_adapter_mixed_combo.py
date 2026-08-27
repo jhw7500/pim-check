@@ -288,3 +288,41 @@ def test_legacy_entry_point_requires_central_pass_and_verified_restoration(
 
     assert run_mixed_combo_verify.main() == 1
     assert json.loads(result_path.read_text(encoding="utf-8"))["verdict"] == "PASS"
+
+
+def test_legacy_local_mixed_combo_defaults_to_the_fixed_wired_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Falling back through the legacy profile must not silently select WiFi."""
+    import hw_gate.adapters.mixed_combo as mixed_module
+
+    opened: list[str] = []
+    closed: list[bool] = []
+
+    class BoundarySsh:
+        def __init__(self, host: str, **_credentials: object) -> None:
+            opened.append(host)
+
+        def close(self) -> None:
+            closed.append(True)
+
+    class StubAdapter:
+        def run(self, _context: AdapterContext) -> dict:
+            return {"verdict": "ERROR", "restoration": {"verdict": "PASS"}}
+
+    loaded = type("Loaded", (), {"data": {"gates": {"mixed_combo": {}}}})()
+    monkeypatch.delenv("TARGET_HOST", raising=False)
+    monkeypatch.setattr(mixed_module, "load_baseline", lambda _path: loaded)
+    monkeypatch.setattr(
+        mixed_module,
+        "load_profile",
+        lambda *_args: {"target": {"host": "192.168.0.5", "user": "root", "password": "root"}},
+    )
+    monkeypatch.setattr(mixed_module, "SshClient", BoundarySsh)
+    monkeypatch.setattr(mixed_module, "MixedComboAdapter", StubAdapter)
+    monkeypatch.setattr(mixed_module, "evaluate_mixed_combo_gate", lambda *_args: Verdict.ERROR)
+
+    mixed_module.run_local_mixed_combo(tmp_path / "result.json")
+
+    assert opened == ["192.168.214.4"]
+    assert closed == [True]
