@@ -1,8 +1,11 @@
 """Trust-boundary contracts for the split hardware-evidence workflows."""
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -225,3 +228,48 @@ def test_publisher_downloads_only_triggering_artifact_and_always_runs_trusted_co
         'python3 scripts/publish_hw_evidence.py --evidence "$EVIDENCE_PATH"'
         in _command(publish)
     )
+    assert (
+        '--workflow-run-id "$TRIGGERING_WORKFLOW_RUN_ID"'
+        in _command(publish)
+    )
+    assert (
+        '--workflow-run-attempt "$TRIGGERING_WORKFLOW_RUN_ATTEMPT"'
+        in _command(publish)
+    )
+
+
+@pytest.mark.parametrize("include_valid_peer", [False, True])
+def test_publisher_selector_feeds_oversized_artifact_as_malformed_cli_input(
+    tmp_path: Path,
+    include_valid_peer: bool,
+) -> None:
+    """An oversized download must reach destination validation as bounded input."""
+    from scripts.publish_hw_evidence import _read_evidence
+
+    workflow = _workflow("hw-evidence-publish.yml")
+    selector = _step(workflow["jobs"]["publish"], "Select downloaded evidence")
+    results = tmp_path / "hw-results"
+    results.mkdir()
+    oversized = results / (("a" * 40) + ".json")
+    oversized.write_bytes(b"x" * 1_048_577)
+    if include_valid_peer:
+        (results / (("b" * 40) + ".json")).write_bytes(b"{}")
+    github_env = tmp_path / "github-env"
+    environment = os.environ.copy()
+    environment["GITHUB_ENV"] = str(github_env)
+
+    selected = subprocess.run(
+        ["bash", "-c", selector["run"]],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert selected.returncode == 0, selected.stderr
+    assignment = github_env.read_text(encoding="utf-8").strip()
+    assert assignment == "EVIDENCE_PATH=.publisher-input/malformed.json"
+    selected_path = tmp_path / assignment.partition("=")[2]
+    assert _read_evidence(selected_path) == b"{}"
+    assert oversized.stat().st_size == 1_048_577

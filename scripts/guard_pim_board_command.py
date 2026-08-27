@@ -870,7 +870,7 @@ def _python_module_script(
         arguments = arguments[1:]
     if module == "pim_check":
         return "pim_check.py", arguments
-    if module == "hw_gate":
+    if module in {"hw_gate", "hw_gate.__main__"}:
         return "hw_gate", arguments
     runner = HARDWARE_RUNNER_MODULES.get(module)
     if runner is not None:

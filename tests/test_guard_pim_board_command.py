@@ -77,6 +77,48 @@ def test_guard_allows_local_or_canonically_wrapped_hw_gate_commands(
 @pytest.mark.parametrize(
     "command",
     [
+        "python3 -m hw_gate.__main__ measure --output-dir hw-results",
+        "python3 -mhw_gate.__main__ calibrate --repetitions 3",
+        "python3 -m hw_gate.__main__",
+        "python3 -m hw_gate.__main__ unknown",
+        "python3 -m runpy hw_gate.__main__ measure --output-dir hw-results",
+        "timeout 3h python3 -m hw_gate.__main__ calibrate --repetitions 3",
+        "bash -c 'python3 -m hw_gate.__main__ measure --output-dir hw-results'",
+    ],
+)
+def test_guard_blocks_hw_gate_main_alias_hardware_or_unknown_commands(
+    command: str,
+) -> None:
+    """The executable package alias must not bypass the same lease policy."""
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python3 -m hw_gate.__main__ prepare --pr-head-sha "$PR_HEAD_SHA"',
+        'python3 -mhw_gate.__main__ finalize --child-exit-code "$CHILD_EXIT"',
+        "python3 -m runpy hw_gate.__main__ validate --evidence evidence.json",
+        "scripts/with_pim_board.sh --for 3h --purpose safe -- "
+        "python3 -m hw_gate.__main__ measure --output-dir hw-results",
+    ],
+)
+def test_guard_allows_hw_gate_main_alias_local_or_wrapped_commands(
+    command: str,
+) -> None:
+    """Equivalent local commands and canonical-wrapper children remain usable."""
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "python3 pim_check.py --plan smoke --host 192.168.214.4",
         "python3 -m pim_check --plan smoke",
         "python3 -mpim_check --plan smoke",

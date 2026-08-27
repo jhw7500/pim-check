@@ -44,11 +44,11 @@ jobs:
               candidates = [
                   path
                   for path in root.iterdir()
-                  if path.is_file()
-                  and not path.is_symlink()
+                  if not path.is_symlink()
+                  and path.is_file()
                   and re.fullmatch(r"[0-9a-f]{40}\.json", path.name)
               ]
-          if len(candidates) == 1:
+          if len(candidates) == 1 and candidates[0].stat().st_size <= 1_048_576:
               evidence = candidates[0]
           else:
               fallback = Path(".publisher-input")
@@ -68,4 +68,7 @@ jobs:
           TRIGGERING_WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           set -euo pipefail
-          python3 scripts/publish_hw_evidence.py --evidence "$EVIDENCE_PATH"
+          python3 scripts/publish_hw_evidence.py \
+            --evidence "$EVIDENCE_PATH" \
+            --workflow-run-id "$TRIGGERING_WORKFLOW_RUN_ID" \
+            --workflow-run-attempt "$TRIGGERING_WORKFLOW_RUN_ATTEMPT"
