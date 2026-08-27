@@ -28,6 +28,55 @@ def _run_guard(command: str) -> subprocess.CompletedProcess[str]:
 @pytest.mark.parametrize(
     "command",
     [
+        "python3 -m hw_gate measure --envelope hw-results/a.candidate.json",
+        "python3 -mhw_gate calibrate --template baselines/hw-baseline.template.json",
+        "env -i python3 -m hw_gate measure --target-host 192.168.214.4",
+        "timeout 3h python3 -m hw_gate calibrate --repetitions 3",
+        "bash -c 'python3 -m hw_gate measure --output-dir hw-results'",
+        "python3 -m hw_gate",
+        "python3 -m hw_gate unknown",
+        "python3 -m hw_gate meas",
+        'command=measure; python3 -m hw_gate "$command"',
+        "python3 -m hw_gate m{easure,prepare}",
+    ],
+)
+def test_guard_blocks_direct_or_ambiguous_hw_gate_hardware_commands(
+    command: str,
+) -> None:
+    """A direct, dynamic, or unrecognized gate command could bypass the lease."""
+    result = _run_guard(command)
+
+    assert result.returncode == 2
+    assert "scripts/with_pim_board.sh" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python3 -m hw_gate prepare --pr-head-sha "$PR_HEAD_SHA"',
+        'python3 -mhw_gate finalize --child-exit-code "$CHILD_EXIT"',
+        "python3 -m hw_gate validate --evidence hw-results/evidence.json",
+        "scripts/with_pim_board.sh --for 3h --purpose safe -- "
+        "python3 -m hw_gate measure --target-host 192.168.214.4",
+        "./scripts/with_pim_board.sh --for 3h --purpose safe -- "
+        "python3 -m hw_gate calibrate --repetitions 3",
+        "scripts/with_pim_board.sh --for 3h --purpose safe -- "
+        'python3 -m hw_gate "$UNKNOWN_SUBCOMMAND"',
+    ],
+)
+def test_guard_allows_local_or_canonically_wrapped_hw_gate_commands(
+    command: str,
+) -> None:
+    """Local-only commands and children behind the canonical lease remain usable."""
+    result = _run_guard(command)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "python3 pim_check.py --plan smoke --host 192.168.214.4",
         "python3 -m pim_check --plan smoke",
         "python3 -mpim_check --plan smoke",

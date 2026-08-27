@@ -1,0 +1,120 @@
+name: Hardware Evidence Measurement
+run-name: hw-evidence-pr-${{ github.event.pull_request.number || inputs.pr_number }}
+
+"on":
+  pull_request_target:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Same-repository pull request number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pim-target-lock
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'needs-hw-verify')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref_name == github.event.repository.default_branch)
+    runs-on: [self-hosted, linux, pim-target]
+
+    steps:
+      - name: Checkout trusted measurement code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Resolve same-repository PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          from hw_gate.publisher import GithubClient
+
+          repository = os.environ["REPOSITORY"]
+          pr_number_text = os.environ["PR_NUMBER"]
+          if re.fullmatch(r"[1-9][0-9]*", pr_number_text) is None:
+              raise SystemExit("PR number must be a positive integer")
+          pull = GithubClient(os.environ["GH_TOKEN"]).get_json(
+              "repos/{0}/pulls/{1}".format(repository, int(pr_number_text))
+          )
+          if not isinstance(pull, dict):
+              raise SystemExit("pull request metadata must be an object")
+          head = pull.get("head")
+          if not isinstance(head, dict):
+              raise SystemExit("pull request head metadata is missing")
+          head_sha = head.get("sha")
+          if not isinstance(head_sha, str) or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None:
+              raise SystemExit("pull request HEAD must be a full lowercase SHA")
+          head_repository = head.get("repo")
+          if (
+              not isinstance(head_repository, dict)
+              or head_repository.get("full_name") != repository
+          ):
+              raise SystemExit("hardware evidence requires a same-repository PR")
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as stream:
+              stream.write("PR_HEAD_SHA={0}\n".format(head_sha))
+          PY
+
+      - name: Prepare trusted run envelope
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          python3 -m hw_gate prepare \
+            --repository "$REPOSITORY" \
+            --pr-number "$PR_NUMBER" \
+            --pr-head-sha "$PR_HEAD_SHA" \
+            --workflow-run-id "$WORKFLOW_RUN_ID" \
+            --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" \
+            --source-commit "$SOURCE_COMMIT" \
+            --baseline baselines/hw-baseline.json \
+            --output-dir hw-results
+
+      - name: Run leased hardware evidence
+        run: |
+          set +e
+          scripts/with_pim_board.sh --for 3h --purpose "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:hw-evidence" -- python3 -m hw_gate measure --envelope "hw-results/${PR_HEAD_SHA}.candidate.json" --target-host 192.168.214.4 --output-dir hw-results
+          child_exit=$?
+          set -e
+          printf 'HW_GATE_CHILD_EXIT=%s\n' "$child_exit" >>"$GITHUB_ENV"
+          exit "$child_exit"
+
+      - name: Finalize hardware evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 -m hw_gate finalize \
+            --envelope "hw-results/${PR_HEAD_SHA}.candidate.json" \
+            --output-dir hw-results \
+            --child-exit-code "${HW_GATE_CHILD_EXIT:-2}"
+
+      - name: Upload hardware evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hw-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hw-results/**
+          if-no-files-found: error

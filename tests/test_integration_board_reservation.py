@@ -1080,6 +1080,13 @@ def _workflow(path: str) -> dict:
             "12h",
             "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:${{ inputs.plan }}",
         ),
+        (
+            "hw-evidence-measure.yml",
+            "measure",
+            "Run leased hardware evidence",
+            "3h",
+            "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:hw-evidence",
+        ),
     ],
 )
 def test_hardware_workflow_uses_common_fail_fast_wrapper(
