@@ -13,11 +13,13 @@ from hw_gate.baseline import (
     load_baseline,
     validate_baseline,
 )
-from hw_gate.evidence import EvidenceError, recompute_overall_verdict
+from hw_gate.evidence import EvidenceError, recompute_overall_verdict, validate_structure
 from hw_gate.rules import Verdict
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "hw_gate" / "baseline.json"
+PRODUCTION_BASELINE = Path(__file__).parents[1] / "baselines" / "hw-baseline.json"
+REVIEWED_PASS_FIXTURE = Path(__file__).parent / "fixtures" / "hw_gate" / "evidence_pass.json"
 
 
 def load_fixture() -> dict:
@@ -73,6 +75,15 @@ def test_load_baseline_returns_content_addressed_contract() -> None:
     assert isinstance(loaded, LoadedBaseline)
     assert loaded.data == load_fixture()
     assert loaded.sha256 == baseline_sha256(FIXTURE)
+
+
+def test_committed_production_baseline_recomputes_the_reviewed_evidence_as_pass() -> None:
+    """A missing or mismatched approved policy must not authorize the reviewed PASS fixture."""
+    loaded = load_baseline(PRODUCTION_BASELINE)
+    document = json.loads(REVIEWED_PASS_FIXTURE.read_text(encoding="utf-8"))
+
+    validate_structure(document)
+    assert recompute_overall_verdict(document, loaded.data) is Verdict.PASS
 
 
 def test_baseline_sha256_is_sha256_of_exact_file_bytes(tmp_path: Path) -> None:

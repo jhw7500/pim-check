@@ -18,19 +18,23 @@ def load_document() -> dict:
 
 
 def baseline_for(document: dict) -> dict:
-    gate = document["gates"][0]
-    metric = gate["metrics"][0]
     return {
-        "id": gate["id"],
-        "adapter_id": gate["adapter_id"],
-        "adapter_schema_version": gate["adapter_schema_version"],
-        "metrics": [
+        "gates": [
             {
-                "id": metric["id"],
-                "value": metric["baseline_value"],
-                "unit": metric["unit"],
-                "rule": copy.deepcopy(metric["rule"]),
+                "id": gate["id"],
+                "adapter_id": gate["adapter_id"],
+                "adapter_schema_version": gate["adapter_schema_version"],
+                "metrics": [
+                    {
+                        "id": metric["id"],
+                        "value": metric["baseline_value"],
+                        "unit": metric["unit"],
+                        "rule": copy.deepcopy(metric["rule"]),
+                    }
+                    for metric in gate["metrics"]
+                ],
             }
+            for gate in document["gates"]
         ],
     }
 
@@ -91,7 +95,7 @@ def test_baseline_coverage_missing_or_new_metric_recomputes_error(mutation: str)
     document = load_document()
     baseline = baseline_for(document)
     if mutation == "missing":
-        baseline["metrics"].append({"id": "bps.ch1.1024.baseline", "value": 1024, "unit": "bps"})
+        baseline["gates"][0]["metrics"].append({"id": "bps.ch1.1024.baseline", "value": 1024, "unit": "bps"})
     else:
         document["gates"][0]["metrics"][0]["id"] = "bps.ch1.1024.baseline"
 
@@ -102,7 +106,7 @@ def test_adapter_schema_mismatch_recomputes_error() -> None:
     """Accepting a baseline from a different adapter schema must fail."""
     document = load_document()
     baseline = baseline_for(document)
-    baseline["adapter_schema_version"] = 2
+    baseline["gates"][0]["adapter_schema_version"] = 2
 
     assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
 
@@ -120,9 +124,10 @@ def test_evidence_cannot_loosen_immutable_baseline_rule() -> None:
 def test_baseline_gate_absent_from_evidence_recomputes_error() -> None:
     """Ignoring a committed baseline gate with no evidence must fail."""
     document = load_document()
-    baseline = {"gates": [baseline_for(document), copy.deepcopy(baseline_for(document))]}
-    baseline["gates"][1]["id"] = "second_gate"
-    baseline["gates"][1]["adapter_id"] = "second_adapter"
+    baseline = baseline_for(document)
+    baseline["gates"].append(copy.deepcopy(baseline["gates"][0]))
+    baseline["gates"][-1]["id"] = "second_gate"
+    baseline["gates"][-1]["adapter_id"] = "second_adapter"
 
     assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
 
