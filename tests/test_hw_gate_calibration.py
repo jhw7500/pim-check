@@ -317,7 +317,7 @@ def test_calibrate_cli_requires_three_repetitions_and_uses_raw_collection(
         assert exc_info.value.code == 2
 
 
-@pytest.mark.parametrize("host", ["192.168.0.5", "192.168.214.5"])
+@pytest.mark.parametrize("host", ["192.168.0.5", "192.168.214.5", "192.168.214.4 "])
 def test_calibrate_rejects_legacy_wireless_and_other_targets(host: str) -> None:
     """Accepting a non-wired host would make candidate provenance incomparable."""
     from hw_gate import cli

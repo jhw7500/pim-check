@@ -945,3 +945,22 @@ def test_module_help_lists_the_four_commands(capsys: pytest.CaptureFixture[str])
     output = capsys.readouterr().out
     for command in ("prepare", "measure", "finalize", "validate"):
         assert command in output
+
+
+def test_plan_binds_every_hw_gate_target_to_the_fixed_wired_endpoint() -> None:
+    """An unset workflow variable must not make the trusted target caller-controlled."""
+    plan = (
+        Path(__file__).parents[1]
+        / "docs"
+        / "superpowers"
+        / "plans"
+        / "2026-08-26-hardware-evidence-gate.md"
+    ).read_text(encoding="utf-8")
+    targets = [
+        fragment.split()[0].strip('`"')
+        for fragment in plan.split("--target-host ")[1:]
+        if not fragment.lstrip().startswith("--")
+    ]
+
+    assert targets
+    assert set(targets) == {"192.168.214.4"}

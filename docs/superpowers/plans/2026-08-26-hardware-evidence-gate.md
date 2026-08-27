@@ -445,7 +445,7 @@ Expected: exit 0 and an eligible candidate containing three fully restored sampl
 - Permissions: `contents: read`, `pull-requests: read`; no write scope.
 - Checkout exact `${{ github.sha }}` from the trusted workflow context; never checkout PR HEAD.
 - Concurrency: `{group: pim-target-lock, cancel-in-progress: false}`.
-- One board-facing step, exactly `scripts/with_pim_board.sh --for 3h --purpose "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:hw-evidence" -- python3 -m hw_gate measure --envelope hw-results/envelope.json --target-host "${TARGET_HOST}" --output-dir hw-results`.
+- One board-facing step, exactly `scripts/with_pim_board.sh --for 3h --purpose "github:${{ github.workflow }}:${{ github.run_id }}:${{ github.run_attempt }}:hw-evidence" -- python3 -m hw_gate measure --envelope hw-results/envelope.json --target-host 192.168.214.4 --output-dir hw-results`.
 - Prepare envelope before lease, capture child exit unchanged, run local finalizer, and always upload `hw-results/**` as `hw-evidence-${{ github.run_id }}-${{ github.run_attempt }}` with `if-no-files-found: error`.
 
 **Publisher workflow contract:**

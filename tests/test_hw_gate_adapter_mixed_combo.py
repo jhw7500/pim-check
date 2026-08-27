@@ -290,10 +290,17 @@ def test_legacy_entry_point_requires_central_pass_and_verified_restoration(
     assert json.loads(result_path.read_text(encoding="utf-8"))["verdict"] == "PASS"
 
 
-def test_legacy_local_mixed_combo_defaults_to_the_fixed_wired_endpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("target_host", "expected_host"),
+    [(None, "192.168.214.4"), ("192.0.2.44", "192.0.2.44")],
+)
+def test_legacy_local_mixed_combo_uses_fixed_wired_default_or_explicit_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_host: Optional[str],
+    expected_host: str,
 ) -> None:
-    """Falling back through the legacy profile must not silently select WiFi."""
+    """Legacy profile fallback must be wired without removing an explicit override."""
     import hw_gate.adapters.mixed_combo as mixed_module
 
     opened: list[str] = []
@@ -311,7 +318,10 @@ def test_legacy_local_mixed_combo_defaults_to_the_fixed_wired_endpoint(
             return {"verdict": "ERROR", "restoration": {"verdict": "PASS"}}
 
     loaded = type("Loaded", (), {"data": {"gates": {"mixed_combo": {}}}})()
-    monkeypatch.delenv("TARGET_HOST", raising=False)
+    if target_host is None:
+        monkeypatch.delenv("TARGET_HOST", raising=False)
+    else:
+        monkeypatch.setenv("TARGET_HOST", target_host)
     monkeypatch.setattr(mixed_module, "load_baseline", lambda _path: loaded)
     monkeypatch.setattr(
         mixed_module,
@@ -324,5 +334,5 @@ def test_legacy_local_mixed_combo_defaults_to_the_fixed_wired_endpoint(
 
     mixed_module.run_local_mixed_combo(tmp_path / "result.json")
 
-    assert opened == ["192.168.214.4"]
+    assert opened == [expected_host]
     assert closed == [True]
