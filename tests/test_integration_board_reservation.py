@@ -1,6 +1,7 @@
 """Cross-entry-point contract for the shared PIM board reservation."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
@@ -1120,3 +1121,88 @@ def test_release_plan_wraps_selected_command_and_keeps_warn_policy() -> None:
     assert '"${PLAN_COMMAND[@]}"' in command
     assert "if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then" in command
     assert "exit $rc" in command
+
+
+@pytest.mark.parametrize(
+    ("path", "job_name"),
+    [("hw-verify.yml", "mixed-combo"), ("hw-verify-plan.yml", "plan-run")],
+)
+def test_compatibility_workflows_use_baseline_wired_target(
+    path: str,
+    job_name: str,
+) -> None:
+    """Compatibility jobs must measure the board that owns the committed baseline."""
+    workflow = _workflow(path)
+
+    assert workflow["env"]["TARGET_HOST"] == "192.168.214.4"
+    precheck = next(
+        item for item in workflow["jobs"][job_name]["steps"]
+        if item.get("name") == "Target reachability precheck"
+    )["run"]
+    assert "192.168.0.5" not in precheck
+    assert "${{ env.TARGET_HOST }}" in precheck
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_lines"),
+    [
+        (
+            {
+                "verdict": "PASS",
+                "metrics": [
+                    {"id": "mixed_combo.test1.bus1.mode_mask", "verdict": "PASS"},
+                    {"id": "mixed_combo.test1.ch1.rotation", "verdict": "PASS"},
+                ],
+                "errors": [],
+            },
+            ("Verdict: PASS", "Metrics: 2/2 PASS"),
+        ),
+        (
+            {
+                "verdict": "ERROR",
+                "metrics": [
+                    {"id": "mixed_combo.test1.bus1.mode_mask", "verdict": "PASS"},
+                    {"id": "mixed_combo.test1.ch1.rotation", "verdict": "FAIL"},
+                ],
+                "errors": [{"code": "mixed_combo.collection_failed", "message": "no evidence"}],
+            },
+            (
+                "Verdict: ERROR",
+                "Metrics: 1/2 PASS",
+                "Error: mixed_combo.collection_failed — no evidence",
+            ),
+        ),
+        (
+            {"verdict": "ERROR", "metrics": ["malformed", {"verdict": "PASS"}], "errors": []},
+            ("Verdict: ERROR", "Metrics: 1/2 PASS"),
+        ),
+    ],
+    ids=("pass", "error", "malformed-metric"),
+)
+def test_mixed_combo_workflow_summary_consumes_gate_result(
+    tmp_path: Path,
+    payload: dict,
+    expected_lines: tuple[str, ...],
+) -> None:
+    """The always-run Summary must render the adapter gate dict without crashing."""
+    workflow = _workflow("hw-verify.yml")
+    summary = next(
+        item for item in workflow["jobs"]["mixed-combo"]["steps"]
+        if item.get("name") == "Summary"
+    )["run"]
+    (tmp_path / "mixed_combo_results.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", "-c", summary],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    for line in expected_lines:
+        assert line in completed.stdout

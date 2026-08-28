@@ -306,11 +306,11 @@ email:
 
 | 변수 | 우선순위 | 설명 | 예시 |
 |------|---------|------|------|
-| `TARGET_HOST` | 최상위 | 타겟 IP — `run_*.py` runner와 `qa_agent`/`infer_agent`의 기본 호스트 | `scripts/with_pim_board.sh --for 30m --purpose "manual mixed_combo" -- env TARGET_HOST=192.168.0.50 python3 run_mixed_combo_verify.py` |
+| `TARGET_HOST` | 최상위 | 타겟 IP — 일반 runner와 `qa_agent`/`infer_agent`의 기본 호스트. `run_bps_quick.py`와 `run_mixed_combo_verify.py`는 committed baseline의 `comparability.target_host`와 정확히 같아야 한다. | `scripts/with_pim_board.sh --for 30m --purpose "manual mixed_combo" -- env TARGET_HOST=192.168.214.4 python3 run_mixed_combo_verify.py` |
 
 **우선순위 (높음→낮음)**: env var → CLI 인자(`--host`) → `~/.pim-check.yaml`(`default_host`) → `profiles/base.yaml`(`target.host`) → 코드 fallback (`192.168.0.5`).
 
-CI(GitHub Actions hw-verify*)는 `env: TARGET_HOST: ...` 으로 워크플로우 상단에서 한 곳만 수정하면 모든 step에 자동 적용됨.
+CI(GitHub Actions hw-verify*)는 `env: TARGET_HOST: ...` 값을 모든 step에 전달한다. Hardware gate compatibility workflow의 주소를 바꾸려면 해당 보드에서 baseline calibration과 human review를 먼저 수행해야 한다.
 
 ## 테스트
 

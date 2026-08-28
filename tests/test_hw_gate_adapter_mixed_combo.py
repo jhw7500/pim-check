@@ -10,7 +10,7 @@ import pytest
 
 from hw_gate.adapters.base import AdapterContext
 from hw_gate.adapters.mixed_combo import MixedComboAdapter, evaluate_mixed_combo_gate
-from hw_gate.rules import Verdict
+from hw_gate.rules import EvidenceError, Verdict
 from hw_gate.transaction import TransactionRestorationError
 
 
@@ -292,15 +292,15 @@ def test_legacy_entry_point_requires_central_pass_and_verified_restoration(
 
 @pytest.mark.parametrize(
     ("target_host", "expected_host"),
-    [(None, "192.168.214.4"), ("192.0.2.44", "192.0.2.44")],
+    [(None, "192.168.214.4"), ("192.168.214.4", "192.168.214.4")],
 )
-def test_legacy_local_mixed_combo_uses_fixed_wired_default_or_explicit_override(
+def test_legacy_local_mixed_combo_uses_baseline_wired_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     target_host: Optional[str],
     expected_host: str,
 ) -> None:
-    """Legacy profile fallback must be wired without removing an explicit override."""
+    """Legacy measurement must use the exact host that owns the baseline."""
     import hw_gate.adapters.mixed_combo as mixed_module
 
     opened: list[str] = []
@@ -317,7 +317,10 @@ def test_legacy_local_mixed_combo_uses_fixed_wired_default_or_explicit_override(
         def run(self, _context: AdapterContext) -> dict:
             return {"verdict": "ERROR", "restoration": {"verdict": "PASS"}}
 
-    loaded = type("Loaded", (), {"data": {"gates": {"mixed_combo": {}}}})()
+    loaded = type("Loaded", (), {"data": {
+        "comparability": {"target_host": "192.168.214.4"},
+        "gates": {"mixed_combo": {}},
+    }})()
     if target_host is None:
         monkeypatch.delenv("TARGET_HOST", raising=False)
     else:
@@ -336,3 +339,44 @@ def test_legacy_local_mixed_combo_uses_fixed_wired_default_or_explicit_override(
 
     assert opened == [expected_host]
     assert closed == [True]
+
+
+def test_legacy_local_mixed_combo_rejects_host_outside_baseline_before_connect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An alternate board must not receive a verdict from wired-target calibration."""
+    import hw_gate.adapters.mixed_combo as mixed_module
+
+    opened: list[str] = []
+
+    class BoundarySsh:
+        def __init__(self, host: str, **_credentials: object) -> None:
+            opened.append(host)
+
+        def close(self) -> None:
+            pass
+
+    class StubAdapter:
+        def run(self, _context: AdapterContext) -> dict:
+            return {"verdict": "ERROR", "restoration": {"verdict": "PASS"}}
+
+    loaded = type("Loaded", (), {"data": {
+        "comparability": {"target_host": "192.168.214.4"},
+        "gates": {"mixed_combo": {}},
+    }})()
+    monkeypatch.setenv("TARGET_HOST", "192.168.0.5")
+    monkeypatch.setattr(mixed_module, "load_baseline", lambda _path: loaded)
+    monkeypatch.setattr(
+        mixed_module,
+        "load_profile",
+        lambda *_args: {"target": {"user": "root", "password": "root"}},
+    )
+    monkeypatch.setattr(mixed_module, "SshClient", BoundarySsh)
+    monkeypatch.setattr(mixed_module, "MixedComboAdapter", StubAdapter)
+    monkeypatch.setattr(mixed_module, "evaluate_mixed_combo_gate", lambda *_args: Verdict.ERROR)
+
+    with pytest.raises(EvidenceError, match="target host.*baseline comparability"):
+        mixed_module.run_local_mixed_combo(tmp_path / "result.json")
+
+    assert opened == []

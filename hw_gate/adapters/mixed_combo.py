@@ -295,7 +295,10 @@ def run_local_mixed_combo(output_path: Path) -> dict:
     loaded = load_baseline(baseline_path)
     profile = load_profile("profiles", _FIXTURE_NAME)
     target = profile.get("target", {})
-    host = os.environ.get("TARGET_HOST", "192.168.214.4")
+    baseline_host = loaded.data["comparability"]["target_host"]
+    host = os.environ.get("TARGET_HOST", baseline_host)
+    if host != baseline_host:
+        raise EvidenceError("target host does not match baseline comparability")
     ssh = SshClient(host, user=target.get("user", "root"), password=target.get("password", "root"))
     try:
         gate = MixedComboAdapter().run(AdapterContext(
