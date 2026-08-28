@@ -26,28 +26,83 @@ def _config(**overrides: object) -> dict:
             "poll_timeout_sec": 2,
             "poll_interval_sec": 1,
             "min_size_bytes": 100000,
+            "duration_range_sec": [55, 65],
         }
     }
     config["bps_evidence"].update(overrides)
     return config
 
 
-def _ssh(*, listing: str, ffprobe: str = "1024000\n") -> MagicMock:
+def _ssh(
+    *,
+    listing: str | list[str],
+    ffprobe: str = "1024000\n",
+    durations: dict[str, str] | None = None,
+    bitrates: dict[str, str] | None = None,
+) -> MagicMock:
     ssh = MagicMock()
+    durations = durations or {}
+    bitrates = bitrates or {}
+    listings = [listing] if isinstance(listing, str) else listing
+    discovery_index = 0
 
     def run(command: str):
+        nonlocal discovery_index
         if command == "cat /proc/sys/kernel/random/boot_id":
             return "boot-123\n"
         if command == "date +%s":
             return "100\n"
         if command.startswith("find -- /recordings"):
-            return listing
+            value = listings[min(discovery_index, len(listings) - 1)]
+            discovery_index += 1
+            return value
+        if command.startswith("ffprobe ") and "format=duration" in command:
+            return next((value for path, value in durations.items() if path in command), "60\n")
         if command.startswith("ffprobe "):
-            return ffprobe
+            return next((value for path, value in bitrates.items() if path in command), ffprobe)
         return ""
 
     ssh.run.side_effect = run
     return ssh
+
+
+def test_collect_polls_past_short_finalize_until_complete_recording_arrives() -> None:
+    """A reboot-boundary fragment cannot end polling before a comparable sample arrives."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    clock = _Clock()
+    ssh = _ssh(
+        listing=[
+            "102\t4282063\t/recordings/short-ch0.mp4\n",
+            (
+                "102\t4282063\t/recordings/short-ch0.mp4\n"
+                "103\t30606686\t/recordings/complete-ch0.mp4\n"
+            ),
+        ],
+        durations={
+            "short-ch0.mp4": "7.54\n",
+            "complete-ch0.mp4": "59.95\n",
+        },
+        bitrates={
+            "short-ch0.mp4": "4545300\n",
+            "complete-ch0.mp4": "4084309\n",
+        },
+    )
+    data = BpsEvidenceCheck(clock=clock, sleeper=clock.sleep).collect(ssh, _config())
+
+    assert data["video"] == "/recordings/complete-ch0.mp4"
+    assert data["duration_sec"] == 59.95
+    assert data["actual_bps"] == 4084309
+    assert clock.value == 1
+    bitrate_commands = [
+        call.args[0]
+        for call in ssh.run.call_args_list
+        if "stream=bit_rate" in call.args[0]
+    ]
+    assert bitrate_commands == [
+        "ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate "
+        "-of csv=p=0 -- /recordings/complete-ch0.mp4 2>/dev/null",
+    ]
 
 
 def test_collect_accepts_fresh_finalized_large_video_with_one_positive_bitrate() -> None:
@@ -65,6 +120,7 @@ def test_collect_accepts_fresh_finalized_large_video_with_one_positive_bitrate()
         "video": "/recordings/case-ch0.mp4",
         "mtime": 100,
         "size_bytes": 100000,
+        "duration_sec": 60.0,
         "actual_bps": 1024000,
         "errors": [],
     }
@@ -124,6 +180,7 @@ def test_validate_rejects_claimed_evidence_that_is_stale() -> None:
         "video": "/recordings/old-ch0.mp4",
         "mtime": 99,
         "size_bytes": 100000,
+        "duration_sec": 60.0,
         "actual_bps": 1024000,
         "errors": [],
     }
@@ -132,6 +189,29 @@ def test_validate_rejects_claimed_evidence_that_is_stale() -> None:
 
     assert not passed
     assert "fresh" in reason
+
+
+@pytest.mark.parametrize("duration_sec", [None, 0, 54.99, 65.01])
+def test_validate_rejects_missing_or_out_of_range_duration(duration_sec: object) -> None:
+    """Only a complete fixture-length recording is comparable BPS evidence."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    data = {
+        "boot_id": "boot-123",
+        "board_epoch": 100,
+        "setpoint_anchor": 100,
+        "video": "/recordings/case-ch0.mp4",
+        "mtime": 100,
+        "size_bytes": 100000,
+        "duration_sec": duration_sec,
+        "actual_bps": 1024000,
+        "errors": [],
+    }
+
+    passed, reason = BpsEvidenceCheck().validate(data, _config())
+
+    assert not passed
+    assert "duration" in reason
 
 
 @pytest.mark.parametrize(
@@ -154,6 +234,7 @@ def test_validate_rejects_non_finite_or_negative_anchors(field: str, value: obje
         "video": "/recordings/case-ch0.mp4",
         "mtime": 100,
         "size_bytes": 100000,
+        "duration_sec": 60.0,
         "actual_bps": 1024000,
         "errors": [],
     }
@@ -190,6 +271,28 @@ def test_collect_rejects_minimum_size_config_below_hard_floor() -> None:
     assert data["video"] is None
     assert data["actual_bps"] is None
     assert "minimum file size" in data["errors"][0]
+
+
+@pytest.mark.parametrize(
+    "duration_range_sec",
+    [None, [], [65, 55], [float("nan"), 65], [55, float("inf")], [55, 10**10000]],
+)
+def test_collect_rejects_invalid_duration_range_before_polling(
+    duration_range_sec: object,
+) -> None:
+    """Malformed duration bounds cannot weaken sample-integrity filtering."""
+    from checks.bps_evidence import BpsEvidenceCheck
+
+    clock = _Clock()
+    data = BpsEvidenceCheck(clock=clock, sleeper=clock.sleep).collect(
+        _ssh(listing="100\t100000\t/recordings/case-ch0.mp4\n"),
+        _config(duration_range_sec=duration_range_sec),
+    )
+
+    assert data["video"] is None
+    assert data["actual_bps"] is None
+    assert data["errors"] == ["duration range is invalid"]
+    assert clock.value == 0
 
 
 def test_collect_returns_structured_error_on_ssh_timeout() -> None:

@@ -55,6 +55,23 @@ class BpsEvidenceCheck(BaseCheck):
         return [path for path in paths if isinstance(path, str) and path.startswith("/")]
 
     @staticmethod
+    def _duration_range(settings: dict) -> Optional[Tuple[float, float]]:
+        value = settings.get("duration_range_sec", [55, 65])
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            return None
+        lower, upper = value
+        try:
+            valid = (
+                _finite_positive_number(lower)
+                and _finite_positive_number(upper)
+                and lower <= upper
+            )
+            normalized = (float(lower), float(upper))
+        except (OverflowError, TypeError, ValueError):
+            return None
+        return normalized if valid else None
+
+    @staticmethod
     def _parse_candidates(output: object, channel: int) -> List[Tuple[float, int, str]]:
         candidates: List[Tuple[float, int, str]] = []
         if not isinstance(output, str):
@@ -96,7 +113,7 @@ class BpsEvidenceCheck(BaseCheck):
         except (SshConnectionError, SshTimeoutError) as exc:
             return {
                 "boot_id": "", "board_epoch": None, "setpoint_anchor": None,
-                "video": None, "mtime": None, "size_bytes": None,
+                "video": None, "mtime": None, "size_bytes": None, "duration_sec": None,
                 "actual_bps": None, "errors": ["SSH_ERROR: {0}".format(exc)],
             }
 
@@ -116,6 +133,7 @@ class BpsEvidenceCheck(BaseCheck):
             "video": None,
             "mtime": None,
             "size_bytes": None,
+            "duration_sec": None,
             "actual_bps": None,
             "errors": [],
         }
@@ -131,6 +149,7 @@ class BpsEvidenceCheck(BaseCheck):
         timeout = settings.get("poll_timeout_sec", 120)
         interval = settings.get("poll_interval_sec", 5)
         minimum_size = settings.get("min_size_bytes", _MINIMUM_SIZE_BYTES)
+        duration_range = self._duration_range(settings)
         if not _finite_nonnegative_number(timeout) or not _finite_positive_number(interval):
             result["errors"] = ["poll settings are invalid"]
             return result
@@ -138,26 +157,43 @@ class BpsEvidenceCheck(BaseCheck):
                 or minimum_size < _MINIMUM_SIZE_BYTES):
             result["errors"] = ["minimum file size must be at least 100000 bytes"]
             return result
+        if duration_range is None:
+            result["errors"] = ["duration range is invalid"]
+            return result
         deadline = self._clock() + timeout
         last_probe_error = ""
         while self._clock() <= deadline:
             fresh = [candidate for candidate in self._discover(ssh, paths, channel)
                      if candidate[0] >= anchor and candidate[1] >= minimum_size]
             if fresh:
-                mtime, size_bytes, video = max(fresh, key=lambda candidate: candidate[0])
-                probe = ssh.run(
-                    "ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate "
-                    "-of csv=p=0 -- {0} 2>/dev/null".format(shlex.quote(video)))
-                actual_bps = self._positive_probe_value(probe)
-                if actual_bps is not None:
-                    result.update({
-                        "video": video,
-                        "mtime": int(mtime) if mtime.is_integer() else mtime,
-                        "size_bytes": size_bytes,
-                        "actual_bps": actual_bps,
-                    })
-                    return result
-                last_probe_error = "ffprobe did not return exactly one finite positive integer"
+                for mtime, size_bytes, video in sorted(fresh, reverse=True):
+                    duration_probe = ssh.run(
+                        "ffprobe -v error -show_entries format=duration "
+                        "-of csv=p=0 -- {0} 2>/dev/null".format(shlex.quote(video)))
+                    duration_sec = _finite_epoch(duration_probe.strip()) if isinstance(
+                        duration_probe, str,
+                    ) else None
+                    if (
+                        duration_sec is None
+                        or duration_sec < duration_range[0]
+                        or duration_sec > duration_range[1]
+                    ):
+                        last_probe_error = "ffprobe duration is outside the required range"
+                        continue
+                    probe = ssh.run(
+                        "ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate "
+                        "-of csv=p=0 -- {0} 2>/dev/null".format(shlex.quote(video)))
+                    actual_bps = self._positive_probe_value(probe)
+                    if actual_bps is not None:
+                        result.update({
+                            "video": video,
+                            "mtime": int(mtime) if mtime.is_integer() else mtime,
+                            "size_bytes": size_bytes,
+                            "duration_sec": duration_sec,
+                            "actual_bps": actual_bps,
+                        })
+                        return result
+                    last_probe_error = "ffprobe did not return exactly one finite positive integer"
             if self._clock() >= deadline:
                 break
             self._sleeper(interval)
@@ -179,6 +215,9 @@ class BpsEvidenceCheck(BaseCheck):
         if not _finite_nonnegative_number(data.get("setpoint_anchor")):
             return False, "setpoint anchor is invalid"
         settings = self._settings(config)
+        duration_range = self._duration_range(settings)
+        if duration_range is None:
+            return False, "duration range is invalid"
         channel = settings.get("channel", 0)
         if not isinstance(channel, int) or isinstance(channel, bool) or channel < 0:
             return False, "channel is invalid"
@@ -192,6 +231,11 @@ class BpsEvidenceCheck(BaseCheck):
             return False, "video is not fresh for the setpoint anchor"
         if not isinstance(data.get("size_bytes"), int) or data["size_bytes"] < _MINIMUM_SIZE_BYTES:
             return False, "video size is invalid"
+        duration_sec = data.get("duration_sec")
+        if not _finite_positive_number(duration_sec):
+            return False, "video duration is invalid"
+        if duration_sec < duration_range[0] or duration_sec > duration_range[1]:
+            return False, "video duration is outside the required range"
         actual_bps = data.get("actual_bps")
         if not isinstance(actual_bps, int) or isinstance(actual_bps, bool) or actual_bps <= 0:
             return False, "ffprobe bitrate is invalid"

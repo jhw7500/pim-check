@@ -127,6 +127,7 @@ class FakeCollector:
             "video": "/mnt/sd_cam/final-{0}-ch0.mp4".format(setpoint),
             "mtime": 1001,
             "size_bytes": 200000,
+            "duration_sec": 60.0,
             "actual_bps": self.actuals[setpoint],
             "errors": [],
         }
@@ -142,6 +143,9 @@ class FakeCollector:
             return False, data["errors"][0]
         if data["mtime"] < data["setpoint_anchor"]:
             return False, "video is not fresh for the setpoint anchor"
+        duration_range = config["bps_evidence"]["duration_range_sec"]
+        if not duration_range[0] <= data["duration_sec"] <= duration_range[1]:
+            return False, "video duration is outside the required range"
         if not isinstance(data["actual_bps"], int) or isinstance(data["actual_bps"], bool):
             return False, "ffprobe bitrate is invalid"
         assert config["bps_evidence"]["channel"] == 0
@@ -218,6 +222,22 @@ def test_collect_raw_is_baseline_independent_and_uses_one_full_transaction_per_s
             "verdict": "PASS",
         }
         for setpoint in BPS_SETPOINTS
+    ]
+
+
+def test_collect_raw_derives_duration_range_from_fixture_recording_time(tmp_path: Path) -> None:
+    """The adapter must bind comparable video duration to its controlled fixture."""
+    adapter, context, _, _ = _adapter(tmp_path, baseline_gate={})
+
+    adapter.collect_raw(context)
+
+    collector = adapter._collector
+    assert isinstance(collector, FakeCollector)
+    assert [config["bps_evidence"]["duration_range_sec"] for config in collector.configs] == [
+        [55, 65],
+        [55, 65],
+        [55, 65],
+        [55, 65],
     ]
 
 

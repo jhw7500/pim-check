@@ -23,6 +23,7 @@ from .base import AdapterContext
 
 BPS_SETPOINTS = (1024, 2048, 4096, 8192)
 _BPS_PATH = ".VHL_CAM.i2c2.ch0.bps"
+_RECORDING_TIME_PATH = ".VHL_CAM.recording_time"
 _FIXTURE_NAME = "multi_1ch_0_720p"
 _RAW_NAME = "bps_quick.json"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -90,6 +91,14 @@ class BpsAdapter:
         rules, so calibration can never depend on the value it is creating.
         """
         fixture, stabilize_sec = self._fixture()
+        recording_minutes = fixture.get(_RECORDING_TIME_PATH)
+        if (
+            isinstance(recording_minutes, bool)
+            or not isinstance(recording_minutes, int)
+            or recording_minutes <= 0
+        ):
+            raise EvidenceError("BPS fixture recording_time is invalid")
+        expected_duration_sec = recording_minutes * 60
         manager = self._setup_manager_factory(context.ssh)
         samples: List[dict] = []
         preconditions: List[dict] = []
@@ -138,6 +147,10 @@ class BpsAdapter:
                                 "channel": 0,
                                 "setpoint_kbps": setpoint,
                                 "poll_timeout_sec": stabilize_sec,
+                                "duration_range_sec": [
+                                    expected_duration_sec - 5,
+                                    expected_duration_sec + 5,
+                                ],
                             }
                         }
                         measurement = self._collector.collect(context.ssh, collector_config)
