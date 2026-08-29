@@ -21,7 +21,10 @@ from .base import AdapterContext
 
 
 _RAW_NAME = "mixed_combo.json"
-_FIXTURE_NAME = "multi_1ch_0_720p"
+_FIXTURE_NAME = "mixed_combo_fhd_30fps"
+_TARGET_PROFILE_NAME = "multi_1ch_0_720p"
+_VIDEO_MODE = {"width": 1920, "height": 1080, "fps": 30}
+_COMPARABILITY = {"scenario_matrix": "A-D-1920x1080-30fps"}
 _REGISTER_NAMES = ("rotation", "ae", "awb")
 _CHANNEL_PATHS = {0: ".VHL_CAM.i2c2.ch0", 1: ".VHL_CAM.i2c2.ch1", 2: ".VHL_CAM.i2c1.ch2", 3: ".VHL_CAM.i2c1.ch3"}
 _CHANNEL_BUSES = {0: 2, 1: 2, 2: 1, 3: 1}
@@ -60,7 +63,9 @@ def _scenario_masks(enabled: Dict[int, str]) -> Dict[str, int]:
 
 def _cleanroom_changes(enabled: Dict[int, str]) -> dict:
     changes = {
-        ".VHL_CAM.cam_width": 1280, ".VHL_CAM.cam_height": 720, ".VHL_CAM.fps": 15,
+        ".VHL_CAM.cam_width": _VIDEO_MODE["width"],
+        ".VHL_CAM.cam_height": _VIDEO_MODE["height"],
+        ".VHL_CAM.fps": _VIDEO_MODE["fps"],
         ".VHL_CAM.recording_time": 1, ".VHL_CAM.muxer": "mp4", ".VHL_CAM.capture.enable": False,
     }
     for channel, path in _CHANNEL_PATHS.items():
@@ -146,7 +151,8 @@ class MixedComboAdapter:
             errors.append(_error("mixed_combo.transaction_failed", str(exc)))
         return {
             "schema_version": self.schema_version, "adapter_id": self.adapter_id, "run_id": context.run_id,
-            "fixture": _FIXTURE_NAME, "scenarios": scenarios, "preconditions": preconditions,
+            "fixture": _FIXTURE_NAME, "video_mode": copy.deepcopy(_VIDEO_MODE),
+            "scenarios": scenarios, "preconditions": preconditions,
             "restoration": restoration, "errors": errors,
         }
 
@@ -197,6 +203,8 @@ class MixedComboAdapter:
     def _metrics(self, raw: dict, baseline_gate: dict) -> List[dict]:
         if not isinstance(baseline_gate, dict) or baseline_gate.get("adapter_schema_version") != self.schema_version:
             raise EvidenceError("mixed-combo baseline gate is missing or incompatible")
+        if baseline_gate.get("comparability") != _COMPARABILITY:
+            raise EvidenceError("mixed-combo baseline comparability does not match the FHD 30fps matrix")
         baseline_metrics = baseline_gate.get("metrics")
         if not isinstance(baseline_metrics, dict):
             raise EvidenceError("mixed-combo baseline metrics are missing")
@@ -266,7 +274,7 @@ class MixedComboAdapter:
             verdict = Verdict.PASS.value
         return {
             "id": self.adapter_id, "adapter_id": self.adapter_id, "adapter_schema_version": self.schema_version,
-            "comparability": copy.deepcopy(context.baseline_gate.get("comparability", {})) if isinstance(context.baseline_gate, dict) else {},
+            "comparability": copy.deepcopy(_COMPARABILITY),
             "process": {"exit_code": 0 if not errors else 1},
             "raw_output": {"path": "raw/{0}".format(_RAW_NAME), "sha256": hashlib.sha256(payload).hexdigest()},
             "preconditions": raw["preconditions"], "metrics": metrics, "restoration": raw["restoration"],
@@ -276,6 +284,12 @@ class MixedComboAdapter:
 
 def evaluate_mixed_combo_gate(gate: dict, baseline_gate: dict) -> Verdict:
     """Run the shared evaluator so only the committed baseline owns exact rules."""
+    if (
+        gate.get("comparability") != _COMPARABILITY
+        or not isinstance(baseline_gate, dict)
+        or baseline_gate.get("comparability") != _COMPARABILITY
+    ):
+        return Verdict.ERROR
     baseline_metrics = baseline_gate.get("metrics", {}) if isinstance(baseline_gate, dict) else {}
     normalized_baseline = {
         "id": "mixed_combo", "adapter_id": "mixed_combo",
@@ -293,7 +307,7 @@ def run_local_mixed_combo(output_path: Path) -> dict:
     """Run the adapter for the legacy entry point and centrally recompute its gate."""
     baseline_path = Path(os.environ.get("PIM_HW_BASELINE", "baselines/hw-baseline.json"))
     loaded = load_baseline(baseline_path)
-    profile = load_profile("profiles", _FIXTURE_NAME)
+    profile = load_profile("profiles", _TARGET_PROFILE_NAME)
     target = profile.get("target", {})
     baseline_host = loaded.data["comparability"]["target_host"]
     host = os.environ.get("TARGET_HOST", baseline_host)

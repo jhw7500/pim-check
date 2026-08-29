@@ -98,6 +98,7 @@ class SigtermLike(BaseException):
 def _adapter(
     tmp_path: Path, *, scenarios: Optional[list[dict]] = None, restore_failure: bool = False,
     fail_at: Optional[int] = None, fatal_at: Optional[int] = None,
+    baseline_gate: Optional[dict] = None,
 ) -> tuple[MixedComboAdapter, AdapterContext, FakeSetupManager, list[str]]:
     manager = FakeSetupManager()
     events: list[str] = []
@@ -115,7 +116,8 @@ def _adapter(
         collector=FixtureCollector(scenarios or _raw_scenarios(), manager.collector_configs),
     )
     context = AdapterContext(
-        ssh=FakeSsh(), baseline_gate=_baseline_gate(), run_id="mixed-test", raw_dir=tmp_path / "raw",
+        ssh=FakeSsh(), baseline_gate=baseline_gate or _baseline_gate(),
+        run_id="mixed-test", raw_dir=tmp_path / "raw",
     )
     return adapter, context, manager, events
 
@@ -139,6 +141,37 @@ def test_normalization_preserves_the_four_legacy_channel_assignments_as_numeric_
         "path": "raw/mixed_combo.json",
         "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
     }
+
+
+def test_cleanroom_uses_fhd_30fps_for_every_mixed_scenario(tmp_path: Path) -> None:
+    """Catches a 720p or 15fps tuple that exercises a different hardware mode."""
+    adapter, context, manager, _ = _adapter(tmp_path)
+
+    raw = adapter.collect_raw(context)
+
+    assert len(manager.checked) == 4
+    for changes in manager.checked:
+        assert {
+            "width": changes[".VHL_CAM.cam_width"],
+            "height": changes[".VHL_CAM.cam_height"],
+            "fps": changes[".VHL_CAM.fps"],
+        } == {"width": 1920, "height": 1080, "fps": 30}
+    assert raw["fixture"] == "mixed_combo_fhd_30fps"
+    assert raw["video_mode"] == {"width": 1920, "height": 1080, "fps": 30}
+
+
+def test_legacy_720p_comparability_cannot_authorize_an_fhd_30fps_run(tmp_path: Path) -> None:
+    """Catches echoing stale baseline context instead of declaring the actual run context."""
+    baseline_gate = _baseline_gate()
+    baseline_gate["comparability"] = {"scenario_matrix": "A-D"}
+    adapter, context, _, _ = _adapter(tmp_path, baseline_gate=baseline_gate)
+
+    gate = adapter.run(context)
+
+    assert gate["comparability"] == {"scenario_matrix": "A-D-1920x1080-30fps"}
+    assert gate["verdict"] == "ERROR"
+    assert evaluate_mixed_combo_gate(gate, baseline_gate) is Verdict.ERROR
+    assert "comparability" in json.dumps(gate["errors"])
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,5 @@
 {
-  "baseline_version": "2026-08-29.1",
+  "baseline_version": "2026-08-29.2",
   "calibration": {
     "bps": {
       "samples": {
@@ -38,7 +38,7 @@
     },
     "mixed_combo": {
       "adapter_schema_version": 1,
-      "comparability": {"scenario_matrix": "A-D"},
+      "comparability": {"scenario_matrix": "A-D-1920x1080-30fps"},
       "metrics": {
         "mixed_combo.test1.bus1.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},
         "mixed_combo.test1.bus2.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},

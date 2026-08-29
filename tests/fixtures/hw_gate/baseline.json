@@ -33,7 +33,7 @@
     },
     "mixed_combo": {
       "adapter_schema_version": 1,
-      "comparability": {"scenario_matrix": "A-D"},
+      "comparability": {"scenario_matrix": "A-D-1920x1080-30fps"},
       "metrics": {
         "mixed_combo.test1.bus1.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},
         "mixed_combo.test1.bus2.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},

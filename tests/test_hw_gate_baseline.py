@@ -185,6 +185,20 @@ def test_template_and_synthetic_baseline_bind_the_fixed_wired_target() -> None:
     assert load_fixture()["comparability"]["target_host"] == "192.168.214.4"
 
 
+def test_mixed_combo_baselines_bind_the_fhd_30fps_matrix() -> None:
+    """A 720p/15fps baseline must not authorize FHD/30fps mixed-combo evidence."""
+    template = json.loads(
+        (Path(__file__).parents[1] / "baselines" / "hw-baseline.template.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = {"scenario_matrix": "A-D-1920x1080-30fps"}
+
+    assert load_baseline(PRODUCTION_BASELINE).data["gates"]["mixed_combo"]["comparability"] == expected
+    assert template["gates"]["mixed_combo"]["comparability"] == expected
+    assert load_fixture()["gates"]["mixed_combo"]["comparability"] == expected
+
+
 def test_gate_coverage_requires_exact_metric_set_and_units() -> None:
     """Missing, new, or differently-unit measurements must fail before rule evaluation."""
     baseline = load_fixture()
