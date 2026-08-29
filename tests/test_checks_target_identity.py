@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -9,6 +11,7 @@ from ssh import SshConnectionError
 
 
 SHA256 = "a" * 64
+APPROVED_MODULE_SHA256 = "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33"
 
 
 def _config(claims: list[dict]) -> dict:
@@ -79,6 +82,24 @@ def test_collect_and_validate_module_sha256_claim() -> None:
         "module": "max9296",
         "sha256": SHA256,
     }])) == (True, "OK")
+
+
+def test_production_baseline_accepts_human_approved_module_identity() -> None:
+    """The reviewed target module must satisfy the committed production identity gate."""
+    from checks.target_identity import TargetIdentityCheck
+
+    baseline = json.loads(
+        (Path(__file__).parents[1] / "baselines" / "hw-baseline.json").read_text(encoding="utf-8")
+    )
+    config = _config(baseline["target_identity"])
+    check = TargetIdentityCheck()
+
+    evidence = check.collect(
+        _ssh_for_module(sha256=APPROVED_MODULE_SHA256),
+        config,
+    )
+
+    assert check.validate(evidence, config) == (True, "OK")
 
 
 def test_collect_accepts_usr_merged_canonical_module_path() -> None:

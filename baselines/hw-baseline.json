@@ -1,5 +1,5 @@
 {
-  "baseline_version": "2026-08-26.1",
+  "baseline_version": "2026-08-29.1",
   "calibration": {
     "bps": {
       "samples": {
@@ -82,13 +82,13 @@
     }
   },
   "schema_version": 1,
-  "source_commit": "41d3236a5f5f3b8168deeef7fa9ed73d8de0339a",
+  "source_commit": "b7b742272bacec81f8f01e1c317aea01b054bf9a",
   "target_identity": [
     {
       "id": "max9296.module_sha256",
       "kind": "module_sha256",
       "module": "max9296",
-      "sha256": "138d641870a8063f9f8682ba500e1bc6f509c284bc3e06bc37f751a49615818c"
+      "sha256": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33"
     }
   ]
 }
