@@ -145,9 +145,9 @@ def test_normalization_preserves_the_four_legacy_channel_assignments_as_numeric_
     ("scenario_index", "expected_channels", "expected_enabled_channels", "expected_masks"),
     [
         (0, {
-            0: {"enable": False, "vflip": True, "hflip": False, "ae_on": True, "awb": "auto"},
+            0: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
             1: {"enable": True, "vflip": True, "hflip": False, "ae_on": True, "awb": "auto"},
-            2: {"enable": False, "vflip": False, "hflip": True, "ae_on": False, "awb": "off"},
+            2: {"enable": False, "vflip": False, "hflip": False, "ae_on": True, "awb": "auto"},
             3: {"enable": True, "vflip": False, "hflip": True, "ae_on": False, "awb": "off"},
         }, [1, 3], {"1": 0, "2": 0}),
         (1, {
@@ -194,26 +194,6 @@ def test_cleanroom_matrix_preserves_literal_abcd_settings_and_collector_masks(
         "enabled_channels": expected_enabled_channels,
         "expected_mode_masks": expected_masks,
     }
-
-
-def test_single_address_odd_channels_mirror_runtime_settings_to_bus_primary_slots(
-    tmp_path: Path,
-) -> None:
-    """The b27 module reads each single-address ISP setup from its bus primary slot."""
-    adapter, context, manager, _ = _adapter(tmp_path)
-
-    adapter.collect_raw(context)
-
-    changes = manager.checked[0]
-    for primary, enabled in ((0, 1), (2, 3)):
-        primary_path = ".VHL_CAM.i2c{0}.ch{1}".format(2 if primary < 2 else 1, primary)
-        enabled_path = ".VHL_CAM.i2c{0}.ch{1}".format(2 if enabled < 2 else 1, enabled)
-        assert changes["{0}.enable".format(primary_path)] is False
-        assert changes["{0}.enable".format(enabled_path)] is True
-        for setting in ("vflip", "hflip", "ae_on", "awb"):
-            assert changes["{0}.{1}".format(primary_path, setting)] == changes[
-                "{0}.{1}".format(enabled_path, setting)
-            ]
 
 
 @pytest.mark.parametrize("mutation", ["scenario", "channel", "mask", "register"])

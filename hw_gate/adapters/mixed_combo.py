@@ -77,14 +77,6 @@ def _cleanroom_changes(enabled: Dict[int, str]) -> dict:
             "{0}.hflip".format(path): combo["hflip"], "{0}.ae_on".format(path): combo["ae_on"],
             "{0}.awb".format(path): combo["awb"],
         })
-        if sum(_CHANNEL_BUSES[item] == _CHANNEL_BUSES[channel] for item in enabled) == 1:
-            primary_path = _CHANNEL_PATHS[channel & ~1]
-            changes.update({
-                "{0}.vflip".format(primary_path): combo["vflip"],
-                "{0}.hflip".format(primary_path): combo["hflip"],
-                "{0}.ae_on".format(primary_path): combo["ae_on"],
-                "{0}.awb".format(primary_path): combo["awb"],
-            })
     return changes
 
 
