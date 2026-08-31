@@ -1117,7 +1117,7 @@ def test_release_plan_wraps_selected_command_and_keeps_warn_policy() -> None:
 
     assert "PLAN_COMMAND=(python3 run_mixed_combo_verify.py)" in command
     assert "PLAN_COMMAND=(python3 run_bps_quick.py)" in command
-    assert 'PLAN_COMMAND=(python3 pim_check.py --plan "${{ inputs.plan }}" --host "${{ env.TARGET_HOST }}")' in command
+    assert 'PLAN_COMMAND=(python3 pim_check.py --plan "${{ inputs.plan }}" --host "$TARGET_HOST")' in command
     assert '"${PLAN_COMMAND[@]}"' in command
     assert "if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then" in command
     assert "exit $rc" in command
@@ -1127,20 +1127,20 @@ def test_release_plan_wraps_selected_command_and_keeps_warn_policy() -> None:
     ("path", "job_name"),
     [("hw-verify.yml", "mixed-combo"), ("hw-verify-plan.yml", "plan-run")],
 )
-def test_compatibility_workflows_use_baseline_wired_target(
+def test_compatibility_workflows_use_configured_target_and_fail_closed(
     path: str,
     job_name: str,
 ) -> None:
-    """Compatibility jobs must measure the board that owns the committed baseline."""
+    """Compatibility jobs must pass the configured host to baseline-aware runners."""
     workflow = _workflow(path)
 
-    assert workflow["env"]["TARGET_HOST"] == "192.168.214.4"
+    assert workflow["env"]["TARGET_HOST"] == "${{ vars.TARGET_HOST }}"
     precheck = next(
         item for item in workflow["jobs"][job_name]["steps"]
         if item.get("name") == "Target reachability precheck"
     )["run"]
-    assert "192.168.0.5" not in precheck
-    assert "${{ env.TARGET_HOST }}" in precheck
+    assert '[ -z "$TARGET_HOST" ]' in precheck
+    assert '"$TARGET_HOST"' in precheck
 
 
 @pytest.mark.parametrize(

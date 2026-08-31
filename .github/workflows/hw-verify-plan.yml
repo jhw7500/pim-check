@@ -45,7 +45,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TARGET_HOST: 192.168.214.4
+  TARGET_HOST: ${{ vars.TARGET_HOST }}
 
 jobs:
   plan-run:
@@ -77,10 +77,14 @@ jobs:
 
       - name: Target reachability precheck
         run: |
-          ping -c 2 -W 2 ${{ env.TARGET_HOST }} >/dev/null \
+          if [ -z "$TARGET_HOST" ]; then
+            echo "::error::Repository variable TARGET_HOST is not configured"
+            exit 1
+          fi
+          ping -c 2 -W 2 "$TARGET_HOST" >/dev/null \
             || { echo "::error::target down"; exit 1; }
           sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-              -o LogLevel=ERROR root@${{ env.TARGET_HOST }} "echo SSH_OK" \
+              -o LogLevel=ERROR root@"$TARGET_HOST" "echo SSH_OK" \
               | grep -q SSH_OK || { echo "::error::ssh fail"; exit 1; }
 
       - name: Lint plan (실행 전 사전 검증)
@@ -115,7 +119,7 @@ jobs:
               PLAN_COMMAND=(python3 run_bps_quick.py)
               ;;
             *)
-              PLAN_COMMAND=(python3 pim_check.py --plan "${{ inputs.plan }}" --host "${{ env.TARGET_HOST }}")
+              PLAN_COMMAND=(python3 pim_check.py --plan "${{ inputs.plan }}" --host "$TARGET_HOST")
               ;;
           esac
           scripts/with_pim_board.sh \
