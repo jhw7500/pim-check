@@ -189,6 +189,15 @@ def test_publisher_is_hosted_write_scoped_and_triggered_only_by_measurement() ->
     assert "permissions" not in job
 
 
+def test_publisher_skips_deliberately_ineligible_measurement_runs() -> None:
+    """An all-skipped measurement must not overwrite PR evidence with an ERROR."""
+    workflow = _workflow("hw-evidence-publish.yml")
+
+    assert workflow["jobs"]["publish"]["if"] == (
+        "github.event.workflow_run.conclusion != 'skipped'"
+    )
+
+
 def test_publisher_downloads_only_triggering_artifact_and_always_runs_trusted_code() -> None:
     """A failed or missing measurement artifact must still reach trusted validation."""
     workflow = _workflow("hw-evidence-publish.yml")

@@ -446,6 +446,15 @@ def test_legacy_local_bps_uses_baseline_wired_target(
         def __init__(self, host: str, **_credentials: object) -> None:
             opened.append(host)
 
+        def run(self, command: str) -> str:
+            if command == "modinfo -n max9296":
+                return "/usr/lib/modules/max9296.ko"
+            if command.startswith("readlink -f -- "):
+                return "/usr/lib/modules/max9296.ko"
+            if command.startswith("sha256sum -- "):
+                return "{0}  /usr/lib/modules/max9296.ko".format("1" * 64)
+            raise AssertionError("unexpected command: {0}".format(command))
+
         def close(self) -> None:
             closed.append(True)
 
@@ -455,6 +464,12 @@ def test_legacy_local_bps_uses_baseline_wired_target(
 
     loaded = type("Loaded", (), {"data": {
         "comparability": {"target_host": "192.168.214.4"},
+        "target_identity": [{
+            "id": "max9296.module_sha256",
+            "kind": "module_sha256",
+            "module": "max9296",
+            "sha256": "1" * 64,
+        }],
         "gates": {"bps_quick": {}},
     }})()
     if target_host is None:
@@ -474,6 +489,64 @@ def test_legacy_local_bps_uses_baseline_wired_target(
     bps_module.run_local_bps(tmp_path / "result.json")
 
     assert opened == [expected_host]
+    assert closed == [True]
+
+
+def test_legacy_local_bps_rejects_mismatched_target_identity_before_measurement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A matching host must not make an uncalibrated module comparable."""
+    import hw_gate.adapters.bps as bps_module
+
+    adapter_called: list[bool] = []
+    closed: list[bool] = []
+
+    class BoundarySsh:
+        def __init__(self, _host: str, **_credentials: object) -> None:
+            pass
+
+        def run(self, command: str) -> str:
+            if command == "modinfo -n max9296":
+                return "/usr/lib/modules/max9296.ko"
+            if command.startswith("readlink -f -- "):
+                return "/usr/lib/modules/max9296.ko"
+            if command.startswith("sha256sum -- "):
+                return "{0}  /usr/lib/modules/max9296.ko".format("2" * 64)
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        def close(self) -> None:
+            closed.append(True)
+
+    class StubAdapter:
+        def run(self, _context: AdapterContext) -> dict:
+            adapter_called.append(True)
+            return {"verdict": "PASS", "restoration": {"verdict": "PASS"}}
+
+    loaded = type("Loaded", (), {"data": {
+        "comparability": {"target_host": "192.168.214.4"},
+        "target_identity": [{
+            "id": "max9296.module_sha256",
+            "kind": "module_sha256",
+            "module": "max9296",
+            "sha256": "1" * 64,
+        }],
+        "gates": {"bps_quick": {}},
+    }})()
+    monkeypatch.delenv("TARGET_HOST", raising=False)
+    monkeypatch.setattr(bps_module, "load_baseline", lambda _path: loaded)
+    monkeypatch.setattr(
+        bps_module,
+        "load_profile",
+        lambda *_args: {"target": {"user": "root", "password": "root"}},
+    )
+    monkeypatch.setattr(bps_module, "SshClient", BoundarySsh)
+    monkeypatch.setattr(bps_module, "BpsAdapter", StubAdapter)
+
+    with pytest.raises(EvidenceError, match="target identity.*mismatch"):
+        bps_module.run_local_bps(tmp_path / "result.json")
+
+    assert adapter_called == []
     assert closed == [True]
 
 

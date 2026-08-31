@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
 
     steps:

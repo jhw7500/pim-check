@@ -18,7 +18,7 @@ from hw_gate.transaction import StrictHardwareTransaction, TransactionRestoratio
 from setup import EDGECONF_PATH, SetupManager
 from ssh import SshClient
 
-from .base import AdapterContext
+from .base import AdapterContext, verify_target_identity
 
 
 BPS_SETPOINTS = (1024, 2048, 4096, 8192)
@@ -365,6 +365,7 @@ def run_local_bps(output_path: Path) -> dict:
         password=target.get("password", "root"),
     )
     try:
+        verify_target_identity(ssh, loaded.data)
         gate = BpsAdapter().run(AdapterContext(
             ssh=ssh,
             baseline_gate=loaded.data["gates"]["bps_quick"],
