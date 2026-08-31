@@ -2,7 +2,7 @@
   "schema_version": 1,
   "created_at": "2026-08-27T02:36:37Z",
   "source_commit": "b7b742272bacec81f8f01e1c317aea01b054bf9a",
-  "board": {"id": "pim", "target_host": "192.168.214.4", "identity": [{"id": "max9296.module_sha256", "kind": "module_sha256", "module": "max9296", "expected": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33", "actual": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33"}]},
+  "board": {"id": "pim", "target_host": "192.168.214.4", "identity": [{"id": "max9296.module_sha256", "kind": "module_sha256", "module": "max9296", "path": "/usr/lib/modules/max9296.ko", "expected": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33", "actual": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33"}]},
   "baseline": {"path": "baselines/hw-baseline.json", "sha256": "34446baab10241777d77fafc52b93d955a3a6457977423b6d18fafd6a307d961", "source_commit": "b7b742272bacec81f8f01e1c317aea01b054bf9a"},
   "comparability": {"board_id": "pim", "target_host": "192.168.214.4", "bps_fixture": "multi_1ch_0_720p", "encoder": "h265"},
   "deployment": {"mode": "predeployed", "verified": false},

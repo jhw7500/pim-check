@@ -117,13 +117,18 @@ def _validate_gate(gate: object, field: str) -> None:
     if not _SHA256_RE.fullmatch(digest):
         raise EvidenceError("{0}.raw_output.sha256 must be a lowercase SHA-256".format(field))
 
-    for component in ("identity", "restoration"):
-        if component in payload:
-            _validate_verdict(
-                _require_mapping(payload[component], "{0}.{1}".format(field, component)).get("verdict"),
-                "{0}.{1}.verdict".format(field, component),
-                _COMPONENT_VERDICTS,
-            )
+    if "identity" in payload:
+        _validate_verdict(
+            _require_mapping(payload["identity"], "{0}.identity".format(field)).get("verdict"),
+            "{0}.identity.verdict".format(field),
+            _COMPONENT_VERDICTS,
+        )
+    restoration = _require_mapping(payload.get("restoration"), "{0}.restoration".format(field))
+    _validate_verdict(
+        restoration.get("verdict"),
+        "{0}.restoration.verdict".format(field),
+        _COMPONENT_VERDICTS,
+    )
 
     preconditions = _require_list(payload.get("preconditions"), "{0}.preconditions".format(field))
     _validate_unique_ids(preconditions, "{0}.preconditions".format(field))
@@ -264,6 +269,24 @@ def _canonical_baseline_gates(baseline: Dict[str, Any]) -> List[Dict[str, Any]]:
     return gates
 
 
+def _canonical_identity_matches(document: Dict[str, Any], baseline: Dict[str, Any]) -> bool:
+    """Revalidate recorded target claims against the committed identity inventory."""
+    from checks.target_identity import TargetIdentityCheck
+
+    board = _require_mapping(document.get("board"), "board")
+    comparability = baseline["comparability"]
+    if board.get("id") != comparability["board_id"]:
+        return False
+    if board.get("target_host") != comparability["target_host"]:
+        return False
+    claims = _require_list(board.get("identity"), "board.identity")
+    valid, _reason = TargetIdentityCheck().validate(
+        {"claims": claims, "errors": []},
+        {"target_identity": baseline["target_identity"]},
+    )
+    return valid
+
+
 def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[str, Any]]) -> Verdict:
     """Recompute a verdict from validated evidence, never trusting producer claims."""
     try:
@@ -281,6 +304,8 @@ def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[
 
             validate_baseline(baseline_data, production=True)
             if document.get("comparability") != baseline_data["comparability"]:
+                return Verdict.ERROR
+            if not _canonical_identity_matches(document, baseline_data):
                 return Verdict.ERROR
             baseline_gates = _canonical_baseline_gates(baseline_data)
         else:

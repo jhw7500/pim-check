@@ -52,6 +52,7 @@ def raw_gate_from(baseline: dict, gate_id: str = "bps_quick") -> dict:
             }
             for metric_id, metric in gate["metrics"].items()
         ],
+        "restoration": {"verdict": "PASS"},
         "diagnostic_refs": [],
         "errors": [],
         "verdict": "PASS",
@@ -59,10 +60,32 @@ def raw_gate_from(baseline: dict, gate_id: str = "bps_quick") -> dict:
 
 
 def raw_document_from(baseline: dict) -> dict:
+    identities = []
+    for descriptor in baseline["target_identity"]:
+        expected_key = "version" if descriptor["kind"] == "module_version" else "sha256"
+        claim = {
+            "id": descriptor["id"],
+            "kind": descriptor["kind"],
+            "expected": descriptor[expected_key],
+            "actual": descriptor[expected_key],
+        }
+        if descriptor["kind"].startswith("module_"):
+            claim["module"] = descriptor["module"]
+        if descriptor["kind"] == "module_sha256":
+            claim["path"] = "/usr/lib/modules/{0}.ko".format(descriptor["module"])
+        elif descriptor["kind"] == "file_sha256":
+            claim["requested_path"] = descriptor["path"]
+            claim["path"] = descriptor["path"]
+        identities.append(claim)
     return {
         "schema_version": 1,
         "created_at": "2026-08-26T00:00:00Z",
         "deployment": {"mode": "predeployed", "verified": False},
+        "board": {
+            "id": baseline["comparability"]["board_id"],
+            "target_host": baseline["comparability"]["target_host"],
+            "identity": identities,
+        },
         "comparability": copy.deepcopy(baseline["comparability"]),
         "gates": [raw_gate_from(baseline, gate_id) for gate_id in baseline["gates"]],
         "verdict": "PASS",
@@ -272,6 +295,19 @@ def test_recompute_uses_committed_baseline_coverage_and_rules() -> None:
 
     document = raw_document_from(baseline)
     document["gates"][0]["metrics"].pop()
+    assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
+
+
+@pytest.mark.parametrize("mutation", ["empty", "mismatch"])
+def test_recompute_rejects_board_identity_not_matching_committed_baseline(mutation: str) -> None:
+    """Producer identity verdicts cannot replace publisher-side claim comparison."""
+    baseline = json.loads(PRODUCTION_BASELINE.read_text(encoding="utf-8"))
+    document = json.loads(REVIEWED_PASS_FIXTURE.read_text(encoding="utf-8"))
+    if mutation == "empty":
+        document["board"]["identity"] = []
+    else:
+        document["board"]["identity"][0]["actual"] = "0" * 64
+
     assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
 
 

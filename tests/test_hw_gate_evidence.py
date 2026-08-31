@@ -186,6 +186,14 @@ def test_component_error_precedes_another_component_fail(component: str) -> None
     assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.ERROR
 
 
+def test_missing_restoration_recomputes_error() -> None:
+    """A producer must not obtain PASS by omitting mandatory restore evidence."""
+    document = load_document()
+    del document["gates"][0]["restoration"]
+
+    assert recompute_overall_verdict(document, baseline_for(document)) is Verdict.ERROR
+
+
 def test_precondition_observation_mismatch_recomputes_fail_despite_producer_pass() -> None:
     """Trusting a producer PASS after its observed precondition changed must fail."""
     document = load_document()

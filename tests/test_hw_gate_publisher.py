@@ -470,11 +470,14 @@ def test_another_authors_marker_lookalike_is_not_updated() -> None:
     )
 
 
-def test_comment_html_escapes_all_artifact_strings() -> None:
+def test_comment_html_escapes_validated_artifact_strings() -> None:
     """Validated measured strings must remain inert in GitHub-rendered HTML."""
     client = FakeGithubClient()
     document = json.loads(evidence_bytes())
-    document["board"]["identity"][0]["actual"] = "<script>alert(1)</script>|**x**"
+    document["diagnostics"] = [{
+        "id": "measured.output",
+        "output": "<script>alert(1)</script>|**x**",
+    }]
 
     publish(client, json.dumps(document).encode("utf-8"))
 
