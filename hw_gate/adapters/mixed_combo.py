@@ -13,6 +13,7 @@ from config import load_profile
 from hw_gate.baseline import load_baseline
 from hw_gate.evidence import recompute_overall_verdict
 from hw_gate.rules import EvidenceError, Verdict, evaluate_rule
+from hw_gate.termination import installed_termination_handlers
 from hw_gate.transaction import (
     StrictHardwareTransaction,
     TransactionRestorationError,
@@ -319,14 +320,15 @@ def run_local_mixed_combo(output_path: Path) -> dict:
         raise EvidenceError("target host does not match baseline comparability")
     ssh = SshClient(host, user=target.get("user", "root"), password=target.get("password", "root"))
     try:
-        recover_pending_transaction(SetupManager(ssh))
-        verify_target_identity(ssh, loaded.data)
-        gate = MixedComboAdapter().run(AdapterContext(
-            ssh=ssh, baseline_gate=loaded.data["gates"]["mixed_combo"],
-            run_id="mixed-combo-{0}".format(dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")),
-            raw_dir=output_path.parent / "raw",
-        ))
-        gate["verdict"] = evaluate_mixed_combo_gate(gate, loaded.data["gates"]["mixed_combo"]).value
-        return gate
+        with installed_termination_handlers():
+            recover_pending_transaction(SetupManager(ssh))
+            verify_target_identity(ssh, loaded.data)
+            gate = MixedComboAdapter().run(AdapterContext(
+                ssh=ssh, baseline_gate=loaded.data["gates"]["mixed_combo"],
+                run_id="mixed-combo-{0}".format(dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")),
+                raw_dir=output_path.parent / "raw",
+            ))
+            gate["verdict"] = evaluate_mixed_combo_gate(gate, loaded.data["gates"]["mixed_combo"]).value
+            return gate
     finally:
         ssh.close()

@@ -14,6 +14,7 @@ from config import load_profile
 from hw_gate.baseline import load_baseline
 from hw_gate.evidence import recompute_overall_verdict
 from hw_gate.rules import EvidenceError, Verdict, evaluate_rule
+from hw_gate.termination import installed_termination_handlers
 from hw_gate.transaction import (
     StrictHardwareTransaction,
     TransactionRestorationError,
@@ -369,15 +370,16 @@ def run_local_bps(output_path: Path) -> dict:
         password=target.get("password", "root"),
     )
     try:
-        recover_pending_transaction(SetupManager(ssh))
-        verify_target_identity(ssh, loaded.data)
-        gate = BpsAdapter().run(AdapterContext(
-            ssh=ssh,
-            baseline_gate=loaded.data["gates"]["bps_quick"],
-            run_id="bps-quick-{0}".format(dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")),
-            raw_dir=output_path.parent / "raw",
-        ))
-        gate["verdict"] = evaluate_bps_gate(gate, loaded.data["gates"]["bps_quick"]).value
-        return gate
+        with installed_termination_handlers():
+            recover_pending_transaction(SetupManager(ssh))
+            verify_target_identity(ssh, loaded.data)
+            gate = BpsAdapter().run(AdapterContext(
+                ssh=ssh,
+                baseline_gate=loaded.data["gates"]["bps_quick"],
+                run_id="bps-quick-{0}".format(dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")),
+                raw_dir=output_path.parent / "raw",
+            ))
+            gate["verdict"] = evaluate_bps_gate(gate, loaded.data["gates"]["bps_quick"]).value
+            return gate
     finally:
         ssh.close()

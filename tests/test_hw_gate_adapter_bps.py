@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -598,3 +599,61 @@ def test_legacy_local_bps_rejects_host_outside_baseline_before_connect(
         bps_module.run_local_bps(tmp_path / "result.json")
 
     assert opened == []
+
+
+def test_legacy_local_bps_unwinds_on_termination_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The compatibility runner must translate signals while its transaction can restore."""
+    import hw_gate.adapters.bps as bps_module
+
+    events: list[str] = []
+
+    class TerminationLike(BaseException):
+        pass
+
+    @contextlib.contextmanager
+    def handlers():
+        events.append("handler-enter")
+        try:
+            yield
+        finally:
+            events.append("handler-exit")
+
+    class BoundarySsh:
+        def __init__(self, _host: str, **_credentials: object) -> None:
+            pass
+
+        def close(self) -> None:
+            events.append("ssh-close")
+
+    class StubAdapter:
+        def run(self, _context: AdapterContext) -> dict:
+            events.append("adapter")
+            raise TerminationLike("simulated SIGTERM")
+
+    loaded = type("Loaded", (), {"data": {
+        "comparability": {"target_host": "192.168.214.4"},
+        "target_identity": [],
+        "gates": {"bps_quick": {}},
+    }})()
+    monkeypatch.delenv("TARGET_HOST", raising=False)
+    monkeypatch.setattr(bps_module, "load_baseline", lambda _path: loaded)
+    monkeypatch.setattr(bps_module, "load_profile", lambda *_args: {"target": {}})
+    monkeypatch.setattr(bps_module, "SshClient", BoundarySsh)
+    monkeypatch.setattr(bps_module, "BpsAdapter", StubAdapter)
+    monkeypatch.setattr(
+        bps_module, "recover_pending_transaction", lambda _manager: events.append("recover"),
+    )
+    monkeypatch.setattr(
+        bps_module, "verify_target_identity", lambda *_args: events.append("identity"),
+    )
+    monkeypatch.setattr(bps_module, "installed_termination_handlers", handlers)
+
+    with pytest.raises(TerminationLike, match="simulated SIGTERM"):
+        bps_module.run_local_bps(tmp_path / "result.json")
+
+    assert events == [
+        "handler-enter", "recover", "identity", "adapter", "handler-exit", "ssh-close",
+    ]

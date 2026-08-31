@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import datetime as dt
 import hashlib
 import json
 import os
 import re
-import signal
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable, Dict, Iterator, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 from checks.target_identity import TargetIdentityCheck
 from hw_gate.adapters.base import AdapterContext
@@ -28,6 +26,7 @@ from hw_gate.diagnostics import bounded_diagnostic_text, collect_diagnostics
 from hw_gate.evidence import recompute_overall_verdict, validate_structure
 from hw_gate.render import render_markdown
 from hw_gate.rules import EvidenceError, Verdict
+from hw_gate.termination import TerminationRequested, installed_termination_handlers
 from hw_gate.transaction import recover_pending_transaction
 from setup import SetupManager
 from ssh import SshClient
@@ -48,14 +47,6 @@ PROCESS_NAMES = ("gstApp", "pim-service")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-
-
-class TerminationRequested(BaseException):
-    """Raised by the two catchable termination signal handlers."""
-
-    def __init__(self, signum: int) -> None:
-        super().__init__("termination signal {0}".format(signum))
-        self.signum = signum
 
 
 def _utc_now() -> str:
@@ -415,23 +406,6 @@ def _validate_adapter_gate(gate: object, adapter_id: str, schema_version: int) -
         "gates": [gate],
         "verdict": Verdict.ERROR.value,
     })
-
-
-@contextlib.contextmanager
-def installed_termination_handlers() -> Iterator[None]:
-    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGHUP)}
-
-    def terminate(signum: int, frame: object) -> None:
-        del frame
-        raise TerminationRequested(signum)
-
-    try:
-        for signum in previous:
-            signal.signal(signum, terminate)
-        yield
-    finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
 
 
 def _collect_terminal_diagnostics(document: dict, ssh: object, raw_dir: Path) -> None:
