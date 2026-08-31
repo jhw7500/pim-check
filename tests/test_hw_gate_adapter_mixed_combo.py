@@ -382,6 +382,9 @@ def test_legacy_local_mixed_combo_uses_baseline_wired_target(
     monkeypatch.setattr(mixed_module, "SshClient", BoundarySsh)
     monkeypatch.setattr(mixed_module, "MixedComboAdapter", StubAdapter)
     monkeypatch.setattr(mixed_module, "evaluate_mixed_combo_gate", lambda *_args: Verdict.ERROR)
+    monkeypatch.setattr(
+        mixed_module, "recover_pending_transaction", lambda _manager: None,
+    )
 
     mixed_module.run_local_mixed_combo(tmp_path / "result.json")
 
@@ -396,7 +399,7 @@ def test_legacy_local_mixed_combo_rejects_mismatched_identity_before_measurement
     """A matching host must not authorize mixed-combo data from another module."""
     import hw_gate.adapters.mixed_combo as mixed_module
 
-    adapter_called: list[bool] = []
+    events: list[str] = []
     closed: list[bool] = []
 
     class BoundarySsh:
@@ -405,6 +408,7 @@ def test_legacy_local_mixed_combo_rejects_mismatched_identity_before_measurement
 
         def run(self, command: str) -> str:
             if command == "modinfo -n max9296":
+                events.append("identity")
                 return "/usr/lib/modules/max9296.ko"
             if command.startswith("readlink -f -- "):
                 return "/usr/lib/modules/max9296.ko"
@@ -417,7 +421,7 @@ def test_legacy_local_mixed_combo_rejects_mismatched_identity_before_measurement
 
     class StubAdapter:
         def run(self, _context: AdapterContext) -> dict:
-            adapter_called.append(True)
+            events.append("adapter")
             return {"verdict": "PASS", "restoration": {"verdict": "PASS"}}
 
     loaded = type("Loaded", (), {"data": {
@@ -439,11 +443,16 @@ def test_legacy_local_mixed_combo_rejects_mismatched_identity_before_measurement
     )
     monkeypatch.setattr(mixed_module, "SshClient", BoundarySsh)
     monkeypatch.setattr(mixed_module, "MixedComboAdapter", StubAdapter)
+    monkeypatch.setattr(
+        mixed_module,
+        "recover_pending_transaction",
+        lambda _manager: events.append("recover"),
+    )
 
     with pytest.raises(EvidenceError, match="target identity.*mismatch"):
         mixed_module.run_local_mixed_combo(tmp_path / "result.json")
 
-    assert adapter_called == []
+    assert events == ["recover", "identity"]
     assert closed == [True]
 
 

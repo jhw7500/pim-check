@@ -13,7 +13,11 @@ from config import load_profile
 from hw_gate.baseline import load_baseline
 from hw_gate.evidence import recompute_overall_verdict
 from hw_gate.rules import EvidenceError, Verdict, evaluate_rule
-from hw_gate.transaction import StrictHardwareTransaction, TransactionRestorationError
+from hw_gate.transaction import (
+    StrictHardwareTransaction,
+    TransactionRestorationError,
+    recover_pending_transaction,
+)
 from setup import SetupManager
 from ssh import SshClient
 
@@ -315,6 +319,7 @@ def run_local_mixed_combo(output_path: Path) -> dict:
         raise EvidenceError("target host does not match baseline comparability")
     ssh = SshClient(host, user=target.get("user", "root"), password=target.get("password", "root"))
     try:
+        recover_pending_transaction(SetupManager(ssh))
         verify_target_identity(ssh, loaded.data)
         gate = MixedComboAdapter().run(AdapterContext(
             ssh=ssh, baseline_gate=loaded.data["gates"]["mixed_combo"],
