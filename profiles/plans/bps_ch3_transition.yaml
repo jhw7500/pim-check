@@ -1,0 +1,29 @@
+# ch3 BPS 간헐 실패(#105) 최소 재현 plan.
+# smoke의 첫 두 카메라 case를 같은 캠페인에서 연속 실행해 case 간 상태 이월을 보존한다.
+
+name: "BPS ch3 Transition Reproduction"
+description: |
+  720p_2ch 직후 720p_4ch를 실행하여 ch3 8192kbps 미추종 간헐 실패를 재현한다.
+  case retry를 사용하지 않아 최초 관측 결과를 그대로 보존한다.
+version: 1
+
+cases:
+  regression:
+    - 720p_2ch
+    - 720p_4ch
+
+execution:
+  stop_on_fail: false
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 300
+  wait_between_cases: 0
+  monitor_until_pass: true
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: json
+    path: reports/bps_ch3_transition/{timestamp}.json
