@@ -11,7 +11,7 @@ import time
 # 0-9 도 lookbehind 에 넣어야 다중 자리(ch10→ch1#)에서 뒷자리만 매칭되는 버그를 막는다(PR #30 gemini).
 _MEASUREMENT_RE = re.compile(r"(?<![A-Za-z0-9])\d+")
 
-from checks import ALL_CHECKS
+from checks import checks_for_scope
 from ssh import SshClient, SshTimeoutError, SshConnectionError
 from verify_retry import is_stabilization_reason
 
@@ -29,7 +29,7 @@ class Engine:
                  emitter=None, emit_context: dict | None = None) -> None:
         self.ssh = ssh
         self.profile = profile
-        self.checks = list(ALL_CHECKS)
+        self.checks = checks_for_scope("snapshot")
         # 실시간 이벤트 emit (선택). emitter 가 있으면 validate Fail 순간 단일 fail
         # 이벤트를 emit_context(run_id/plan/board/case_name 등)와 함께 내보낸다.
         # None 이면 기존 validate 경로 그대로 (back-compat).

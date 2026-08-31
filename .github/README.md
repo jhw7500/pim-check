@@ -4,6 +4,39 @@ This directory contains GitHub Actions workflows for automated code review and q
 
 ## Workflows
 
+### Hardware evidence workflows
+
+`hw-evidence-measure.yml` is the board-facing phase-one measurement job. It
+runs only for a same-repository PR labeled `needs-hw-verify` (or a later
+synchronize event while that label remains) or a default-branch
+`workflow_dispatch` with a PR number. It checks out trusted workflow code,
+does not checkout or execute PR-head code, has only read permissions, and has
+no repository or board secret / no PR-write permission. It holds one
+`scripts/with_pim_board.sh --for 3h` lease; a busy board remains exit 4 and
+`BUSY`, with no wait or retry.
+
+The job binds its envelope and final artifacts to the full PR HEAD:
+`hw-results/<head>.candidate.json`, `hw-results/<head>.json`,
+`hw-results/<head>.md`, and `hw-results/raw/<head>/`. It always finalizes and
+uploads the artifact, including partial ERROR/BUSY outcomes. Measurement is
+explicitly a **predeployed measurement** (`deployment.verified=false`): it
+does not deploy a PR DTB or module. Dirty target transactions are recovered
+from the persistent journal before further probing or mutation.
+
+`hw-evidence-publish.yml` is a separate GitHub-hosted `workflow_run` publisher
+with the narrowly scoped `pull-requests: write` permission. It verifies the
+triggering workflow/run/attempt, same-repository PR, current PR HEAD, baseline
+binding, schema, and recomputed verdict before upserting the one
+`<!-- pim-check:hardware-evidence -->` comment owned by `github-actions[bot]`.
+If the measured HEAD is no longer current, it replaces that marker block with
+`STALE`; it does not overwrite human comments.
+
+The initial implementation PR cannot prove the new `pull_request_target` path
+before it merges. Bootstrap evidence is therefore mocked-contract coverage plus
+a manually leased phase-one measurement, not an automated trusted PR gate.
+Deployment/activation/rollback remain phase-two work under a separate reviewed
+design.
+
 ### Claude Code Workflows
 
 #### 1. `claude.yml` - Interactive Claude Code Assistant

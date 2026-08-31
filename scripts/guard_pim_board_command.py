@@ -25,6 +25,8 @@ HARDWARE_RUNNERS = {
 HARDWARE_RUNNER_MODULES = {
     runner[:-3]: runner for runner in HARDWARE_RUNNERS if runner.endswith(".py")
 }
+HW_GATE_HARDWARE_SUBCOMMANDS = {"measure", "calibrate"}
+HW_GATE_LOCAL_SUBCOMMANDS = {"prepare", "finalize", "validate"}
 FIND_PLACEHOLDER_EXECUTION_TARGETS = tuple(
     sorted(HARDWARE_RUNNERS | {"pim_check.py", "pim-check", "pim_check"})
 )
@@ -868,6 +870,8 @@ def _python_module_script(
         arguments = arguments[1:]
     if module == "pim_check":
         return "pim_check.py", arguments
+    if module in {"hw_gate", "hw_gate.__main__"}:
+        return "hw_gate", arguments
     runner = HARDWARE_RUNNER_MODULES.get(module)
     if runner is not None:
         return runner, arguments
@@ -917,6 +921,19 @@ def _pim_check_arguments_are_blocked(arguments: list[str]) -> bool:
         argument.partition("=")[0] in PIM_CHECK_PLAN_OPTIONS
         for argument in arguments
     )
+
+
+def _hw_gate_arguments_are_blocked(arguments: list[str]) -> bool:
+    if not arguments:
+        raise ValueError("hw_gate requires a subcommand")
+    subcommand = _require_static_token(
+        arguments[0], "hw_gate subcommand"
+    )
+    if subcommand in HW_GATE_HARDWARE_SUBCOMMANDS:
+        return True
+    if subcommand in HW_GATE_LOCAL_SUBCOMMANDS:
+        return False
+    raise ValueError("unknown or ambiguous hw_gate subcommand")
 
 
 def _skip_exec_short_options(
@@ -2946,6 +2963,8 @@ def _segment_is_blocked(
     script, arguments = _python_script(tokens, command_index)
     if script in HARDWARE_RUNNERS:
         return True
+    if script == "hw_gate":
+        return _hw_gate_arguments_are_blocked(arguments)
     return script == "pim_check.py" and _pim_check_arguments_are_blocked(
         arguments
     )

@@ -31,6 +31,8 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 | `color.py` | 터미널 ANSI 컬러 출력 유틸 |
 | `stream.py` | 스트리밍 유틸리티 |
 | `runner_loop.py` | Docker 컨테이너용 정기 실행 루프 |
+| `hw_gate/` | predeployed hardware evidence package — HEAD-bound envelope/measurement/finalization, strict transactions, baseline evaluation, and trusted publisher helpers |
+| `baselines/hw-baseline.json` | 사람이 검토·commit한 hardware-evidence policy, wired target identity, BPS calibration provenance, and mixed-combo metrics |
 | `Dockerfile` | Python 3.11-slim 기반 컨테이너 이미지 |
 | `docker-compose.yml` | dashboard + runner 2-서비스 구성 |
 | `pyproject.toml` | 빌드 설정. Python >=3.9, 의존성: pyyaml, paramiko |
@@ -47,7 +49,7 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 | `deploy/` | 배포 설정 (Grafana, systemd) — `deploy/AGENTS.md` 참조 |
 | `reports/` | 테스트 결과 출력 디렉토리 (gitignore 대상, 런타임 생성) |
 | `docs/` | 참조 문서 (체크리스트 Excel 등) |
-| `.github/workflows/` | CI/CD GitHub Actions |
+| `.github/workflows/` | CI/CD GitHub Actions, including read-only self-hosted `hw-evidence-measure.yml` and GitHub-hosted publisher `hw-evidence-publish.yml` |
 
 ## For AI Agents
 
@@ -57,11 +59,24 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 - SSH 명령은 반드시 `SshClient.run()`을 통해 실행. 직접 subprocess 호출 금지.
 - `setup.py`의 `SetupManager`는 edgeconf 변경 시 반드시 backup → apply → reboot → test → restore → reboot 순서를 지킨다.
 - `reporter.py`, `html_reporter.py`, `junit_reporter.py`는 결과 포맷만 담당. 체크 로직을 넣지 않는다.
+- hardware evidence는 `hw_gate`가 canonical verdict를 중앙 재계산한다. adapter/collector의
+  process exit 0 또는 legacy boolean은 PASS 근거가 아니다. 새 numeric policy는
+  `baselines/hw-baseline.json`에 review 가능한 형태로만 추가한다.
+- `hw_gate measure`/`calibrate`는 고정 wired target `192.168.214.4`에서만 동작하며
+  `scripts/with_pim_board.sh --for 3h --purpose ... --` 아래 실행한다. BUSY exit 4는
+  visible failure다; wait/retry/direct acquire/`|| true`를 추가하지 않는다.
+- hardware mutation은 strict snapshot → persistent journal → apply/reboot → measure →
+  exact restore/reboot/hash verification 순서다. `/root/shared_v/pim-check-recovery/`의
+  dirty journal은 다음 run이 probe 전 recovery해야 하며 failure는 ERROR다.
+- phase one은 `predeployed measurement` (`deployment.verified=false`)이다. PR artifact
+  deployment/activation/rollback 또는 deployed-PR claim을 구현·문서화하지 않는다.
 
 ### Testing Requirements
 - `pytest` 실행: 프로젝트 루트에서 `pytest`
 - SSH 의존 테스트는 모킹 처리됨 — 실제 타겟 불필요
 - 새 체크 추가 시 `tests/test_checks_{name}.py` 테스트 필수
+- hardware evidence는 모든 pytest를 mocked SSH로 검증한다. 실제 보드 lease, workflow
+  실행, secret 또는 PR comment mutation은 별도의 controlled acceptance 범위다.
 
 ### Architecture Overview
 ```

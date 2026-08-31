@@ -417,6 +417,10 @@ class SetupManager:
         돌려주므로(ssh.py) 여기까지 오지 않는다. `-w` 를 무시하고 접어서 출력하는
         구현에서만 의미가 있다.
         """
+        # A failed retry must not leave an older payload looking as though it
+        # passed this validation attempt.  Strict mutation callers consume the
+        # snapshot only through get_snapshot_payload().
+        self._config_snapshots.pop(conf_path, None)
         try:
             out = self.ssh.run(f"base64 -w0 {conf_path} 2>/dev/null")
         except Exception:
@@ -430,6 +434,10 @@ class SetupManager:
             return False
         self._config_snapshots[conf_path] = compact
         return True
+
+    def get_snapshot_payload(self, conf_path: str) -> str | None:
+        """Return the validated base64 snapshot captured by snapshot_config()."""
+        return self._config_snapshots.get(conf_path)
 
     def restore_from_snapshot(self, conf_path: str) -> bool:
         """호스트 스냅샷에서 설정 파일을 되돌린다. 스냅샷이 없으면 False.

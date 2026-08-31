@@ -1,0 +1,76 @@
+name: Publish Hardware Evidence
+
+"on":
+  workflow_run:
+    workflows: [Hardware Evidence Measurement]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current default-branch publisher
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download triggering hardware evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        continue-on-error: true
+        with:
+          name: hw-evidence-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: hw-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Select downloaded evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("hw-results")
+          candidates = []
+          if root.is_dir():
+              candidates = [
+                  path
+                  for path in root.iterdir()
+                  if not path.is_symlink()
+                  and path.is_file()
+                  and re.fullmatch(r"[0-9a-f]{40}\.json", path.name)
+              ]
+          if len(candidates) == 1 and candidates[0].stat().st_size <= 1_048_576:
+              evidence = candidates[0]
+          else:
+              fallback = Path(".publisher-input")
+              fallback.mkdir(mode=0o700, exist_ok=True)
+              evidence = fallback / "malformed.json"
+              evidence.write_bytes(b"{}")
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as stream:
+              stream.write("EVIDENCE_PATH={0}\n".format(evidence))
+          PY
+
+      - name: Publish trusted hardware evidence
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TRIGGERING_WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRIGGERING_WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          python3 scripts/publish_hw_evidence.py \
+            --evidence "$EVIDENCE_PATH" \
+            --artifact-root hw-results \
+            --workflow-run-id "$TRIGGERING_WORKFLOW_RUN_ID" \
+            --workflow-run-attempt "$TRIGGERING_WORKFLOW_RUN_ATTEMPT"

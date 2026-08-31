@@ -34,6 +34,12 @@ pytest 테스트 스위트. 모든 핵심 모듈에 대한 단위 테스트와 �
 | `test_integration.py` | 엔드투엔드 통합 테스트 |
 | `test_simulation.py` | 장애 시뮬레이션 테스트 |
 | `test_gaps.py` | 테스트 커버리지 갭 확인 |
+| `test_hw_gate_rules.py` / `test_hw_gate_evidence.py` | canonical numeric rule, schema, verdict precedence/coverage fail-closed 검증 |
+| `test_hw_gate_baseline.py` / `test_hw_gate_calibration.py` | committed baseline binding과 human-review-only three-run candidate 검증 |
+| `test_hw_gate_transaction.py` / `test_hw_gate_cli.py` | strict snapshot/journal recovery, HEAD-bound artifacts, terminal finalization 검증 |
+| `test_hw_gate_adapter_*.py` / `test_checks_*_evidence.py` | BPS·mixed-combo adapter와 scoped evidence collector의 mocked SSH 검증 |
+| `test_hw_gate_publisher.py` / `test_integration_hw_evidence_workflows.py` | split workflow trust binding, marker upsert, stale HEAD, permissions/lease contract 검증 |
+| `fixtures/hw_gate/` | schema-valid evidence, baseline, raw collector golden fixtures |
 
 ## For AI Agents
 
@@ -41,6 +47,12 @@ pytest 테스트 스위트. 모든 핵심 모듈에 대한 단위 테스트와 �
 - 실행: 프로젝트 루트에서 `pytest` (pyproject.toml에 testpaths 설정됨)
 - SSH mock 패턴: `SshClient` 인스턴스의 `run` 메서드를 lambda나 MagicMock으로 교체
 - 새 체크 추가 시 `test_checks_{name}.py` 파일 생성 필수 — collect/validate 각각 테스트
+- hardware evidence tests are local-only: mock SSH, GitHub REST, signal/transaction seams.
+  Do not acquire a PIM lease, run a workflow, or require a physical target. Controlled
+  hardware acceptance is a separately authorized phase.
+- baseline candidate tests must preserve the review boundary: calibration writes a separate
+  candidate and never mutates `baselines/hw-baseline.json`; missing/unbaselined metrics must
+  remain ERROR rather than becoming PASS.
 - 파일명 규칙 (pim-check#94 로 3분류 보완 — 코퍼스 실태 반영):
   - **모듈 대응**: `test_{module}.py` 또는 `test_{module}_{topic}.py` — 접두가
     대상 모듈과 1:1 (예: `test_plan_gate`, `test_setup_snapshot`,

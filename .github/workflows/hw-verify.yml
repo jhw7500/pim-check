@@ -1,6 +1,6 @@
 name: Hardware Verification (mixed_combo)
 
-# 실물 타겟(192.168.0.5) + SSH + 재부팅이 필요한 검증 워크플로우.
+# 실물 타겟(유선 192.168.214.4) + SSH + 재부팅이 필요한 검증 워크플로우.
 # self-hosted runner가 빌드서버에 설치되어 있어야 동작.
 #
 # 트리거:
@@ -34,9 +34,10 @@ concurrency:
   group: pim-target-lock
   cancel-in-progress: false   # 실행 중이면 새 트리거는 큐에 대기
 
-# 타겟 IP 단일 소스. 환경 변경 시 이 값만 수정하면 모든 SSH runner가 자동 적용됨.
+# committed baseline의 comparability.target_host와 동일해야 한다.
+# 다른 보드로 바꾸려면 baseline을 별도 calibration/review로 함께 갱신한다.
 env:
-  TARGET_HOST: 192.168.0.5
+  TARGET_HOST: 192.168.214.4
 
 jobs:
   mixed-combo:
@@ -80,14 +81,14 @@ jobs:
 
       - name: Target reachability precheck
         run: |
-          if ! ping -c 2 -W 2 192.168.0.5 >/dev/null 2>&1; then
-            echo "::error::Target 192.168.0.5 unreachable from runner"
+          if ! ping -c 2 -W 2 ${{ env.TARGET_HOST }} >/dev/null 2>&1; then
+            echo "::error::Target ${{ env.TARGET_HOST }} unreachable from runner"
             exit 1
           fi
           if ! sshpass -p root ssh -o StrictHostKeyChecking=no \
                 -o ConnectTimeout=5 -o LogLevel=ERROR \
-                root@192.168.0.5 "echo SSH_OK" 2>/dev/null | grep -q SSH_OK; then
-            echo "::error::SSH to root@192.168.0.5 failed"
+                root@${{ env.TARGET_HOST }} "echo SSH_OK" 2>/dev/null | grep -q SSH_OK; then
+            echo "::error::SSH to root@${{ env.TARGET_HOST }} failed"
             exit 1
           fi
           echo "Target reachable, SSH OK"
@@ -120,13 +121,21 @@ jobs:
           python3 <<'PYEOF'
           import json
           d = json.load(open('mixed_combo_results.json'))
-          print('=== Test Summary ===')
-          for r in d:
-              if 'error' in r:
-                  print(f"  [ERROR] Test {r['test_id']}: {r['error']}")
-              else:
-                  sub = sum(1 for x in r['results'] if x['all_pass'])
-                  total = len(r['results'])
-                  mark = 'PASS' if r['pass'] else 'FAIL'
-                  print(f"  [{mark}] Test {r['test_id']}: {sub}/{total} ch — {r['name']}")
+          if not isinstance(d, dict):
+              raise SystemExit('invalid mixed-combo gate result: expected object')
+          metrics = d.get('metrics', [])
+          if not isinstance(metrics, list):
+              metrics = []
+          passed = sum(
+              1 for metric in metrics
+              if isinstance(metric, dict) and metric.get('verdict') == 'PASS'
+          )
+          print('=== Hardware Gate Summary ===')
+          print(f"Verdict: {d.get('verdict', 'ERROR')}")
+          print(f"Metrics: {passed}/{len(metrics)} PASS")
+          errors = d.get('errors', [])
+          if isinstance(errors, list):
+              for error in errors:
+                  if isinstance(error, dict):
+                      print(f"Error: {error.get('code', 'unknown')} — {error.get('message', '')}")
           PYEOF

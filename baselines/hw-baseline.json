@@ -1,0 +1,94 @@
+{
+  "baseline_version": "2026-08-29.2",
+  "calibration": {
+    "bps": {
+      "samples": {
+        "1024": [1022222, 1009410, 1020657],
+        "2048": [1997342, 2046849, 2035204],
+        "4096": [4091587, 4102775, 4075159],
+        "8192": [8168030, 8142263, 8131263]
+      },
+      "source_run_ids": [
+        "baseline-calibration-20260827T020037364442Z-1",
+        "baseline-calibration-20260827T022044471753Z-2",
+        "baseline-calibration-20260827T023637546955Z-3"
+      ]
+    }
+  },
+  "comparability": {
+    "board_id": "pim",
+    "bps_fixture": "multi_1ch_0_720p",
+    "encoder": "h265",
+    "target_host": "192.168.214.4"
+  },
+  "gates": {
+    "bps_quick": {
+      "adapter_schema_version": 1,
+      "comparability": {"encoder": "h265", "fixture": "multi_1ch_0_720p"},
+      "metrics": {
+        "bps.ch0.1024.baseline": {"rule": {"kind": "relative", "max_percent_delta": 5, "reference": 1020657}, "unit": "bps", "value": 1020657},
+        "bps.ch0.1024.target": {"rule": {"kind": "relative", "max_percent_delta": 10, "reference": 1024000}, "unit": "bps", "value": 1024000},
+        "bps.ch0.2048.baseline": {"rule": {"kind": "relative", "max_percent_delta": 5, "reference": 2035204}, "unit": "bps", "value": 2035204},
+        "bps.ch0.2048.target": {"rule": {"kind": "relative", "max_percent_delta": 10, "reference": 2048000}, "unit": "bps", "value": 2048000},
+        "bps.ch0.4096.baseline": {"rule": {"kind": "relative", "max_percent_delta": 5, "reference": 4091587}, "unit": "bps", "value": 4091587},
+        "bps.ch0.4096.target": {"rule": {"kind": "relative", "max_percent_delta": 10, "reference": 4096000}, "unit": "bps", "value": 4096000},
+        "bps.ch0.8192.baseline": {"rule": {"kind": "relative", "max_percent_delta": 5, "reference": 8142263}, "unit": "bps", "value": 8142263},
+        "bps.ch0.8192.target": {"rule": {"kind": "relative", "max_percent_delta": 10, "reference": 8192000}, "unit": "bps", "value": 8192000}
+      }
+    },
+    "mixed_combo": {
+      "adapter_schema_version": 1,
+      "comparability": {"scenario_matrix": "A-D-1920x1080-30fps"},
+      "metrics": {
+        "mixed_combo.test1.bus1.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},
+        "mixed_combo.test1.bus2.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},
+        "mixed_combo.test1.ch1.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 665},
+        "mixed_combo.test1.ch1.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4447},
+        "mixed_combo.test1.ch1.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 2},
+        "mixed_combo.test1.ch3.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 656},
+        "mixed_combo.test1.ch3.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4432},
+        "mixed_combo.test1.ch3.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 1},
+        "mixed_combo.test2.bus1.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},
+        "mixed_combo.test2.bus2.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},
+        "mixed_combo.test2.ch0.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 665},
+        "mixed_combo.test2.ch0.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4432},
+        "mixed_combo.test2.ch0.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 3},
+        "mixed_combo.test2.ch2.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 656},
+        "mixed_combo.test2.ch2.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4447},
+        "mixed_combo.test2.ch2.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 0},
+        "mixed_combo.test3.bus1.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 0},
+        "mixed_combo.test3.bus2.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 3},
+        "mixed_combo.test3.ch0.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 665},
+        "mixed_combo.test3.ch0.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4447},
+        "mixed_combo.test3.ch0.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 2},
+        "mixed_combo.test3.ch1.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 656},
+        "mixed_combo.test3.ch1.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4432},
+        "mixed_combo.test3.ch1.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 1},
+        "mixed_combo.test4.bus1.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 3},
+        "mixed_combo.test4.bus2.mode_mask": {"rule": {"kind": "exact"}, "unit": "mode_mask", "value": 3},
+        "mixed_combo.test4.ch0.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 665},
+        "mixed_combo.test4.ch0.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4447},
+        "mixed_combo.test4.ch0.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 2},
+        "mixed_combo.test4.ch1.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 656},
+        "mixed_combo.test4.ch1.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4432},
+        "mixed_combo.test4.ch1.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 1},
+        "mixed_combo.test4.ch2.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 665},
+        "mixed_combo.test4.ch2.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4432},
+        "mixed_combo.test4.ch2.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 3},
+        "mixed_combo.test4.ch3.ae": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 656},
+        "mixed_combo.test4.ch3.awb": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 4447},
+        "mixed_combo.test4.ch3.rotation": {"rule": {"kind": "exact"}, "unit": "register_word", "value": 0}
+      }
+    }
+  },
+  "schema_version": 1,
+  "source_commit": "b7b742272bacec81f8f01e1c317aea01b054bf9a",
+  "target_identity": [
+    {
+      "id": "max9296.module_sha256",
+      "kind": "module_sha256",
+      "module": "max9296",
+      "sha256": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33"
+    }
+  ]
+}

@@ -61,6 +61,20 @@ class TestEngine:
         assert "logs" in names
         assert "recording" in names
 
+    def test_snapshot_excludes_hardware_evidence_checks_but_registry_exposes_them(self):
+        """A hardware collector must never make ordinary health snapshots fail."""
+        from checks import checks_for_scope
+        from engine import Engine
+
+        engine = Engine(self.ssh, self.profile)
+
+        assert {check.name for check in engine.checks}.isdisjoint({
+            "target_identity", "bps_evidence", "mixed_combo_evidence",
+        })
+        assert {check.name for check in checks_for_scope("hardware_evidence")} == {
+            "target_identity", "bps_evidence", "mixed_combo_evidence",
+        }
+
     @patch("engine.time.sleep")
     def test_run_monitor_until_pass_exits_on_clean_snapshot(self, mock_sleep):
         # finalize-aware: 첫 '전 체크 통과' 스냅샷에서 조기 종료한다.

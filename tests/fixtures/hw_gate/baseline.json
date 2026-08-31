@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "baseline_version": "2026-08-26.1",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "comparability": {
+    "board_id": "pim",
+    "target_host": "192.168.214.4",
+    "bps_fixture": "multi_1ch_0_720p",
+    "encoder": "h265"
+  },
+  "target_identity": [
+    {
+      "id": "max9296.module_sha256",
+      "kind": "module_sha256",
+      "module": "max9296",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "gates": {
+    "bps_quick": {
+      "adapter_schema_version": 1,
+      "comparability": {"fixture": "multi_1ch_0_720p", "encoder": "h265"},
+      "metrics": {
+        "bps.ch0.1024.target": {"value": 1024000, "unit": "bps", "rule": {"kind": "relative", "reference": 1024000, "max_percent_delta": 10}},
+        "bps.ch0.1024.baseline": {"value": 1025000, "unit": "bps", "rule": {"kind": "relative", "reference": 1025000, "max_percent_delta": 5}},
+        "bps.ch0.2048.target": {"value": 2048000, "unit": "bps", "rule": {"kind": "relative", "reference": 2048000, "max_percent_delta": 10}},
+        "bps.ch0.2048.baseline": {"value": 2050000, "unit": "bps", "rule": {"kind": "relative", "reference": 2050000, "max_percent_delta": 5}},
+        "bps.ch0.4096.target": {"value": 4096000, "unit": "bps", "rule": {"kind": "relative", "reference": 4096000, "max_percent_delta": 10}},
+        "bps.ch0.4096.baseline": {"value": 4100000, "unit": "bps", "rule": {"kind": "relative", "reference": 4100000, "max_percent_delta": 5}},
+        "bps.ch0.8192.target": {"value": 8192000, "unit": "bps", "rule": {"kind": "relative", "reference": 8192000, "max_percent_delta": 10}},
+        "bps.ch0.8192.baseline": {"value": 8200000, "unit": "bps", "rule": {"kind": "relative", "reference": 8200000, "max_percent_delta": 5}}
+      }
+    },
+    "mixed_combo": {
+      "adapter_schema_version": 1,
+      "comparability": {"scenario_matrix": "A-D-1920x1080-30fps"},
+      "metrics": {
+        "mixed_combo.test1.bus1.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.bus2.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.ch1.rotation": {"value": 2, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.ch1.ae": {"value": 665, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.ch1.awb": {"value": 4447, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.ch3.rotation": {"value": 1, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.ch3.ae": {"value": 656, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test1.ch3.awb": {"value": 4432, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.bus1.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.bus2.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.ch0.rotation": {"value": 3, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.ch0.ae": {"value": 665, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.ch0.awb": {"value": 4432, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.ch2.rotation": {"value": 0, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.ch2.ae": {"value": 656, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test2.ch2.awb": {"value": 4447, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.bus1.mode_mask": {"value": 0, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.bus2.mode_mask": {"value": 3, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.ch0.rotation": {"value": 2, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.ch0.ae": {"value": 665, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.ch0.awb": {"value": 4447, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.ch1.rotation": {"value": 1, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.ch1.ae": {"value": 656, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test3.ch1.awb": {"value": 4432, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.bus1.mode_mask": {"value": 3, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.bus2.mode_mask": {"value": 3, "unit": "mode_mask", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch0.rotation": {"value": 2, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch0.ae": {"value": 665, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch0.awb": {"value": 4447, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch1.rotation": {"value": 1, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch1.ae": {"value": 656, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch1.awb": {"value": 4432, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch2.rotation": {"value": 3, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch2.ae": {"value": 665, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch2.awb": {"value": 4432, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch3.rotation": {"value": 0, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch3.ae": {"value": 656, "unit": "register_word", "rule": {"kind": "exact"}},
+        "mixed_combo.test4.ch3.awb": {"value": 4447, "unit": "register_word", "rule": {"kind": "exact"}}
+      }
+    }
+  },
+  "calibration": {
+    "bps": {
+      "source_run_ids": ["bps-calibration-run-1", "bps-calibration-run-2", "bps-calibration-run-3"],
+      "samples": {
+        "1024": [1024000, 1025000, 1026000],
+        "2048": [2048000, 2050000, 2052000],
+        "4096": [4096000, 4100000, 4104000],
+        "8192": [8192000, 8200000, 8208000]
+      }
+    }
+  }
+}
