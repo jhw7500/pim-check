@@ -106,6 +106,28 @@ class TestRestoreEdgeconf(unittest.TestCase):
         self.assertIn(f"cp {EDGECONF_BACKUP} {EDGECONF_PATH}", cmd)
 
 
+class TestNetworkProbe(unittest.TestCase):
+    def setUp(self):
+        self.mgr = SetupManager(MagicMock())
+
+    @patch("setup.subprocess.run")
+    def test_ping_returns_true_on_zero_exit(self, mock_run):
+        mock_run.return_value.returncode = 0
+
+        self.assertTrue(self.mgr._ping("192.0.2.1", count=2, timeout=3))
+
+        mock_run.assert_called_once_with(
+            ["ping", "-c", "2", "-W", "3", "192.0.2.1"],
+            capture_output=True,
+            timeout=10,
+        )
+
+    @patch("setup.subprocess.run", side_effect=OSError("ping unavailable"))
+    def test_ping_returns_false_when_command_fails(self, mock_run):
+        self.assertFalse(self.mgr._ping("192.0.2.1"))
+        mock_run.assert_called_once()
+
+
 class TestRebootAndWait(unittest.TestCase):
     def setUp(self):
         self.ssh = MagicMock()
