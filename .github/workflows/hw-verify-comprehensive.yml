@@ -28,6 +28,11 @@ jobs:
     timeout-minutes: 180   # 96 tests × ~70s + 마진
 
     steps:
+      - name: Clear stale results cache (avoid fake-success resume)
+        # self-hosted runner는 workspace를 persist한다. checkout이나 precheck가
+        # 실패해도 이전 결과를 artifact/알림에 재사용하지 않도록 가장 먼저 지운다.
+        run: rm -f comprehensive_results.json comprehensive*.log
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -56,14 +61,6 @@ jobs:
           sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
               -o LogLevel=ERROR root@"$TARGET_HOST" "echo SSH_OK" \
               | grep -q SSH_OK || { echo "::error::ssh fail"; exit 1; }
-
-      - name: Clear stale results cache (avoid fake-success resume)
-        # self-hosted runner는 workspace를 persist하므로 이전 실행의
-        # comprehensive_results.json이 남아있으면 run_comprehensive_verify.py의
-        # resume 로직이 0초 만에 "Resume: 96 scenarios already PASSed — skipping"
-        # 처리하고 그대로 success로 마킹됨 (=가짜 성공).
-        # 매 cron 실행마다 fresh 검증 보장을 위해 검증 직전에 강제 삭제.
-        run: rm -f comprehensive_results.json comprehensive*.log
 
       - name: Run comprehensive verification (96 tests, ~2h)
         run: |
@@ -101,3 +98,31 @@ jobs:
           if total > 10:
               print(f'  ... ({total-10} more)')
           PYEOF
+
+  notify_failure:
+    needs: comprehensive
+    if: ${{ always() && needs.comprehensive.result != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download comprehensive results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: comprehensive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: notification-results
+
+      - name: Notify failure
+        continue-on-error: true
+        env:
+          PIM_CHECK_WEBHOOK_URL: ${{ secrets.PIM_CHECK_WEBHOOK_URL }}
+        run: |
+          python3 notifier.py \
+            --results notification-results/comprehensive_results.json \
+            --case comprehensive \
+            --host "$TARGET_HOST" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
