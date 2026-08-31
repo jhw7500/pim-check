@@ -53,6 +53,7 @@ jobs:
         # fail-under threshold는 pyproject.toml의 [tool.coverage.report]에서 관리
         run: |
           python -m pytest --cov --cov-report=term-missing -q
+          python -m coverage report --include=setup.py --fail-under=90
 
       - name: Verify schema validity
         run: python -c "import yaml; yaml.safe_load(open('profiles/schema.yaml'))"

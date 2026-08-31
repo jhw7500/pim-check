@@ -57,6 +57,41 @@ class TestApplyEdgeconfChanges(unittest.TestCase):
             self.assertIn("jq", c)
             self.assertIn(EDGECONF_PATH, c)
 
+    def test_bool_change_uses_json_boolean_literal(self):
+        """bool을 Python 정수나 문자열이 아닌 jq boolean literal로 기록한다."""
+        self.ssh.run.side_effect = [None, "false"]
+
+        self.mgr.apply_changes({".feature.enabled": False})
+
+        write_command = self.ssh.run.call_args_list[0].args[0]
+        self.assertIn("jq '.feature.enabled = false'", write_command)
+        self.assertNotIn("--arg", write_command)
+
+    def test_structured_changes_use_argjson(self):
+        """list/dict를 JSON 문자열이 아니라 원래 JSON 타입으로 기록한다."""
+        cases = (
+            ("list", ["alpha", 2], '["alpha", 2]', '["alpha",2]'),
+            ("dict", {"enabled": True}, '{"enabled": true}', '{"enabled":true}'),
+        )
+        for label, value, shell_json, readback in cases:
+            with self.subTest(label=label):
+                self.ssh.reset_mock(side_effect=True)
+                self.ssh.run.side_effect = [None, readback]
+
+                self.mgr.apply_changes({".feature.value": value})
+
+                write_command = self.ssh.run.call_args_list[0].args[0]
+                self.assertIn(f"jq --argjson v '{shell_json}'", write_command)
+
+    def test_string_change_shell_escapes_apostrophe(self):
+        """작은따옴표가 있는 문자열도 셸 인용을 깨지 않고 jq에 전달한다."""
+        self.ssh.run.side_effect = [None, '"O\'Brien"']
+
+        self.mgr.apply_changes({".device.name": "O'Brien"})
+
+        write_command = self.ssh.run.call_args_list[0].args[0]
+        self.assertIn("jq --arg v 'O'\\''Brien'", write_command)
+
 
 class TestRestoreEdgeconf(unittest.TestCase):
     def setUp(self):
@@ -69,6 +104,28 @@ class TestRestoreEdgeconf(unittest.TestCase):
         self.assertEqual(self.ssh.run.call_count, 1)
         cmd = self.ssh.run.call_args[0][0]
         self.assertIn(f"cp {EDGECONF_BACKUP} {EDGECONF_PATH}", cmd)
+
+
+class TestNetworkProbe(unittest.TestCase):
+    def setUp(self):
+        self.mgr = SetupManager(MagicMock())
+
+    @patch("setup.subprocess.run")
+    def test_ping_returns_true_on_zero_exit(self, mock_run):
+        mock_run.return_value.returncode = 0
+
+        self.assertTrue(self.mgr._ping("192.0.2.1", count=2, timeout=3))
+
+        mock_run.assert_called_once_with(
+            ["ping", "-c", "2", "-W", "3", "192.0.2.1"],
+            capture_output=True,
+            timeout=10,
+        )
+
+    @patch("setup.subprocess.run", side_effect=OSError("ping unavailable"))
+    def test_ping_returns_false_when_command_fails(self, mock_run):
+        self.assertFalse(self.mgr._ping("192.0.2.1"))
+        mock_run.assert_called_once()
 
 
 class TestRebootAndWait(unittest.TestCase):

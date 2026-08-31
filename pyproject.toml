@@ -65,7 +65,6 @@ omit = [
     "run_bps_quick.py",
     "infer_agent.py",
     "qa_agent.py",
-    "setup.py",
     "verify_retry.py",
     "tools/*",
     "scripts/*",
