@@ -98,6 +98,31 @@ class TestCiFailureNotification(unittest.TestCase):
             ],
         )
 
+    def test_comprehensive_results_preserve_runner_error(self):
+        payload = [
+            {
+                "name": "timeout_case",
+                "result": "EXCEPTION_TIMEOUT",
+                "error": "Command timed out after 60 seconds",
+            },
+        ]
+        with TemporaryDirectory() as tmpdir:
+            result_file = Path(tmpdir) / "comprehensive_results.json"
+            result_file.write_text(json.dumps(payload), encoding="utf-8")
+
+            results = notifier.load_ci_failure_results(result_file)
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    "name": "timeout_case",
+                    "passed": False,
+                    "reason": "Command timed out after 60 seconds",
+                },
+            ],
+        )
+
     def test_missing_results_become_infrastructure_failure(self):
         with TemporaryDirectory() as tmpdir:
             result_file = Path(tmpdir) / "comprehensive_results.json"

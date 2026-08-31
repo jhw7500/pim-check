@@ -106,7 +106,7 @@ def load_ci_failure_results(path: str | Path) -> list[dict]:
         passed = str(item.get("result", "")).upper() == "PASS"
         reason = ""
         if not passed:
-            reason = str(item.get("reason") or (
+            reason = str(item.get("reason") or item.get("error") or (
                 f"expected={item.get('expected_hex', '?')} actual={item.get('actual', '?')}"
             ))
         results.append({"name": name, "passed": passed, "reason": reason})
