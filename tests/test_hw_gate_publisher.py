@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,10 @@ MARKER = "<!-- pim-check:hardware-evidence -->"
 ROOT = Path(__file__).parents[1]
 BASELINE_BYTES = (ROOT / "baselines" / "hw-baseline.json").read_bytes()
 PASS_FIXTURE = ROOT / "tests" / "fixtures" / "hw_gate" / "evidence_pass.json"
+RAW_FIXTURES = {
+    "raw/bps_quick.json": ROOT / "tests" / "fixtures" / "hw_gate" / "bps_raw_pass.json",
+    "raw/mixed_combo.json": ROOT / "tests" / "fixtures" / "hw_gate" / "mixed_combo_raw_pass.json",
+}
 
 
 class FakeGithubClient:
@@ -96,17 +101,33 @@ def evidence_bytes(**run_overrides: object) -> bytes:
     return json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def publish(client: FakeGithubClient, artifact: bytes):
+def _write_raw_artifacts(root: Path) -> None:
+    for relative, fixture in RAW_FIXTURES.items():
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(fixture.read_bytes())
+
+
+def publish(client: FakeGithubClient, artifact: bytes, *, artifact_root: Optional[Path] = None):
     from hw_gate.publisher import publish_evidence
 
-    return publish_evidence(
-        client=client,
-        repository=REPOSITORY,
-        github_repository=REPOSITORY,
-        workflow_run_id=RUN_ID,
-        workflow_run_attempt=RUN_ATTEMPT,
-        evidence_bytes=artifact,
-    )
+    def invoke(root: Path):
+        return publish_evidence(
+            client=client,
+            repository=REPOSITORY,
+            github_repository=REPOSITORY,
+            workflow_run_id=RUN_ID,
+            workflow_run_attempt=RUN_ATTEMPT,
+            evidence_bytes=artifact,
+            artifact_root=root,
+        )
+
+    if artifact_root is not None:
+        return invoke(artifact_root)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_raw_artifacts(root)
+        return invoke(root)
 
 
 def mutation_body(client: FakeGithubClient) -> str:
@@ -366,6 +387,26 @@ def test_producer_publisher_verdict_disagreement_publishes_error() -> None:
 
     assert result.verdict == "ERROR"
     assert "trusted recomputation" in mutation_body(client)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "mismatch"])
+def test_publisher_rejects_missing_or_mismatched_raw_output(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Declared raw digests must bind to files in the downloaded artifact."""
+    client = FakeGithubClient()
+    _write_raw_artifacts(tmp_path)
+    raw_path = tmp_path / "raw" / "mixed_combo.json"
+    if mutation == "missing":
+        raw_path.unlink()
+    else:
+        raw_path.write_bytes(b"tampered raw evidence")
+
+    result = publish(client, evidence_bytes(), artifact_root=tmp_path)
+
+    assert result.verdict == "ERROR"
+    assert "raw output" in mutation_body(client)
 
 
 @pytest.mark.parametrize(

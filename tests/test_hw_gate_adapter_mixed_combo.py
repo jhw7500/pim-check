@@ -59,6 +59,8 @@ class FakeTransaction:
         self.fail_at = fail_at
         self.fatal_at = fatal_at
         self.apply_count = 0
+        self.original_sha256 = "a" * 64
+        self.restored_sha256 = "a" * 64
 
     def __enter__(self) -> "FakeTransaction":
         self.events.extend(["snapshot", "journal"])
@@ -277,7 +279,11 @@ def test_one_campaign_transaction_applies_cleanroom_before_each_readback_and_res
     assert manager.checked[2][".VHL_CAM.i2c2.ch0.enable"] is True
     assert manager.checked[2][".VHL_CAM.i2c1.ch2.enable"] is False
     assert manager.checked[3][".VHL_CAM.i2c1.ch3.enable"] is True
-    assert raw["restoration"]["verdict"] == "PASS"
+    assert raw["restoration"] == {
+        "before_sha256": "a" * 64,
+        "after_sha256": "a" * 64,
+        "verdict": "PASS",
+    }
 
 
 def test_restoration_error_overrides_would_be_pass_and_runs_after_an_early_failure(

@@ -29,6 +29,25 @@ def load_fixture() -> dict:
 
 def raw_gate_from(baseline: dict, gate_id: str = "bps_quick") -> dict:
     gate = baseline["gates"][gate_id]
+    if gate_id == "bps_quick":
+        restoration = {
+            "cycles": [
+                {
+                    "setpoint_kbps": setpoint,
+                    "before_sha256": "a" * 64,
+                    "after_sha256": "a" * 64,
+                    "verdict": "PASS",
+                }
+                for setpoint in (1024, 2048, 4096, 8192)
+            ],
+            "verdict": "PASS",
+        }
+    else:
+        restoration = {
+            "before_sha256": "a" * 64,
+            "after_sha256": "a" * 64,
+            "verdict": "PASS",
+        }
     return {
         "id": gate_id,
         "adapter_id": gate_id,
@@ -52,7 +71,7 @@ def raw_gate_from(baseline: dict, gate_id: str = "bps_quick") -> dict:
             }
             for metric_id, metric in gate["metrics"].items()
         ],
-        "restoration": {"verdict": "PASS"},
+        "restoration": restoration,
         "diagnostic_refs": [],
         "errors": [],
         "verdict": "PASS",
@@ -307,6 +326,21 @@ def test_recompute_rejects_board_identity_not_matching_committed_baseline(mutati
         document["board"]["identity"] = []
     else:
         document["board"]["identity"][0]["actual"] = "0" * 64
+
+    assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
+
+
+@pytest.mark.parametrize("mutation", ["missing", "mismatch"])
+def test_recompute_rejects_unverified_canonical_restoration_hashes(mutation: str) -> None:
+    """A producer restoration PASS cannot replace exact hash evidence."""
+    baseline = json.loads(PRODUCTION_BASELINE.read_text(encoding="utf-8"))
+    document = json.loads(REVIEWED_PASS_FIXTURE.read_text(encoding="utf-8"))
+    restoration = document["gates"][1]["restoration"]
+    if mutation == "missing":
+        restoration.clear()
+        restoration["verdict"] = "PASS"
+    else:
+        restoration.update({"before_sha256": "1" * 64, "after_sha256": "2" * 64})
 
     assert recompute_overall_verdict(document, baseline) is Verdict.ERROR
 

@@ -9,6 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .baseline import validate_baseline
@@ -268,6 +269,41 @@ def _parse_evidence(evidence_bytes: bytes) -> dict:
     return document
 
 
+def _validate_raw_outputs(document: dict, artifact_root: Path) -> None:
+    """Bind every declared gate raw digest to one regular downloaded file."""
+    try:
+        root = artifact_root.resolve(strict=True)
+    except OSError as exc:
+        raise EvidenceError("raw output artifact root is unavailable") from exc
+    if not root.is_dir():
+        raise EvidenceError("raw output artifact root is not a directory")
+
+    seen_paths = set()
+    for gate in document["gates"]:
+        raw_output = gate["raw_output"]
+        relative = raw_output["path"]
+        if not relative.startswith("raw/") or relative in seen_paths:
+            raise EvidenceError("raw output path is outside the unique raw inventory")
+        seen_paths.add(relative)
+        candidate = root / relative
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise EvidenceError("raw output file is missing or outside the artifact root") from exc
+        if resolved != candidate or not resolved.is_file():
+            raise EvidenceError("raw output file must be a regular non-symlink artifact")
+        digest = hashlib.sha256()
+        try:
+            with resolved.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(65_536), b""):
+                    digest.update(chunk)
+        except OSError as exc:
+            raise EvidenceError("raw output file could not be read") from exc
+        if digest.hexdigest() != raw_output["sha256"]:
+            raise EvidenceError("raw output SHA256 mismatch")
+
+
 def _baseline_at_source(client: Any, repository: str, source_sha: str) -> tuple[dict, str]:
     path = "repos/{0}/contents/baselines/hw-baseline.json?ref={1}".format(
         repository, urllib.parse.quote(source_sha, safe=""),
@@ -406,6 +442,7 @@ def publish_evidence(
     workflow_run_id: int,
     workflow_run_attempt: int,
     evidence_bytes: bytes,
+    artifact_root: Optional[Path] = None,
     github_repository: Optional[str] = None,
 ) -> PublishResult:
     """Validate one triggering run and upsert its evidence on the API-bound PR."""
@@ -438,6 +475,9 @@ def publish_evidence(
             workflow_run_attempt,
         )
         validate_structure(document)
+        if artifact_root is None:
+            raise EvidenceError("raw output artifact root is required")
+        _validate_raw_outputs(document, artifact_root)
         _validate_metric_presentations(document, baseline)
         recomputed = recompute_overall_verdict(document, baseline).value
         if document.get("verdict") != recomputed or document.get("overall_verdict") != recomputed:

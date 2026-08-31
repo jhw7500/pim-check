@@ -199,6 +199,8 @@ def _gate_verdict(gate: Dict[str, Any], baseline_gate: Dict[str, Any], canonical
         from .baseline import assert_gate_coverage
 
         assert_gate_coverage(gate, baseline_gate)
+        if not _canonical_restoration_verified(gate):
+            return Verdict.ERROR
     if gate.get("adapter_schema_version") != baseline_gate.get("adapter_schema_version"):
         return Verdict.ERROR
     if gate.get("adapter_id") != baseline_gate.get("adapter_id"):
@@ -285,6 +287,45 @@ def _canonical_identity_matches(document: Dict[str, Any], baseline: Dict[str, An
         {"target_identity": baseline["target_identity"]},
     )
     return valid
+
+
+def _matching_restoration_hashes(value: object) -> bool:
+    restoration = _require_mapping(value, "restoration")
+    before_sha = restoration.get("before_sha256")
+    after_sha = restoration.get("after_sha256")
+    return (
+        isinstance(before_sha, str)
+        and _SHA256_RE.fullmatch(before_sha) is not None
+        and isinstance(after_sha, str)
+        and _SHA256_RE.fullmatch(after_sha) is not None
+        and before_sha == after_sha
+    )
+
+
+def _canonical_restoration_verified(gate: Dict[str, Any]) -> bool:
+    restoration = _require_mapping(gate.get("restoration"), "gate.restoration")
+    if restoration.get("verdict") != Verdict.PASS.value:
+        return True
+    if gate.get("id") == "mixed_combo":
+        return _matching_restoration_hashes(restoration)
+    if gate.get("id") == "bps_quick":
+        cycles = _require_list(restoration.get("cycles"), "gate.restoration.cycles")
+        expected_setpoints = {1024, 2048, 4096, 8192}
+        observed_setpoints = set()
+        for cycle in cycles:
+            item = _require_mapping(cycle, "gate.restoration.cycles[]")
+            setpoint = item.get("setpoint_kbps")
+            if (
+                isinstance(setpoint, bool)
+                or not isinstance(setpoint, int)
+                or setpoint in observed_setpoints
+                or item.get("verdict") != Verdict.PASS.value
+                or not _matching_restoration_hashes(item)
+            ):
+                return False
+            observed_setpoints.add(setpoint)
+        return observed_setpoints == expected_setpoints
+    return False
 
 
 def recompute_overall_verdict(document: Dict[str, Any], baseline: Optional[Dict[str, Any]]) -> Verdict:

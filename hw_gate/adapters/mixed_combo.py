@@ -5,6 +5,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -31,6 +32,7 @@ _TARGET_PROFILE_NAME = "multi_1ch_0_720p"
 _VIDEO_MODE = {"width": 1920, "height": 1080, "fps": 30}
 _COMPARABILITY = {"scenario_matrix": "A-D-1920x1080-30fps"}
 _REGISTER_NAMES = ("rotation", "ae", "awb")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CHANNEL_PATHS = {0: ".VHL_CAM.i2c2.ch0", 1: ".VHL_CAM.i2c2.ch1", 2: ".VHL_CAM.i2c1.ch2", 3: ".VHL_CAM.i2c1.ch3"}
 _CHANNEL_BUSES = {0: 2, 1: 2, 2: 1, 3: 1}
 _COMBOS = {
@@ -122,9 +124,14 @@ class MixedComboAdapter:
         scenarios: List[dict] = []
         preconditions: List[dict] = []
         errors: List[dict] = []
-        restoration = {"verdict": Verdict.PASS.value}
+        restoration = {"verdict": Verdict.ERROR.value}
+        transaction = None
+        restoration_failed = False
         try:
-            with self._transaction_factory(manager, "{0}-mixed-combo".format(context.run_id), stabilize_sec=30) as transaction:
+            transaction = self._transaction_factory(
+                manager, "{0}-mixed-combo".format(context.run_id), stabilize_sec=30,
+            )
+            with transaction:
                 for scenario in SCENARIOS:
                     test_id = scenario["id"]
                     enabled = scenario["enabled"]
@@ -150,10 +157,30 @@ class MixedComboAdapter:
                         "mode_masks_expected_for_addressing": _scenario_masks(enabled), "evidence": evidence,
                     })
         except TransactionRestorationError as exc:
-            restoration = {"verdict": Verdict.ERROR.value}
+            restoration_failed = True
             errors.append(_error("mixed_combo.restoration_failed", str(exc)))
         except Exception as exc:
             errors.append(_error("mixed_combo.transaction_failed", str(exc)))
+        if not restoration_failed:
+            before_sha = transaction.original_sha256 if transaction is not None else None
+            after_sha = transaction.restored_sha256 if transaction is not None else None
+            if (
+                isinstance(before_sha, str)
+                and _SHA256_RE.fullmatch(before_sha)
+                and isinstance(after_sha, str)
+                and _SHA256_RE.fullmatch(after_sha)
+                and before_sha == after_sha
+            ):
+                restoration = {
+                    "before_sha256": before_sha,
+                    "after_sha256": after_sha,
+                    "verdict": Verdict.PASS.value,
+                }
+            else:
+                errors.append(_error(
+                    "mixed_combo.restoration_hash_invalid",
+                    "verified restoration SHA256 is missing or mismatched",
+                ))
         return {
             "schema_version": self.schema_version, "adapter_id": self.adapter_id, "run_id": context.run_id,
             "fixture": _FIXTURE_NAME, "video_mode": copy.deepcopy(_VIDEO_MODE),

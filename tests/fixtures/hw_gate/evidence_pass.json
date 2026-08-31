@@ -10,7 +10,7 @@
     {
       "id": "bps_quick", "adapter_id": "bps_quick", "adapter_schema_version": 1,
       "comparability": {"fixture": "multi_1ch_0_720p", "encoder": "h265"}, "process": {"exit_code": 0},
-      "raw_output": {"path": "raw/bps_quick.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "raw_output": {"path": "raw/bps_quick.json", "sha256": "9086e13e0bfa3ddbf98e11352ab0562d4d65af692c16d6a978450693df1ef5e7"},
       "identity": {"verdict": "PASS"},
       "preconditions": [
         {"id": "ch0.qp_min", "expected": [0, 0], "observed": [0, 0], "verdict": "PASS"},
@@ -27,12 +27,17 @@
         {"id":"bps.ch0.8192.baseline","value":8142263,"unit":"bps","baseline_value":8142263,"rule":{"kind":"relative","reference":8142263,"max_percent_delta":5},"delta":{"absolute":0,"percent":0},"verdict":"PASS"},
         {"id":"bps.ch0.8192.target","value":8192000,"unit":"bps","baseline_value":8192000,"rule":{"kind":"relative","reference":8192000,"max_percent_delta":10},"delta":{"absolute":0,"percent":0},"verdict":"PASS"}
       ],
-      "restoration": {"cycles": [], "verdict": "PASS"}, "diagnostic_refs": [], "errors": [], "verdict": "PASS"
+      "restoration": {"cycles": [
+        {"setpoint_kbps":1024,"before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"PASS"},
+        {"setpoint_kbps":2048,"before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"PASS"},
+        {"setpoint_kbps":4096,"before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"PASS"},
+        {"setpoint_kbps":8192,"before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"PASS"}
+      ], "verdict": "PASS"}, "diagnostic_refs": [], "errors": [], "verdict": "PASS"
     },
     {
       "id": "mixed_combo", "adapter_id": "mixed_combo", "adapter_schema_version": 1,
       "comparability": {"scenario_matrix": "A-D-1920x1080-30fps"}, "process": {"exit_code": 0},
-      "raw_output": {"path": "raw/mixed_combo.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "raw_output": {"path": "raw/mixed_combo.json", "sha256": "ddac4a7664e90e8129eaa38c5c1b109007755e044b6afdeca458ba11fc0a4528"},
       "identity": {"verdict": "PASS"},
       "preconditions": [
         {"id":"mixed_combo.test1.cleanroom_readback","expected":true,"observed":true,"verdict":"PASS"},
@@ -80,7 +85,7 @@
         {"id":"mixed_combo.test4.ch3.awb","value":4447,"unit":"register_word","baseline_value":4447,"rule":{"kind":"exact","reference":4447},"delta":{"absolute":0,"percent":0},"verdict":"PASS"},
         {"id":"mixed_combo.test4.ch3.rotation","value":0,"unit":"register_word","baseline_value":0,"rule":{"kind":"exact","reference":0},"delta":{"absolute":0,"percent":0},"verdict":"PASS"}
       ],
-      "restoration": {"cycles": [], "verdict": "PASS"}, "diagnostic_refs": [], "errors": [], "verdict": "PASS"
+      "restoration": {"before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict": "PASS"}, "diagnostic_refs": [], "errors": [], "verdict": "PASS"
     }
   ],
   "diagnostics": [], "lifecycle": {"state": "completed"}, "verdict": "PASS", "overall_verdict": "PASS"

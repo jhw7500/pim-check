@@ -23,6 +23,7 @@ def _positive(value: str) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Publish trusted pim-check hardware evidence")
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument(
         "--workflow-run-id",
         type=_positive,
@@ -59,6 +60,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             workflow_run_id=args.workflow_run_id,
             workflow_run_attempt=args.workflow_run_attempt,
             evidence_bytes=artifact,
+            artifact_root=args.artifact_root,
         )
     except (OSError, PublisherError) as exc:
         print("publish_hw_evidence: {0}".format(exc), file=sys.stderr)

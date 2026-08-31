@@ -237,6 +237,7 @@ def test_publisher_downloads_only_triggering_artifact_and_always_runs_trusted_co
         'python3 scripts/publish_hw_evidence.py --evidence "$EVIDENCE_PATH"'
         in _command(publish)
     )
+    assert '--artifact-root hw-results' in _command(publish)
     assert (
         '--workflow-run-id "$TRIGGERING_WORKFLOW_RUN_ID"'
         in _command(publish)
