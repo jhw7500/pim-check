@@ -16,6 +16,17 @@ docker build -t pim-check .
 docker run -p 8080:8080 pim-check
 ```
 
+### 개발 환경
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
+pre-commit hook은 루트의 런타임 `*_results.json` 및
+`temp_awb_retry.json`이 실수로 다시 스테이징되는 것을 거부한다. 회귀 fixture는
+`tests/golden/` 아래에서 계속 추적한다.
+
 ## 요구 사항
 
 **호스트 (개발 PC):**
