@@ -11,14 +11,15 @@ setup:
     ".VHL_CAM.recording_time": 2
     ".VHL_CAM.muxer": mp4
     # 인코더 상태 명시 고정 — enc/qp 드리프트로 bitrate 검증이
-    # 비결정화되는 것 차단 (2026-08-21 deploy-sync 분석. qp [0,0]=무클램프
-    # → rate control 이 목표 추종, ch3 실측 근거)
+    # 비결정화되는 것 차단 (qp [0,0]=무클램프, quant [-1,-1]=auto).
     ".VHL_CAM.enc": "h265"
     ".VHL_CAM.i2c2.ch0.qp_min": [0, 0]
     ".VHL_CAM.i2c2.ch0.qp_max": [0, 0]
+    ".VHL_CAM.i2c2.ch0.quant": [-1, -1]
     ".VHL_CAM.i2c2.ch0.profile": [0, 0]
     ".VHL_CAM.i2c2.ch1.qp_min": [0, 0]
     ".VHL_CAM.i2c2.ch1.qp_max": [0, 0]
+    ".VHL_CAM.i2c2.ch1.quant": [-1, -1]
     ".VHL_CAM.i2c2.ch1.profile": [0, 0]
     ".VHL_CAM.capture.enable": false
     ".VHL_CAM.i2c2.exp_time": 2000
@@ -59,6 +60,16 @@ checks:
   recording:
     expected_channels: 2
   custom_commands:
+    - name: ch0 BPS QP auto precondition
+      command: >-
+        Q=$(jq -c '[.VHL_CAM.i2c2.ch0.qp_min,.VHL_CAM.i2c2.ch0.qp_max,.VHL_CAM.i2c2.ch0.quant]' /root/shared_v/edgeconf_pim.json 2>/dev/null);
+        [ "$Q" = '[[0,0],[0,0],[-1,-1]]' ] && echo OK || echo "FAIL:QP_NOT_AUTO:$Q"
+      expected: OK
+    - name: ch1 BPS QP auto precondition
+      command: >-
+        Q=$(jq -c '[.VHL_CAM.i2c2.ch1.qp_min,.VHL_CAM.i2c2.ch1.qp_max,.VHL_CAM.i2c2.ch1.quant]' /root/shared_v/edgeconf_pim.json 2>/dev/null);
+        [ "$Q" = '[[0,0],[0,0],[-1,-1]]' ] && echo OK || echo "FAIL:QP_NOT_AUTO:$Q"
+      expected: OK
     - name: ch0 mp4 fps == edgeconf fps (±0.5) — latest finalized session
       command: "EX=$(jq -r '.VHL_CAM.fps' /root/shared_v/edgeconf_pim.json); I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); SESS=$(awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt && /chk_cam_operate.sh.*completed/ && !/: 0 files/' /var/log/cantops/local0.log | awk 'NR==2' | grep -oE '[0-9]{8}_[0-9]{4}'); [ -z \"$SESS\" ] && { echo FAIL:NEED_2_FINALIZES_AFTER_BOOT; exit 0; }; F=$(find /mnt/sd_cam /dev/shm/recording -name \"*${SESS}*-ch0.mp4\" ! -name '*.part' 2>/dev/null | head -1); [ -n \"$F\" ] && FR=$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of csv=p=0 \"$F\" 2>/dev/null) && echo \"$FR\" | awk -F/ -v ex=\"$EX\" '{if ($2 == 0) { print \"FAIL:BAD_AVG\"; exit } n=$1/$2; if (n>=ex-0.5 && n<=ex+0.5) print \"OK\"; else printf \"FAIL:%.1f_ex=%s\\n\", n, ex}' || echo FAIL:NO_FILE"
       expected: OK
