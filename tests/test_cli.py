@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import types
 import unittest
 from unittest.mock import patch
 
@@ -55,6 +58,67 @@ class TestParseArgs(unittest.TestCase):
     def test_until_pass_default_false(self):
         args = pim_check.parse_args(["--plan", "comprehensive"])
         self.assertFalse(args.until_pass)
+
+    def test_reset_mode_flag(self):
+        args = pim_check.parse_args(
+            ["--plan", "comprehensive", "--reset-mode", "camera_hard"]
+        )
+        self.assertEqual(args.reset_mode, "camera_hard")
+
+    def test_reset_mode_default_none(self):
+        args = pim_check.parse_args(["--plan", "comprehensive"])
+        self.assertIsNone(args.reset_mode)
+
+
+class TestPlanResetMode(unittest.TestCase):
+    @patch("event_session.EventSession")
+    @patch("plan.render_reports", return_value=[])
+    @patch("plan.evaluate_gate")
+    @patch("plan.execute_plan", return_value=[])
+    @patch("plan.resolve_cases", return_value=[])
+    @patch("plan.load_plan")
+    @patch("pim_check.os.path.exists", return_value=True)
+    def test_run_plan_applies_cli_reset_mode_override(
+        self, _exists, mock_load_plan, _resolve_cases, mock_execute_plan,
+        mock_evaluate_gate, _render_reports, mock_event_session,
+    ):
+        loaded_plan = types.SimpleNamespace(
+            name="comprehensive",
+            description="d",
+            execution={
+                "stop_on_fail": False,
+                "case_retry": 0,
+                "monitor_until_pass": False,
+                "reset_mode": "reboot",
+            },
+            gate={},
+        )
+        mock_load_plan.return_value = loaded_plan
+        mock_evaluate_gate.return_value = types.SimpleNamespace(
+            verdict="PASS", pass_rate=1.0, regressions=[], fixed=[],
+            new_cases=[], known_warns=[],
+        )
+        mock_event_session.return_value.__enter__.return_value = (
+            mock_event_session.return_value
+        )
+
+        args = pim_check.parse_args(
+            ["--plan", "comprehensive", "--reset-mode", "camera_hard", "--quiet"]
+        )
+        self.assertEqual(pim_check._run_plan(args), 0)
+        self.assertEqual(loaded_plan.execution["reset_mode"], "camera_hard")
+        self.assertIs(mock_execute_plan.call_args.args[0], loaded_plan)
+
+    @patch("pim_check.list_cases", return_value=[])
+    def test_non_plan_reset_mode_warns(self, _list_cases):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(
+                pim_check.main(["--list", "--reset-mode", "camera_hard"]), 0
+            )
+        text = output.getvalue()
+        self.assertIn("--reset-mode", text)
+        self.assertIn("--plan", text)
 
 
 class TestMainFlow(unittest.TestCase):

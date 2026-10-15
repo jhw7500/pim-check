@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock
 
+from config import load_profile
 from plan import (
     Plan,
     DEFAULT_EXECUTION,
@@ -152,6 +153,40 @@ class TestExecutePlan(unittest.TestCase):
         self.assertTrue(execs[0].passed)
         self.assertEqual(execs[0].retries_used, 0)
         self.assertIsNone(execs[0].error)
+
+    def test_setup_receives_plan_reset_mode_without_mutating_case_profile(self):
+        """Plan reset policy is runtime-only, never written back into the case profile."""
+        with open(os.path.join(self.cases_dir, "case_a.yaml"), "w") as f:
+            f.write(
+                "name: case_a\n"
+                "setup:\n"
+                "  edgeconf_changes:\n"
+                "    .VHL_CAM.fps: 30\n"
+            )
+
+        created: list = []
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            mgr.run_setup.return_value = False
+            created.append(mgr)
+            return mgr
+
+        plan = self._plan(
+            {"regression": ["case_a"]},
+            reset_mode="camera_hard",
+        )
+        execute_plan(
+            plan, self.tmpdir,
+            ssh_factory=self._ssh_factory(),
+            setup_factory=setup_factory,
+            engine_factory=self._engine_factory(),
+        )
+
+        setup_arg = created[0].run_setup.call_args.args[0]
+        self.assertEqual(setup_arg["reset_mode"], "camera_hard")
+        reloaded = load_profile(self.tmpdir, case="case_a")
+        self.assertNotIn("reset_mode", reloaded["setup"])
 
     def test_multiple_cases_run_in_order(self):
         plan = self._plan({

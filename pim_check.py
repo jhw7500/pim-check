@@ -51,6 +51,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--until-pass", action="store_true",
                         help="plan.execution.monitor_until_pass 를 일회성으로 켜 조기종료 "
                              "(지속검증 gate plan 을 빠르게 검증; plan YAML 불변)")
+    parser.add_argument(
+        "--reset-mode",
+        choices=("reboot", "camera_hard"),
+        default=None,
+        help="plan reset mode 일회성 오버라이드 (reboot | camera_hard)",
+    )
     parser.add_argument("--list", action="store_true", help="사용 가능한 케이스 목록 출력")
     parser.add_argument("--learn", action="store_true", help="베이스라인 학습 모드")
     parser.add_argument("--json", action="store_true", help="결과를 JSON 파일로 저장")
@@ -217,6 +223,8 @@ def _run_plan(args) -> int:
     # 사용 — plan YAML 은 불변(gate 의미 보존), 이번 실행에만 조기종료 적용.
     if args.until_pass:
         plan.execution["monitor_until_pass"] = True
+    if getattr(args, "reset_mode", None) is not None:
+        plan.execution["reset_mode"] = args.reset_mode
 
     # CLI 오버라이드 dict 구성
     cli_args: dict = {}
@@ -249,8 +257,9 @@ def _run_plan(args) -> int:
         print(f"  description: {plan.description}")
         print(f"  execution: stop_on_fail={plan.execution['stop_on_fail']}, "
               f"case_retry={plan.execution['case_retry']}, "
-              f"monitor_until_pass={plan.execution.get('monitor_until_pass', False)}"
-              f"{' (CLI override)' if args.until_pass else ''}")
+              f"monitor_until_pass={plan.execution.get('monitor_until_pass', False)}, "
+              f"reset_mode={plan.execution.get('reset_mode', 'reboot')}"
+              f"{' (CLI override)' if args.until_pass or getattr(args, 'reset_mode', None) is not None else ''}")
         if baseline:
             print(f"  baseline: {baseline_ref.get('file')} "
                   f"({len(baseline.get('executions', []))} prior cases)")
@@ -609,6 +618,9 @@ def main(argv=None) -> int:
 
 
 def _main_run(args) -> int:
+    if getattr(args, "reset_mode", None) and not args.plan:
+        print("WARNING: --reset-mode 는 --plan 실행에만 적용됩니다 (무시됨).")
+
     if args.list:
         cases = list_cases(include_generated=args.include_generated, tag=args.tag)
         if cases:

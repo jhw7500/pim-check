@@ -35,6 +35,16 @@ class TestLintPlan(unittest.TestCase):
         errors = lint_plan(VALID_PLAN)
         self.assertEqual(errors, [], f"unexpected errors: {errors}")
 
+    def test_reset_mode_accepts_reboot_and_camera_hard(self):
+        for mode in ("reboot", "camera_hard"):
+            plan = {**VALID_PLAN, "execution": {"reset_mode": mode}}
+            self.assertEqual(lint_plan(plan), [])
+
+    def test_reset_mode_rejects_unknown_value(self):
+        plan = {**VALID_PLAN, "execution": {"reset_mode": "process_restart"}}
+        errors = lint_plan(plan)
+        self.assertTrue(any("reset_mode" in error for error in errors))
+
     def test_non_dict_input_returns_error(self):
         errors = lint_plan("not a dict")  # type: ignore[arg-type]
         self.assertEqual(len(errors), 1)
@@ -246,6 +256,16 @@ class TestLoadPlan(unittest.TestCase):
             self.assertEqual(plan.execution[key], val)
         # reports defaults
         self.assertEqual(plan.reports, [])
+
+    def test_reset_mode_defaults_to_reboot(self):
+        self._write(
+            "name: Smoke\n"
+            "description: smoke desc\n"
+            "version: 1\n"
+            "cases:\n  regression: [720p_2ch]\n"
+            "gate: {}\n"
+        )
+        self.assertEqual(load_plan(self.plan_path).execution["reset_mode"], "reboot")
 
     def test_user_execution_overrides_default(self):
         self._write(

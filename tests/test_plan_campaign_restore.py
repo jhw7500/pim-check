@@ -49,10 +49,52 @@ class TestCampaignWideRestore(unittest.TestCase):
         with open(os.path.join(self.cases_dir, f"{name}.yaml"), "w") as f:
             f.write(f"name: {name}\nsetup:\n{body}")
 
-    def _plan(self, cases: dict) -> Plan:
+    def _plan(self, cases: dict, **execution_overrides) -> Plan:
         return Plan(name="t", description="t", version=1, cases=cases,
-                    execution=dict(DEFAULT_EXECUTION), gate=dict(DEFAULT_GATE),
+                    execution={**DEFAULT_EXECUTION, **execution_overrides}, gate=dict(DEFAULT_GATE),
                     reports=[])
+
+    def _teardown_setup(self, case_names: list[str], reset_mode: str) -> dict:
+        """Run the real plan loop and capture its final cleanup configuration."""
+        created: list = []
+
+        def ssh_factory(host, user, password):
+            ssh = MagicMock()
+            ssh.check_connectivity.return_value = True
+            return ssh
+
+        def setup_factory(ssh):
+            mgr = MagicMock()
+            mgr._config_snapshots = {}
+            mgr._snapshot_failures = set()
+
+            def run_setup(cfg, **kwargs):
+                if cfg.get("edgeconf_changes"):
+                    mgr._config_snapshots[EDGECONF_PATH] = "edge-snapshot"
+                if cfg.get("ord_vcm_changes"):
+                    mgr._config_snapshots[ORD_VCM_PATH] = "ord-snapshot"
+                return True
+
+            mgr.run_setup.side_effect = run_setup
+            created.append(mgr)
+            return mgr
+
+        def engine_factory(ssh, profile):
+            engine = MagicMock()
+            engine.run_snapshot.return_value = [
+                {"name": "d", "passed": True, "reason": "OK", "data": {},
+                 "duration_ms": 1},
+            ]
+            return engine
+
+        execute_plan(
+            self._plan({"regression": case_names}, reset_mode=reset_mode),
+            self.tmpdir,
+            ssh_factory=ssh_factory,
+            setup_factory=setup_factory,
+            engine_factory=engine_factory,
+        )
+        return created[-1].run_teardown.call_args.args[0]
 
     def _run(self, case_names: list[str]):
         """플랜을 실제 SetupManager 로 돌리고, 보드로 나간 복원 페이로드를 돌려준다.
@@ -147,6 +189,31 @@ class TestCampaignWideRestore(unittest.TestCase):
             restored,
             "마지막 케이스에 setup 이 없다는 이유로 캠페인 복원이 건너뛰어졌다")
         self.assertEqual(dict(restored)[EDGECONF_PATH], '{"state": "STATE0-EDGE"}')
+
+    def test_campaign_restore_keeps_plan_reset_mode_when_last_case_has_no_setup(self):
+        self._case("case_cfg", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n")
+        with open(os.path.join(self.cases_dir, "case_readonly.yaml"), "w") as f:
+            f.write("name: case_readonly\n")
+
+        teardown_setup = self._teardown_setup(
+            ["case_cfg", "case_readonly"],
+            reset_mode="camera_hard",
+        )
+
+        self.assertEqual(teardown_setup["reset_mode"], "camera_hard")
+
+    def test_campaign_restore_passes_ord_union_for_reboot_downgrade(self):
+        self._case("case_ord", "  ord_vcm_changes:\n    .ord.vcm: 1\n")
+        self._case("case_edge", "  edgeconf_changes:\n    .VHL_CAM.fps: 30\n")
+
+        teardown_setup = self._teardown_setup(
+            ["case_ord", "case_edge"],
+            reset_mode="camera_hard",
+        )
+
+        self.assertTrue(teardown_setup["ord_vcm_changes"])
+        self.assertTrue(teardown_setup["edgeconf_changes"])
+        self.assertEqual(teardown_setup["reset_mode"], "camera_hard")
 
     def test_no_snapshot_means_no_restore_and_no_reboot(self):
         """복원할 원본이 없으면 복원도 재부팅도 하지 않는다.

@@ -37,6 +37,7 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     # 카메라 case 의 "부팅 후 finalize 2개" 준비 즉시 끝내 단축. 기본 False(comprehensive 는
     # 전체 지속검증 유지). cap 과 달리 검증을 깨지 않는다(통과해야 종료하므로).
     "monitor_until_pass": False,
+    "reset_mode": "reboot",
 }
 
 DEFAULT_GATE: dict[str, Any] = {
@@ -45,6 +46,7 @@ DEFAULT_GATE: dict[str, Any] = {
 }
 
 ALLOWED_REPORT_FORMATS = {"json", "html", "junit", "markdown_summary"}
+ALLOWED_RESET_MODES = {"reboot", "camera_hard"}
 ALLOWED_NEW_CASE_POLICIES = {"warn", "skip", "fail"}
 SCHEMA_VERSION = 1
 
@@ -241,6 +243,12 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
         if not isinstance(exec_cfg, dict):
             errors.append("'execution'은 dict이어야 합니다.")
         else:
+            reset_mode = exec_cfg.get("reset_mode", "reboot")
+            if not isinstance(reset_mode, str) or reset_mode not in ALLOWED_RESET_MODES:
+                errors.append(
+                    f"execution.reset_mode: {reset_mode!r} 미지원. "
+                    f"허용: {sorted(ALLOWED_RESET_MODES)}"
+                )
             for key in ("stop_on_fail", "monitor_until_pass"):
                 if key in exec_cfg and not isinstance(exec_cfg[key], bool):
                     errors.append(f"execution.{key}은 bool이어야 합니다.")
@@ -695,6 +703,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
             runtime = resolve_runtime_profile(case_profile,
                                               plan_global=None,
                                               cli_args=cli_args)
+            if runtime.get("setup"):
+                runtime = copy.deepcopy(runtime)
+                runtime["setup"]["reset_mode"] = plan.execution.get(
+                    "reset_mode", "reboot")
 
             target = runtime.get("target", {})
             host = target.get("host", DEFAULT_TARGET_HOST)
@@ -842,6 +854,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 죽고 아래 except 가 삼켜 조용히 복구가 빠진다).
                 _campaign_cfg = dict(last_setup_cfg or {})
                 if campaign_snapshots:
+                    _campaign_cfg["reset_mode"] = plan.execution.get(
+                        "reset_mode", "reboot")
                     if campaign_edge_changes:
                         _campaign_cfg["edgeconf_changes"] = campaign_edge_changes
                     if campaign_ord_changes:
