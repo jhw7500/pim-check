@@ -190,7 +190,9 @@ checks:
     on_fail: 'ch3 에러 카운트 발생'
   - name: ch0 BITRATE (~1024kbps ±20%, file-delta 5s)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -201,7 +203,9 @@ checks:
     on_fail: 'ch0 실측 bitrate 범위(819~1228kbps) 벗어남'
   - name: ch1 BITRATE (~4096kbps ±20%, file-delta 5s)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -212,7 +216,9 @@ checks:
     on_fail: 'ch1 실측 bitrate 범위(3276~4915kbps) 벗어남'
   - name: ch2 BITRATE (~8192kbps ±20%, file-delta 5s)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -223,7 +229,9 @@ checks:
     on_fail: 'ch2 실측 bitrate 범위(6553~9830kbps) 벗어남'
   - name: ch3 BITRATE (~2048kbps ±20%, file-delta 5s)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -234,7 +242,9 @@ checks:
     on_fail: 'ch3 실측 bitrate 범위(1638~2457kbps) 벗어남'
   - name: ch0 파일 무결성 (codec=hevc, 1280x720, fps≈30, .mp4)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -251,7 +261,9 @@ checks:
     on_fail: 'ch0 파일 무결성 (codec/dim/fps/ext) 미일치'
   - name: ch1 파일 무결성 (codec=hevc, 1280x720, fps≈30, .mp4)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -268,7 +280,9 @@ checks:
     on_fail: 'ch1 파일 무결성 (codec/dim/fps/ext) 미일치'
   - name: ch2 파일 무결성 (codec=hevc, 1280x720, fps≈30, .mp4)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -285,7 +299,9 @@ checks:
     on_fail: 'ch2 파일 무결성 (codec/dim/fps/ext) 미일치'
   - name: ch3 파일 무결성 (codec=hevc, 1280x720, fps≈30, .mp4)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       F=$(echo "$FILES" | sed -n '2p' | cut -d' ' -f2-)
       [ -z "$F" ] && echo FAIL:ONLY_ONE_FILE && exit 0
@@ -302,7 +318,9 @@ checks:
     on_fail: 'ch3 파일 무결성 (codec/dim/fps/ext) 미일치'
   - name: ch0 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch0.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       COUNT=$(echo "$FILES" | grep -c .)
       [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0
@@ -333,7 +351,9 @@ checks:
     on_fail: 'ch0 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: ch1 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch1.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       COUNT=$(echo "$FILES" | grep -c .)
       [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0
@@ -364,7 +384,9 @@ checks:
     on_fail: 'ch1 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: ch2 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch2.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       COUNT=$(echo "$FILES" | grep -c .)
       [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0
@@ -395,7 +417,9 @@ checks:
     on_fail: 'ch2 녹화 길이 60s ±5s 벗어남 (첫 짧은 finalize 후 2nd 정상 finalize 미도착)'
   - name: ch3 duration (~60s ±5s, 첫 짧은 finalize skip)
     command: |-
-      FILES=$(find /dev/shm/recordings /mnt/sd_cam -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+      ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null)
+      [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0
+      FILES=$(find /dev/shm/recordings /mnt/sd_cam -newermt "$ANCHOR" -name '*-ch3.mp4' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
       [ -z "$FILES" ] && echo FAIL:NO_FILE && exit 0
       COUNT=$(echo "$FILES" | grep -c .)
       [ "$COUNT" -lt 2 ] && echo FAIL:NEED_2_FINALIZES_AFTER_BOOT && exit 0

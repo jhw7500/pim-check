@@ -913,6 +913,19 @@ class TestSessionAnchor:
         assert "NR==2" not in cmd
         assert f"> {SESSION_ANCHOR_PATH}" in cmd
 
+    def test_preserve_mode_validates_existing_same_boot_anchor_without_rewrite(self):
+        mgr = _mgr()
+        mgr._preserve_session_anchor = True
+        mgr.ssh.run.return_value = "2026-09-01 12:00:00\nboot-id"
+
+        assert mgr._write_session_anchor() is True
+
+        cmd = mgr.ssh.run.call_args.args[0]
+        assert SESSION_ANCHOR_PATH in cmd
+        assert "/proc/sys/kernel/random/boot_id" in cmd
+        assert "uptime -s" not in cmd
+        assert f"> {SESSION_ANCHOR_PATH}" not in cmd
+
     def test_returns_false_on_missing_or_short_output(self):
         mgr = _mgr()
         for out in (None, "", "2026-08-21 14:42:05", "\n\n"):
@@ -964,18 +977,21 @@ class TestCasesUseSessionAnchor:
         # 코퍼스가 비면 테스트가 조용히 무의미해진다 — 2026-08 기준 실측 38건.
         assert anchored >= 30, f"앵커 사용처가 너무 적다 ({anchored})"
 
-    def test_anchor_snippet_falls_back_when_file_absent(self):
-        """리더 스니펫은 파일이 없거나 stale 이면 `uptime -s` 로 폴백해야 한다.
+    def test_anchor_consumers_have_their_required_missing_anchor_policy(self):
+        """로그 리더는 boot-time 폴백, 녹화 evidence는 strict session 실패를 쓴다.
 
         /tmp 가 tmpfs 가 아니라 재부팅에도 파일이 남으므로, 2행(기록 시점의 부팅
-        시각) 대조가 stale 판정의 핵심이다. 보드 실측으로 4개 시나리오 확인함.
+        시각) 대조는 양쪽 정책의 stale 판정 핵심이다. 다만 녹화 파일은 이전
+        케이스의 file-position gate를 통과시키면 안 되므로 앵커가 없을 때
+        `uptime -s`로 넓히지 않고 명시적으로 실패해야 한다.
         """
         import pathlib
 
         import yaml
 
         root = pathlib.Path(__file__).resolve().parent.parent / "profiles"
-        checked = 0
+        strict_recording = []
+        legacy_fallback = []
         for path in sorted(root.rglob("*.yaml")):
             prof = yaml.safe_load(path.read_text())
             if not isinstance(prof, dict):
@@ -984,11 +1000,25 @@ class TestCasesUseSessionAnchor:
                 command = cmd.get("command", "")
                 if SESSION_ANCHOR_PATH not in command:
                     continue
-                checked += 1
-                # 2행 = boot_id 대조(잔존 거부) + 빈 값일 때 uptime -s 폴백.
-                # boot_id 인 이유: uptime -s 는 같은 부팅에서도 ±1초 흔들려
-                # (보드 실측) 문자열 대조에 쓰면 jitter 마다 앵커가 무시된다.
-                assert "/proc/sys/kernel/random/boot_id" in command, cmd.get("name")
-                assert "NR==2 && $0==i" in command, cmd.get("name")
-                assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, cmd.get("name")
-        assert checked >= 30, f"앵커 사용처가 너무 적다 ({checked})"
+                # 2행 = boot_id 대조(잔존 거부). boot_id 인 이유: uptime -s 는
+                # 같은 부팅에서도 ±1초 흔들려(보드 실측) 문자열 대조에 쓰면
+                # jitter 마다 앵커가 무시된다.
+                label = f"{path.name}: {cmd.get('name')}"
+                assert "/proc/sys/kernel/random/boot_id" in command, label
+                assert "NR==2 && $0==i" in command, label
+                if "FAIL:NO_SESSION_ANCHOR" in command:
+                    strict_recording.append(label)
+                    assert "find /dev/shm/recordings" in command, label
+                    assert "uptime -s" not in command, label
+                    continue
+
+                legacy_fallback.append(label)
+                # 로그 readers may still use the boot-time fallback: they do not select
+                # an ordered recording from a prior case.
+                assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, label
+        assert len(strict_recording) == 108, (
+            f"strict 녹화 세션 앵커 사용처가 {len(strict_recording)}건 (기대 108)"
+        )
+        assert len(legacy_fallback) >= 30, (
+            f"boot-time 폴백 로그 리더가 너무 적다 ({len(legacy_fallback)})"
+        )
