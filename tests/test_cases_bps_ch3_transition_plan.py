@@ -35,7 +35,7 @@ def test_bps_ch3_transition_uses_the_deployed_max9296_version():
     for case_name in ("720p_2ch", "720p_4ch"):
         profile = load_profile(str(PROFILES_DIR), case_name)
 
-        assert profile["checks"]["max9296_abi"]["expected_version"] == "2.10"
+        assert profile["checks"]["max9296_abi"]["expected_version"] == "2.12"
 
 
 def test_bps_ch3_transition_pins_and_checks_qp_auto_for_every_active_channel():

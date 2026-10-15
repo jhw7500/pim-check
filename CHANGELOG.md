@@ -1,6 +1,31 @@
 # Changelog
 
+## Unreleased (2026-10-15) — camera13 integration worktree
+
+- Reconstructed the cumulative changes from 11 historical camera-hard-reset
+  commits on top of current origin/main. Original branch and dated backup untouched.
+- Configuration changes use camera13 owner-serialized cam-recoveryctl apply-config;
+  direct hard-reset requests are reserved for explicit non-config reset.
+- Verify a single terminal CAM_RECOVERY_RESULT and explicit CLI exit status;
+  busy (75), owner unavailable (69), timeout (124) or ambiguous result must not
+  submit a competing restart or reboot.
+- Stop using direct systemctl restart cam-operate as gstApp fault cleanup.
+- Packaged MAX9296 module metadata is 2.12. Deployed board version and
+  full camera13 hardware acceptance remain to be verified.
+- Historical September 1 design documents are retained for provenance but the
+  implementation follows the October 14 camera13 recovery contract.
+
+
 ## Unreleased (2026-08-24)
+
+- **fix(cases)**: multi-case recording bitrate, integrity, and duration selectors now
+  exclude files from prior cases by requiring the validated reset-session anchor;
+  this applies to both reboot and camera-hard-reset sessions.
+
+### Camera hard-reset acceptance strategy
+
+- Camera hard reset is an opt-in plan strategy for edgeconf-only transitions. The acceptance plan preserves the same-boot anchor across the camera-only transition, while ORD/VCM changes and any hard-reset failure fall back to reboot.
+- Hardware control acceptance approved MAX9296 2.11 (`8bffdef309bc3ff4dea5bb7e1df8b6eca3558cca53ed549553c5711caa3fd888`) and gstApp (`7e47b6210cd72dfea1d8cc51a0f1713410b201466254fad983c0a87c7362513e`) hashes and identified the stale MAX9296 profile pin, now synchronized to 2.11.
 
 ### CI·로컬 PIM 보드 점유 직렬화 (pim-check#108)
 
