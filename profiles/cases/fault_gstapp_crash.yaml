@@ -42,4 +42,4 @@ checks:
       on_fail: "gstApp core dump generated — unexpected behavior"
 
 teardown:
-  recovery_command: "pgrep -x gstApp > /dev/null || systemctl restart cam-operate.service 2>&1; sleep 5; pgrep -x gstApp && echo 'gstApp running' || echo 'manual restart needed'"
+  recovery_command: "pgrep -x gstApp >/dev/null || { /opt/pim/bin/cam-recoveryctl request gstapp_restart --source pim-check --reason fault_gstapp_crash-cleanup --wait 120 && pgrep -x gstApp >/dev/null; }"

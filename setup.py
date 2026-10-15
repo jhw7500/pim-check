@@ -21,6 +21,9 @@ ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
 DEFAULT_POLL_INTERVAL = 60     # 1분 (리부트 복구 폴링용 — 부팅은 느려 1분 간격이 적절)
+RECOVERY_CTL_PATH = "/opt/pim/bin/cam-recoveryctl"
+RECOVERY_WAIT_SEC = 300  # camera13 wait budget; timeout does not cancel the action
+RECOVERY_CLI_RC = "PIM_RECOVERY_CLI_RC="
 # 안정화 readiness 폴링은 리부트 복구보다 훨씬 짧게 — 준비되면 거의 즉시 진행.
 # 복구 폴링(60초)을 그대로 쓰면 debounce 때문에 단계당 ~60초가 들어 단축효과가 작다.
 READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
@@ -90,6 +93,56 @@ CAM_READY_HEARTBEAT_MAX_AGE_SEC = 30
 SESSION_ANCHOR_PATH = "/tmp/pim_check_anchor"
 # 부팅마다 고정된 UUID — 잔존 앵커 판별용 (cam_health 와 동일 출처).
 BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
+
+_RECOVERY_RESULT_RE = re.compile(
+    r"^CAM_RECOVERY_RESULT id=([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) "
+    r"type=([a-z_]+) status=([A-Z_]+) rc=([0-9]+)$"
+)
+
+
+def _parse_recovery_result(output: str | None, *, expected_type: str) -> str:
+    """Require exactly one successful camera13 terminal result and CLI exit code.
+
+    Rejected requests have no result line. A 124 wait timeout does not cancel
+    the action: a second reset/reboot must never be submitted in this case.
+    """
+    lines = (output or "").splitlines()
+    cli_codes = [
+        match.group(1) for line in lines
+        if (match := re.fullmatch(r"PIM_RECOVERY_CLI_RC=([0-9]+)", line))
+    ]
+    if len(cli_codes) != 1:
+        raise RuntimeError("recovery CLI exit sentinel missing or repeated")
+    exit_code = int(cli_codes[0])
+    if exit_code != 0:
+        raise RuntimeError(
+            f"recovery CLI rc={exit_code}; action may still be running "
+            "(124=wait timeout, 69=unavailable, 75=busy)")
+    terminal_lines = [line for line in lines if line.startswith("CAM_RECOVERY_RESULT")]
+    if len(terminal_lines) != 1:
+        raise RuntimeError("recovery terminal result missing or repeated")
+    match = _RECOVERY_RESULT_RE.fullmatch(terminal_lines[0])
+    if match is None:
+        raise RuntimeError("malformed recovery terminal result")
+    request_id, result_type, status, result_rc = match.groups()
+    if result_type != expected_type:
+        raise RuntimeError(f"recovery result type mismatch: {result_type}")
+    if status != "SUCCEEDED" or int(result_rc) != 0:
+        raise RuntimeError(
+            f"recovery result {request_id}: status={status}, rc={result_rc}")
+    return request_id
+
+
+def _recovery_cli_command(*, apply_config: bool) -> str:
+    """Capture CLI rc: SshClient.run() discards nonzero exit codes."""
+    verb = "apply-config" if apply_config else "request camera_hard_reset"
+    return (
+        f"{RECOVERY_CTL_PATH} {verb} --source pim-check "
+        f"--reason 'camera13 test configuration' --wait {RECOVERY_WAIT_SEC}; "
+        "rc=$?; printf '\\nPIM_RECOVERY_CLI_RC=%s\\n' \"$rc\"; exit 0"
+    )
+
 
 # healthy 최초 관측 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
 # 보드별 튜닝을 위해 환경변수 PIM_CAM_READY_SETTLE_SEC 로 override 가능
@@ -331,6 +384,9 @@ class SetupManager:
         # 안정화 카메라 init(cam_state healthy+heartbeat) readiness 활성 여부.
         # run_setup(ready_camera_init=True) 로 카메라 케이스에만 주입 (기본 OFF → 단계 skip).
         self._ready_camera_init: bool = False
+        # camera hard reset 직전에 기록한 same-boot 앵커는 readiness 중 보존한다.
+        # reboot 경로와 각 run_setup 시작에서는 반드시 False 로 되돌린다.
+        self._preserve_session_anchor: bool = False
         # healthy 최초 관측 시각(monotonic) — CAM_READY_SETTLE_SEC 경과 판정용.
         self._cam_ready_seen_at: float | None = None
         # 게이트가 읽는 cam_state 좌표 — 프로파일 오버라이드 시 체크와 같은 값을
@@ -709,30 +765,50 @@ class SetupManager:
             self._cam_ready_seen_at = now
         return (now - self._cam_ready_seen_at) >= CAM_READY_SETTLE_SEC
 
+    def _prime_same_boot_anchor(self) -> bool:
+        """Record the current wall clock and boot ID before a same-boot reset."""
+        command = (
+            f"printf '%s\\n%s\\n' \"$(date '+%Y-%m-%d %H:%M:%S')\" "
+            f"\"$(cat {BOOT_ID_PATH} 2>/dev/null)\" > {SESSION_ANCHOR_PATH}; "
+            f"sync; cat {SESSION_ANCHOR_PATH} 2>/dev/null"
+        )
+        try:
+            output = self.ssh.run(command, retries=0)
+        except Exception:
+            return False
+        lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+        if len(lines) != 2:
+            return False
+        self._preserve_session_anchor = True
+        return True
+
     def _write_session_anchor(self) -> bool:
         """세션 앵커 파일을 보드에 기록한다 (readiness 단계 — SSH 복구 후 재시도됨).
 
         1행 = 앵커 시각, 2행 = 기록한 부팅의 boot_id.
 
-        **세션 시작마다 무조건 다시 쓴다.** "기존 값이 유효하면 건너뛴다"로 만들면
-        하드리셋(같은 부팅 안에서 새 세션)일 때 이전 세션의 앵커가 그대로 남는다 —
-        정확히 이 게이트가 막으려던 상황이다. 오늘은 앵커 = 부팅 시각이라 값이
-        불변이므로 디바운스 재호출에서도 내용이 같다(멱등).
-
-        무조건 기록이 미래에도 안전한 이유: 이 단계는 **세션 시작 시점에만** 돌고
-        (리부트 후 _stabilize), 그 시점의 앵커는 정의상 "이번 세션의 시작"이다.
-        하드리셋으로 바뀌어도 같은 성질이라 덮어쓰기가 잃을 정보가 없다.
-
-        **오늘 앵커 = 부팅 시각**이라 케이스의 기존 `uptime -s` 동작과 완전히 같다.
-        하드리셋으로 케이스 간 재시작을 대체하게 되면 여기서 리셋 시각을 쓰도록
-        바꾸면 되고, 케이스 쪽은 손대지 않아도 된다 (SESSION_ANCHOR_PATH 주석 참조).
+        reboot 경로에서는 기존과 같이 boot time 앵커를 매 readiness 호출마다 쓴다.
+        camera hard reset 경로에서는 reset 직전에 기록한 wall-clock 앵커를 읽고 현재
+        boot_id 와 일치하는지만 검증한다. readiness debounce가 이 앵커를 덮어쓰거나
+        이동시키면 reset 이전 로그가 잘못 포함되므로 preserve 모드에서는 쓰지 않는다.
         """
         try:
-            out = self.ssh.run(
-                f"printf '%s\\n%s\\n' \"$(uptime -s)\" "
-                f"\"$(cat {BOOT_ID_PATH} 2>/dev/null)\" "
-                f"> {SESSION_ANCHOR_PATH}; sync; cat {SESSION_ANCHOR_PATH} 2>/dev/null"
-            )
+            if self._preserve_session_anchor:
+                out = self.ssh.run(
+                    f"boot_id=$(cat {BOOT_ID_PATH} 2>/dev/null); "
+                    f"awk -v i=\"$boot_id\" 'NR == 1 {{ anchor = $0 }} "
+                    "NR == 2 && $0 == i { matched = 1 } "
+                    "END { if (NR == 2 && matched && anchor != \"\") "
+                    "printf \"%s\\n%s\\n\", anchor, i }' "
+                    f"{SESSION_ANCHOR_PATH} 2>/dev/null"
+                )
+            else:
+                out = self.ssh.run(
+                    f"printf '%s\\n%s\\n' \"$(uptime -s)\" "
+                    f"\"$(cat {BOOT_ID_PATH} 2>/dev/null)\" "
+                    f"> {SESSION_ANCHOR_PATH}; sync; "
+                    f"cat {SESSION_ANCHOR_PATH} 2>/dev/null"
+                )
         except Exception:
             return False
         lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
@@ -905,6 +981,52 @@ class SetupManager:
         time.sleep(10)  # 셧다운 대기
         self.wait_for_boot(stabilize_sec=stabilize_sec)
 
+    def reset_and_wait(self, mode: str, stabilize_sec: int, *,
+                       ord_changed: bool, source_changed: bool = False) -> str:
+        """Apply camera13 config or submit an explicit daemon-owned hard reset.
+
+        Changed source configuration must use apply-config, since a plain
+        reset request consumes the existing runtime snapshot. Any ambiguous
+        result must not trigger an out-of-band competing reset or reboot.
+        """
+        if mode != "camera_hard" or ord_changed:
+            self._preserve_session_anchor = False
+            if ord_changed and mode == "camera_hard":
+                print("Camera hard reset bypassed: ord_vcm changes require reboot")
+                self._local0_log(
+                    "reset DOWNGRADE camera_hard -> reboot — ord_vcm changed")
+            self.reboot_and_wait(stabilize_sec=stabilize_sec)
+            return "reboot"
+
+        if not self._prime_same_boot_anchor():
+            # No action has been submitted; this preflight fallback is safe.
+            self._preserve_session_anchor = False
+            reason = "failed to prime same-boot session anchor"
+            print(f"WARNING: camera hard reset unavailable ({reason}) — falling back to reboot")
+            self._local0_log(f"reset FALLBACK camera_hard -> reboot — {reason}")
+            self.reboot_and_wait(stabilize_sec=stabilize_sec)
+            return "reboot"
+
+        expected_type = "apply_config" if source_changed else "camera_hard_reset"
+        command = _recovery_cli_command(apply_config=source_changed)
+        try:
+            output = self.ssh.run(command, retries=0)
+            request_id = _parse_recovery_result(
+                output, expected_type=expected_type)
+        except Exception as exc:
+            self._preserve_session_anchor = False
+            self._local0_log(
+                f"reset UNCERTAIN camera13 {expected_type} — no second action: {exc}")
+            raise RuntimeError(
+                f"camera13 {expected_type} did not report verified success; "
+                "no competing reboot was submitted") from exc
+
+        print(f"Camera13 {expected_type} completed: {request_id}")
+        self._local0_log(
+            f"reset EFFECTIVE camera13 {expected_type} id={request_id}")
+        self._stabilize(stabilize_sec)
+        return "camera_hard"
+
     def check_current(self, changes: dict, conf_path: str = EDGECONF_PATH) -> bool:
         """현재 conf 값이 변경 목표와 이미 일치하는지 확인한다."""
         for jq_path, expected in changes.items():
@@ -970,6 +1092,7 @@ class SetupManager:
             True: 변경 또는 inject가 적용됨 (teardown 필요)
             False: skip됨
         """
+        self._preserve_session_anchor = False
         # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
         self._ready_processes_list = list(ready_processes or [])
         self._ready_recording_paths = list(ready_recording_paths or [])
@@ -1004,6 +1127,10 @@ class SetupManager:
         edge_match = (not edge_changes) or self.check_current(edge_changes, EDGECONF_PATH)
         ord_match = (not ord_changes) or self.check_current(ord_changes, ORD_VCM_PATH)
         if edge_match and ord_match:
+            if (ready_camera_init
+                    and setup_config.get("reset_mode", "reboot") == "camera_hard"):
+                if not self._prime_same_boot_anchor():
+                    raise RuntimeError("failed to refresh same-boot session anchor")
             print("Config already matches target — skipping setup/reboot")
             self._local0_log(
                 f"setup SKIP — config already matches (edge={len(edge_changes)} ord={len(ord_changes)})"
@@ -1039,7 +1166,13 @@ class SetupManager:
 
         if setup_config.get("reboot_after", False):
             stabilize_sec = setup_config.get("stabilize_sec", 30)
-            self.reboot_and_wait(stabilize_sec=stabilize_sec)
+            reset_mode = setup_config.get("reset_mode", "reboot")
+            self.reset_and_wait(
+                reset_mode,
+                stabilize_sec,
+                ord_changed=bool(ord_changes),
+                source_changed=bool(edge_changes),
+            )
             self._local0_log(f"setup DONE — back online + stabilize {stabilize_sec}s passed")
 
         # inject_command: reboot/stabilize 후 fault 주입 (실제 검증 직전)
@@ -1163,5 +1296,11 @@ class SetupManager:
         self._local0_log("teardown RESTORED — issuing reboot")
 
         if setup_config.get("reboot_after", False):
-            self.reboot_and_wait(stabilize_sec=20)
+            reset_mode = setup_config.get("reset_mode", "reboot")
+            self.reset_and_wait(
+                reset_mode,
+                20,
+                ord_changed=bool(ord_changes),
+                source_changed=bool(edge_changes),
+            )
             self._local0_log("teardown DONE — back online")

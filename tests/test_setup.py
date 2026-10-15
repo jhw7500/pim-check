@@ -191,17 +191,50 @@ class TestCheckCurrent(unittest.TestCase):
         changes = {".VHL_CAM.cam_width": 1280, ".VHL_CAM.cam_height": 720}
         self.assertFalse(self.mgr.check_current(changes))
 
+    def test_run_setup_resets_same_boot_anchor_preservation(self):
+        self.mgr._preserve_session_anchor = True
+
+        changed = self.mgr.run_setup({})
+
+        self.assertFalse(changed)
+        self.assertFalse(self.mgr._preserve_session_anchor)
+
     @patch("setup.time.sleep")
     def test_run_setup_skips_when_matched(self, mock_sleep):
-        """설정이 이미 맞으면 backup/apply/reboot 안 함"""
-        self.ssh.run.return_value = "1280"
-        self.mgr.run_setup({
+        """camera-hard 설정이 이미 맞으면 앵커만 갱신하고 reset/reboot 안 함."""
+        def side_effect(command, **_kwargs):
+            if "date '+%Y-%m-%d %H:%M:%S'" in command:
+                return "2026-09-01 12:00:00\nboot-id"
+            return "1280"
+
+        self.ssh.run.side_effect = side_effect
+        changed = self.mgr.run_setup({
             "edgeconf_changes": {".VHL_CAM.cam_width": 1280},
             "reboot_after": True,
-        })
-        # backup이 호출되지 않아야 함 (check_current만 호출)
-        calls = [str(c) for c in self.ssh.run.call_args_list]
-        self.assertFalse(any("cp " in c for c in calls))
+            "reset_mode": "camera_hard",
+        }, ready_camera_init=True)
+
+        commands = [call.args[0] for call in self.ssh.run.call_args_list]
+        self.assertFalse(changed)
+        self.assertEqual(
+            sum("date '+%Y-%m-%d %H:%M:%S'" in command for command in commands),
+            1,
+        )
+        self.assertFalse(any("cp " in command for command in commands))
+        self.assertFalse(any("cam_hard_reset.sh" in command for command in commands))
+        self.assertFalse(any(command == "reboot" for command in commands))
+
+    def test_run_setup_matched_camera_hard_raises_when_anchor_refresh_fails(self):
+        self.ssh.run.side_effect = ["1280", "missing boot id"]
+
+        with self.assertRaisesRegex(
+            RuntimeError, "failed to refresh same-boot session anchor"
+        ):
+            self.mgr.run_setup({
+                "edgeconf_changes": {".VHL_CAM.cam_width": 1280},
+                "reboot_after": True,
+                "reset_mode": "camera_hard",
+            }, ready_camera_init=True)
 
 
 if __name__ == "__main__":
