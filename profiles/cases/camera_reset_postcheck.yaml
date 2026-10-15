@@ -1,0 +1,21 @@
+name: "camera reset postcheck"
+description: "Read-only post-reset service, video-node, and module-refcount health"
+tags: [camera, reset, postcheck]
+
+monitor:
+  duration_sec: 0
+
+checks:
+  custom_commands:
+    - name: cam-operate service active
+      command: systemctl is-active cam-operate.service
+      expected: active
+      on_fail: cam-operate.service is not active after reset/restore
+    - name: required video nodes present
+      command: test -e /dev/video3 -a -e /dev/video4 && echo PRESENT || echo MISSING
+      expected: PRESENT
+      on_fail: required camera video nodes were not recreated
+    - name: camera module refcounts nonnegative
+      command: "N=$(lsmod | awk '$1==\"max9296\" || $1==\"imx8_media_dev\" {if ($3+0 < 0) n++} END {print n+0}'); echo $N"
+      expected: "0"
+      on_fail: camera module has a negative reference count and requires reboot

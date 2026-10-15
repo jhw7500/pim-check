@@ -1,0 +1,31 @@
+name: "Camera Hard Reset Acceptance"
+description: |
+  A/B control plan for camera-only 4ch 720p -> 1ch FHD transitions plus an
+  ORD/VCM mutation that must downgrade directly to reboot.
+version: 1
+
+cases:
+  regression:
+    - multi_4ch_720p
+  delta:
+    - multi_1ch_0_fhd
+    - 720p_2ch
+
+execution:
+  reset_mode: camera_hard
+  stop_on_fail: true
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 300
+  wait_between_cases: 0
+  monitor_until_pass: true
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: json
+    path: reports/hard_reset_acceptance/{timestamp}.json
+  - format: markdown_summary
+    path: reports/hard_reset_acceptance/{timestamp}.md

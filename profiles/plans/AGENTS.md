@@ -33,6 +33,7 @@ cases:                       # 필수, regression / delta 중 최소 하나는 �
 
 # 실행 정책 (선택, default 적용)
 execution:
+  reset_mode: reboot          # reboot (기본) | camera_hard (edgeconf-only)
   stop_on_fail: false        # 첫 FAIL 시 중단 여부
   case_retry: 0              # 케이스별 재시도 (0 = no retry)
   retry_wait_sec: 0          # 재시도 사이 대기
@@ -50,7 +51,7 @@ gate:
 
 # 출력 (선택, 기본 빈 리스트)
 reports:
-  - format: html             # json | html | junit (v1)
+  - format: html             # json | html | junit | markdown_summary (v1)
     path: reports/{plan_name}/{timestamp}.html
   - format: junit
     path: reports/{plan_name}/{timestamp}.xml
@@ -96,7 +97,7 @@ baseline 파일이 mtime 30일 초과면 lint/runtime에서 WARN 출력 (실행 
 | `cases.baseline` (unknown section) | `cases.baseline:` 사용 (예전 명명) | `cases.regression:`으로 변경 |
 | `비어있지 않은` | regression+delta 모두 빈 리스트 | 최소 한 섹션은 항목 추가 |
 | `threshold_pass_rate + 범위` | 0.0~1.0 밖 값 | 0.0~1.0 사이 |
-| `format 미지원` | json/html/junit 외 값 | 셋 중 하나 |
+| `format 미지원` | json/html/junit/markdown_summary 외 값 | 넷 중 하나 |
 | `new_case_policy` | warn/skip/fail 외 값 | 셋 중 하나 |
 
 ## For AI Agents
@@ -114,6 +115,7 @@ baseline 파일이 mtime 30일 초과면 lint/runtime에서 WARN 출력 (실행 
     python3 pim_check.py --plan smoke
   ```
 - `comprehensive.yaml`은 `run_comprehensive_verify.py`의 1:1 마이그레이션 결과 — 임의로 case 추가/제거하지 말고 동등성 검증(`scripts/equivalence_check.py`)을 통과한 상태로 유지.
+- `execution.reset_mode`는 `reboot`(기본) 또는 `camera_hard`만 허용한다. `camera_hard`는 edgeconf-only 변경에만 사용하며, ORD/VCM 변경 또는 hard reset 실패는 반드시 reboot로 전환한다.
 
 ### Testing Requirements
 - `tests/test_plan_load.py` — load_plan/lint_plan 단위 테스트

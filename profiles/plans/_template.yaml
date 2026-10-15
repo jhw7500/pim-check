@@ -20,6 +20,7 @@ cases:
 
 # ── 실행 정책 (모두 선택, 생략 시 default 적용) ──
 execution:
+  reset_mode: reboot                    # reboot (default) | camera_hard (edgeconf-only)
   stop_on_fail: false                 # default: false
   case_retry: 0                       # default: 0
   retry_wait_sec: 0                   # default: 0
@@ -39,7 +40,7 @@ gate:
 
 # ── 출력 (선택) ──────────────────────────────────────────
 reports:
-  - format: html                      # json | html | junit
+  - format: html                      # json | html | junit | markdown_summary
     path: reports/{plan_name}/{timestamp}.html
   - format: json
     path: reports/{plan_name}/{timestamp}.json

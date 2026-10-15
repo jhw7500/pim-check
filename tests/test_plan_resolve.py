@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import unittest
 
-from plan import Plan, DEFAULT_EXECUTION, DEFAULT_GATE, resolve_cases
+from plan import Plan, DEFAULT_EXECUTION, DEFAULT_GATE, load_plan, resolve_cases
 
 
 def _make_plan(cases: dict) -> Plan:
@@ -145,6 +145,21 @@ class TestResolveCases(unittest.TestCase):
         names = [n for _, n in result]
         # 알파벳 정렬 보장
         self.assertEqual(names, sorted(names))
+
+    def test_hard_reset_acceptance_plan_has_required_transition_matrix(self):
+        root = os.path.dirname(os.path.dirname(__file__))
+        plan = load_plan(os.path.join(root, "profiles", "plans", "hard_reset_acceptance.yaml"))
+        self.assertEqual(
+            resolve_cases(plan, os.path.join(root, "profiles")),
+            [
+                ("regression", "multi_4ch_720p"),
+                ("delta", "multi_1ch_0_fhd"),
+                ("delta", "720p_2ch"),
+            ],
+        )
+        self.assertEqual(plan.execution["reset_mode"], "camera_hard")
+        self.assertTrue(plan.execution["stop_on_fail"])
+        self.assertEqual(plan.gate["threshold_pass_rate"], 1.0)
 
 
 if __name__ == "__main__":

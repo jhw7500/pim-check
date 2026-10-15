@@ -57,7 +57,7 @@ iMX8MP 타겟 보드 QA 자동화 도구 (v2.0.0). SSH로 타겟에 접속하여
 - 모든 체크 로직은 `checks/` 디렉토리의 `BaseCheck` 서브클래스로 구현. 루트의 `engine.py`는 체크를 실행만 한다.
 - `config.py`의 `deep_merge(base, override)` 패턴이 핵심 — base.yaml 값을 case yaml이 부분 오버라이드.
 - SSH 명령은 반드시 `SshClient.run()`을 통해 실행. 직접 subprocess 호출 금지.
-- `setup.py`의 `SetupManager`는 edgeconf 변경 시 반드시 backup → apply → reboot → test → restore → reboot 순서를 지킨다.
+- `setup.py`의 `SetupManager`는 edgeconf 변경 시 반드시 backup → apply → selected reset → test → restore → selected reset 순서를 지킨다. selected reset은 기본적으로 reboot이며, `camera_hard`는 edgeconf-only 변경에만 사용한다. ORD/VCM 변경 또는 hard-reset failure는 reboot를 사용한다.
 - `reporter.py`, `html_reporter.py`, `junit_reporter.py`는 결과 포맷만 담당. 체크 로직을 넣지 않는다.
 - hardware evidence는 `hw_gate`가 canonical verdict를 중앙 재계산한다. adapter/collector의
   process exit 0 또는 legacy boolean은 PASS 근거가 아니다. 새 numeric policy는
