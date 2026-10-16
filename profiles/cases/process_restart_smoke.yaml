@@ -20,11 +20,11 @@ checks:
     expected_version: null
   custom_commands:
     - name: 사전 gstApp+ord+vcm 동시 실행
-      command: pgrep -x gstApp >/dev/null && pgrep -x ord >/dev/null && pgrep -x vcm >/dev/null && echo ALL_RUNNING || echo SOMEONE_DOWN
+      command: M=""; for p in gstApp ord vcm; do pgrep -x "$p" >/dev/null || M="$M $p"; done; [ -z "$M" ] && echo ALL_RUNNING || echo "DOWN:$M"
       expected: ALL_RUNNING
       on_fail: gstApp/ord/vcm 중 하나 사전 미실행
     - name: 3 process 일괄 강제 종료 + 60s 대기
-      command: pkill -9 -x gstApp; pkill -9 -x ord; pkill -9 -x vcm; sleep 60; pgrep -x gstApp >/dev/null && pgrep -x ord >/dev/null && pgrep -x vcm >/dev/null && echo ALL_RESTARTED || echo SOMEONE_NOT_RESTARTED
+      command: pkill -9 -x gstApp; pkill -9 -x ord; pkill -9 -x vcm; sleep 60; M=""; for p in gstApp ord vcm; do pgrep -x "$p" >/dev/null || M="$M $p"; done; [ -z "$M" ] && echo ALL_RESTARTED || echo "NOT_RESTARTED:$M"
       expected: ALL_RESTARTED
       on_fail: gstApp/ord/vcm 중 하나 자동 재시작 못 함 (watchdog 회귀)
     - name: 재시작 후 cam_state healthy

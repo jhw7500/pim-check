@@ -581,6 +581,10 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
 
 def main(argv=None) -> int:
+    # 파일로 리디렉션해도 진행 출력이 즉시 보이게 한다 (기본은 블록 버퍼링이라 종료 시 일괄 기록).
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(line_buffering=True)
     _install_graceful_exit_handlers()
     args = parse_args(argv)
 

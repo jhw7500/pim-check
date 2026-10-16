@@ -81,9 +81,9 @@ checks:
 
     # === 자동 삭제 (Board #17) ===
     - name: "SD 사용률 90% 이하"
-      command: "df /mnt/sd_cam 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\"); print $5}' || echo 0"
-      expected_min: 0
-      on_fail: "SD 카드 사용률 확인 실패"
+      command: "U=$(df /mnt/sd_cam 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\"); print $5}'); [ \"$U\" -le 90 ] 2>/dev/null && echo OK || echo \"OVER:${U:-none}\""
+      expected: "OK"
+      on_fail: "SD 카드 사용률 90% 초과 또는 확인 실패 — Board #17 자동 삭제 확인"
 
     # === eMMC에 영상 미저장 (Board #24) ===
     - name: "eMMC /mnt/sd-cam에 데이터 미생성"
