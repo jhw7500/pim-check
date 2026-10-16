@@ -1416,14 +1416,16 @@ expectations:
   cpu:
     gst_range:
       # resolution + channels + fps 조합
-      "720p+2ch+15fps": [5, 60]
-      "720p+2ch+30fps": [10, 70]
-      "720p+4ch+15fps": [20, 80]
-      "720p+4ch+30fps": [30, 90]
-      "fhd+2ch+15fps": [20, 80]
-      "fhd+2ch+30fps": [30, 90]
-      "fhd+4ch+15fps": [50, 95]
-      "fhd+4ch+30fps": [60, 100]
+      # 하한 0: 인코딩은 VPU(mxc_hantro_vc8000e) offload 라 gstApp CPU 가 낮은 것은
+      # 녹화 부족의 지표가 아니다 (2026-06 실측 2ch 4.7%, 4ch 12.5%). 상한만 검사한다.
+      "720p+2ch+15fps": [0, 60]
+      "720p+2ch+30fps": [0, 70]
+      "720p+4ch+15fps": [0, 80]
+      "720p+4ch+30fps": [0, 90]
+      "fhd+2ch+15fps": [0, 80]
+      "fhd+2ch+30fps": [0, 90]
+      "fhd+4ch+15fps": [0, 95]
+      "fhd+4ch+30fps": [0, 100]
       # ord_vcm 조합은 CPU 무관
   thermal:
     warn_temp_c:

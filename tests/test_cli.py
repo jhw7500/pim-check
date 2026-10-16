@@ -160,5 +160,41 @@ class TestMainFlow(unittest.TestCase):
         self.assertEqual(ret, 1)
 
 
+class TestEdgeconfValueMatches(unittest.TestCase):
+    """--dry-run 이 jq 출력(JSON 텍스트)과 목표값을 JSON 기준으로 비교한다."""
+
+    def test_booleans_compare_as_json(self):
+        self.assertTrue(pim_check._edgeconf_value_matches("false", False))
+        self.assertTrue(pim_check._edgeconf_value_matches("true\n", True))
+        self.assertFalse(pim_check._edgeconf_value_matches("true", False))
+
+    def test_bool_is_not_number(self):
+        self.assertFalse(pim_check._edgeconf_value_matches("1", True))
+        self.assertFalse(pim_check._edgeconf_value_matches("true", 1))
+
+    @patch("setup.SetupManager")
+    @patch("pim_check.load_profile")
+    @patch("pim_check.SshClient")
+    def test_dry_run_lists_only_real_differences(self, mock_ssh_cls, mock_profile, mock_setup):
+        mock_profile.return_value = {"setup": {"edgeconf_changes": {".a": False, ".b": 1280}}}
+        ssh = mock_ssh_cls.return_value
+        ssh.check_connectivity.return_value = True
+        ssh.run.side_effect = lambda cmd: "true" if "'.a'" in cmd else "1280"
+        mock_setup.return_value.check_current.return_value = False
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ret = pim_check.main(["--dry-run", "--case", "x", "--host", "h"])
+        self.assertEqual(ret, 0)
+        self.assertIn(".a: true → false", out.getvalue())
+        self.assertNotIn(".b:", out.getvalue())
+
+    def test_strings_numbers_and_missing(self):
+        self.assertTrue(pim_check._edgeconf_value_matches('"mp4"', "mp4"))
+        self.assertTrue(pim_check._edgeconf_value_matches("15", 15))
+        self.assertFalse(pim_check._edgeconf_value_matches("null", 15))
+        self.assertFalse(pim_check._edgeconf_value_matches(None, 15))
+        self.assertFalse(pim_check._edgeconf_value_matches("not json", "x"))
+
+
 if __name__ == "__main__":
     unittest.main()

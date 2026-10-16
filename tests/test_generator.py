@@ -105,6 +105,52 @@ class TestBuildCase(unittest.TestCase):
         self.assertEqual(case["checks"]["recording"]["expected_channels"], 2)
         self.assertEqual(case["checks"]["cam_state"]["expected_state"], "healthy")
 
+    def test_fps_variant_expects_actually_enabled_channels(self):
+        """4채널 enable 이 모두 명시되면 라벨(4ch) 대신 실제 켜진 채널 수를 기대한다.
+
+        fps 축은 ch0 만 켜서(state isolation) channels 축의 2ch/4ch 를 덮어쓴다.
+        """
+        combo = (
+            ("resolution", {"name": "720p", "values": {".w": 1280}}),
+            ("channels", {"name": "4ch", "values": {
+                ".VHL_CAM.i2c1.ch2.enable": True,
+                ".VHL_CAM.i2c1.ch3.enable": True,
+            }, "expect": {"channel_count": 4}}),
+            ("fps", {"name": "15fps", "values": {
+                ".VHL_CAM.i2c2.ch0.enable": True,
+                ".VHL_CAM.i2c2.ch1.enable": False,
+                ".VHL_CAM.i2c1.ch2.enable": False,
+                ".VHL_CAM.i2c1.ch3.enable": False,
+            }}),
+        )
+        case, _ = build_case(combo, self.schema)
+        self.assertEqual(case["checks"]["recording"]["expected_channels"], 1)
+        self.assertEqual(case["checks"]["recording"]["session_progress"], "1/1")
+
+    def test_partial_channel_keys_keep_label_count(self):
+        """채널 enable 이 일부만 명시되면(ch0/ch1 은 기본값) 라벨 채널 수를 유지한다."""
+        combo = (
+            ("resolution", {"name": "720p", "values": {".w": 1280}}),
+            ("channels", {"name": "2ch", "values": {
+                ".VHL_CAM.i2c1.ch2.enable": False,
+                ".VHL_CAM.i2c1.ch3.enable": False,
+            }, "expect": {"channel_count": 2}}),
+        )
+        case, _ = build_case(combo, self.schema)
+        self.assertEqual(case["checks"]["recording"]["expected_channels"], 2)
+
+    def test_shipped_cpu_ranges_have_no_lower_bound(self):
+        """인코딩은 VPU offload 라 gstApp CPU 하한은 under-recording 지표가 못 된다
+        (2026-06 실측 2ch 4.7%, 4ch 12.5%). 스키마의 gst_range 하한은 0 이어야 한다."""
+        schema_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles", "schema.yaml")
+        with open(schema_path, encoding="utf-8") as fh:
+            schema = yaml.safe_load(fh)
+        ranges = schema["expectations"]["cpu"]["gst_range"]
+        self.assertTrue(ranges)
+        for key, (low, _high) in ranges.items():
+            self.assertEqual(low, 0, key)
+
     def test_thermal_only_for_fhd(self):
         combo_720p = (
             ("resolution", {"name": "720p", "values": {".w": 1280}}),

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import signal
 import sys
@@ -580,6 +581,17 @@ def run_case(case_name, host, user, password, duration, save_json=False,
                 print(f"WARNING: Teardown failed - {e}")
 
 
+def _edgeconf_value_matches(current: str | None, target) -> bool:
+    """jq 출력(JSON 텍스트)이 목표값과 같은지 JSON 기준으로 비교한다 (bool 과 숫자를 구분)."""
+    if current is None:
+        return False
+    try:
+        actual = json.loads(current)
+    except ValueError:
+        return False
+    return json.dumps(actual, sort_keys=True) == json.dumps(target, sort_keys=True)
+
+
 def main(argv=None) -> int:
     # 파일로 리디렉션해도 진행 출력이 즉시 보이게 한다 (기본은 블록 버퍼링이라 종료 시 일괄 기록).
     reconfigure = getattr(sys.stdout, "reconfigure", None)
@@ -683,7 +695,6 @@ def _main_run(args) -> int:
         if conf_a is None or conf_b is None:
             print("ERROR: Failed to read edgeconf from one or both targets")
             return 1
-        import json
         dict_a = json.loads(conf_a)
         dict_b = json.loads(conf_b)
 
@@ -847,9 +858,9 @@ def _main_run(args) -> int:
                 print(f"  {case_name}: config DIFFERS — would change:")
                 for k, v in changes.items():
                     current = ssh.run(f"jq '{k}' /root/shared_v/edgeconf_pim.json")
-                    if current is not None and current.strip('"') == str(v):
+                    if _edgeconf_value_matches(current, v):
                         continue
-                    print(f"    {k}: {current} → {v}")
+                    print(f"    {k}: {current} → {json.dumps(v, ensure_ascii=False)}")
         return 0
 
     if args.all:

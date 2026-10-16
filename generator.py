@@ -15,6 +15,13 @@ from fnmatch import fnmatch
 
 import yaml
 
+CHANNEL_ENABLE_KEYS = (
+    ".VHL_CAM.i2c2.ch0.enable",
+    ".VHL_CAM.i2c2.ch1.enable",
+    ".VHL_CAM.i2c1.ch2.enable",
+    ".VHL_CAM.i2c1.ch3.enable",
+)
+
 
 def load_schema(schema_path: str) -> dict:
     with open(schema_path) as f:
@@ -118,6 +125,11 @@ def build_case(combo: tuple, schema: dict, no_reboot: bool = False) -> tuple[dic
 
     # Recording (채널 수에서 자동 계산)
     ch_count = expects.get("channel_count")
+    # 4채널 enable 이 모두 명시되면 라벨 대신 실제 켜진 수를 쓴다 — fps 축은 ch0 만
+    # 켜서(state isolation) channels 축의 2ch/4ch 라벨을 덮어쓴다.
+    enables = [edgeconf_changes.get(k) for k in CHANNEL_ENABLE_KEYS]
+    if ch_count and all(isinstance(v, bool) for v in enables):
+        ch_count = sum(1 for v in enables if v is True)
     if ch_count:
         checks["recording"] = {
             "expected_channels": ch_count,
