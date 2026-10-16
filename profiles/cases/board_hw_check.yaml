@@ -21,12 +21,12 @@ checks:
   custom_commands:
     # === 네트워크 (Board #2-4) ===
     - name: "WiFi 연결 (IP 할당)"
-      command: "ip addr show wlp1s0 2>/dev/null | grep -c 'inet ' || echo 0"
+      command: "ip addr show wlp1s0 2>/dev/null | grep -c 'inet ' || true"
       expected_min: 1
       on_fail: "WiFi(wlp1s0) IP 미할당 — Board #2 FAIL"
 
     - name: "ETH0 연결 (IP 할당)"
-      command: "ip addr show eth0 2>/dev/null | grep -c 'inet ' || echo 0"
+      command: "ip addr show eth0 2>/dev/null | grep -c 'inet ' || true"
       expected_min: 1
       on_fail: "ETH0 IP 미할당 — Board #3 FAIL"
 
