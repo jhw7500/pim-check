@@ -1,5 +1,5 @@
 name: "camera reset postcheck"
-description: "Read-only post-reset service, video-node, and module-refcount health"
+description: "Read-only camera13 owner, module and exact-request hardware recovery audit"
 tags: [camera, reset, postcheck]
 
 monitor:
@@ -10,12 +10,60 @@ checks:
     - name: cam-operate service active
       command: systemctl is-active cam-operate.service
       expected: active
-      on_fail: cam-operate.service is not active after reset/restore
+      on_fail: cam-operate.service is not active after reset
+
+    - name: owner ACTIVE and no queued recovery
+      command: >-
+        /opt/pim/bin/cam-recoveryctl status --json 2>/dev/null |
+        jq -r 'if .owner.lifecycle == "ACTIVE" and .pending == null
+               and .active == null then "READY" else "NOT_READY" end'
+      expected: READY
+      on_fail: camera13 owner is not ACTIVE or has pending recovery
+
     - name: required video nodes present
       command: test -e /dev/video3 -a -e /dev/video4 && echo PRESENT || echo MISSING
       expected: PRESENT
       on_fail: required camera video nodes were not recreated
-    - name: camera module refcounts nonnegative
-      command: "N=$(lsmod | awk '$1==\"max9296\" || $1==\"imx8_media_dev\" {if ($3+0 < 0) n++} END {print n+0}'); echo $N"
-      expected: "0"
-      on_fail: camera module has a negative reference count and requires reboot
+
+    - name: camera kernel modules loaded
+      command: >-
+        test -d /sys/module/max9296 &&
+        test -d /sys/module/imx8_media_dev &&
+        echo LOADED || echo MISSING
+      expected: LOADED
+      on_fail: required camera kernel modules are missing
+
+    - name: loaded MAX9296 version is 2.12
+      command: >-
+        [ "$(cat /sys/module/max9296/version 2>/dev/null)" = "2.12" ] &&
+        echo MATCH || echo MISMATCH
+      expected: MATCH
+      on_fail: loaded MAX9296 module does not report expected camera13 version
+
+    - name: latest hardware reset audited for same owner
+      command: >-
+        A=$(cat /tmp/pim_check_recovery_audit.json 2>/dev/null);
+        I=$(jq -r '.request_id | select(type=="string" and test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' /tmp/pim_check_recovery_audit.json 2>/dev/null);
+        H=$(cat "/var/lib/pim-camera/recovery/history/$I.json" 2>/dev/null);
+        O=$(cat /run/pim-camera/owner.json 2>/dev/null);
+        [ -n "$I" ] && [ -n "$A" ] && [ -n "$H" ] && [ -n "$O" ] &&
+        jq -ne --argjson a "$A" --argjson h "$H" --argjson o "$O"
+        --argjson now "$(date +%s)" '
+          ($a.checked_at | type) == "number" and
+          ($a.checked_at > ($now - 900)) and ($a.checked_at <= $now) and
+          ($a.request_id == $h.request.id) and
+          ($a.type == $h.request.type) and
+          ($h.request.source == "pim-check") and
+          ($h.request.status == "SUCCEEDED") and ($h.request.rc == 0) and
+          ($a.owner.boot_id == $o.boot_id) and
+          ($a.owner.invocation_id == $o.invocation_id) and
+          ($a.owner.pid == $o.pid) and
+          ($a.owner.proc_start_time == $o.proc_start_time) and
+          ($o.lifecycle == "ACTIVE") and
+          ([$h.actions[]? | select(.action == "camera_hard_reset" and
+            .request_id == $a.request_id and .status == "SUCCEEDED" and .rc == 0)] |
+            length) > 0 and
+          ([$h.actions[]? | select(.action == "reboot_fallback")] | length) == 0
+        ' >/dev/null && echo VERIFIED || echo INVALID
+      expected: VERIFIED
+      on_fail: missing/stale request, reset action, or owner invocation changed

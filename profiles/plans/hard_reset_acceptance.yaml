@@ -1,7 +1,8 @@
 name: "Camera Hard Reset Acceptance"
 description: |
-  A/B control plan for camera-only 4ch 720p -> 1ch FHD transitions plus an
-  ORD/VCM mutation that must downgrade directly to reboot.
+  Validate daemon-owned 4ch 720p -> 1ch FHD camera recovery, then check the
+  owner and hard-reset request history BEFORE the ORD/VCM reboot downgrade.
+  A hardware-reset acceptance run fails closed if required history is missing.
 version: 1
 
 cases:
@@ -9,6 +10,7 @@ cases:
     - multi_4ch_720p
   delta:
     - multi_1ch_0_fhd
+    - camera_reset_postcheck
     - 720p_2ch
 
 execution:

@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 
@@ -24,6 +25,9 @@ DEFAULT_POLL_INTERVAL = 60     # 1분 (리부트 복구 폴링용 — 부팅은 
 RECOVERY_CTL_PATH = "/opt/pim/bin/cam-recoveryctl"
 RECOVERY_WAIT_SEC = 300  # camera13 wait budget; timeout does not cancel the action
 RECOVERY_CLI_RC = "PIM_RECOVERY_CLI_RC="
+RECOVERY_OWNER_PATH = "/run/pim-camera/owner.json"
+RECOVERY_HISTORY_DIR = "/var/lib/pim-camera/recovery/history"
+RECOVERY_AUDIT_PATH = "/tmp/pim_check_recovery_audit.json"
 # 안정화 readiness 폴링은 리부트 복구보다 훨씬 짧게 — 준비되면 거의 즉시 진행.
 # 복구 폴링(60초)을 그대로 쓰면 debounce 때문에 단계당 ~60초가 들어 단축효과가 작다.
 READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
@@ -142,6 +146,78 @@ def _recovery_cli_command(*, apply_config: bool) -> str:
         f"--reason 'camera13 test configuration' --wait {RECOVERY_WAIT_SEC}; "
         "rc=$?; printf '\\nPIM_RECOVERY_CLI_RC=%s\\n' \"$rc\"; exit 0"
     )
+
+
+def _camera_owner(raw: str | None) -> dict:
+    """Decode the immutable cam-operate owner tuple; reject absent or stale data."""
+    try:
+        value = json.loads(raw or "")
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("camera13 owner snapshot is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("camera13 owner snapshot missing")
+    for key in ("boot_id", "invocation_id", "token", "proc_start_time"):
+        if not isinstance(value.get(key), str) or not value[key]:
+            raise RuntimeError(f"camera13 owner field {key} missing")
+    if type(value.get("pid")) is not int or value["pid"] <= 0:
+        raise RuntimeError("camera13 owner pid invalid")
+    if not value["proc_start_time"].isdigit():
+        raise RuntimeError("camera13 owner start time invalid")
+    return value
+
+
+def _owner_identity(owner: dict) -> tuple:
+    """Fields which must not change during daemon-owned camera recovery."""
+    return tuple(owner.get(k) for k in (
+        "boot_id", "invocation_id", "pid", "proc_start_time", "token"))
+
+
+def _assert_hardware_recovery(
+    history_raw: str | None, request_id: str, request_type: str,
+    before: dict, after: dict,
+) -> None:
+    """Verify the *action*, not merely apply-config terminal success.
+
+    camera13 may successfully apply consumer-only config without doing a
+    hardware reset. An acceptance run must reject such a false positive.
+    """
+    try:
+        history = json.loads(history_raw or "")
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("camera13 recovery history unreadable") from exc
+    if not isinstance(history, dict):
+        raise RuntimeError("camera13 recovery history missing")
+    request = history.get("request")
+    if not isinstance(request, dict):
+        raise RuntimeError("camera13 history request missing")
+    if (request.get("id") != request_id
+            or request.get("type") != request_type
+            or request.get("source") != "pim-check"
+            or request.get("status") != "SUCCEEDED"
+            or type(request.get("rc")) is not int
+            or request["rc"] != 0):
+        raise RuntimeError("camera13 request history does not match terminal success")
+    saved_owner = _camera_owner(json.dumps(request.get("owner")))
+    if (_owner_identity(before) != _owner_identity(saved_owner)
+            or _owner_identity(before) != _owner_identity(after)):
+        raise RuntimeError("camera13 owner invocation changed during recovery")
+    if after.get("lifecycle") != "ACTIVE":
+        raise RuntimeError("camera13 owner did not return to ACTIVE")
+    actions = history.get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise RuntimeError("camera13 history actions missing")
+    found_hard_reset = False
+    for action in actions:
+        if not isinstance(action, dict) or action.get("request_id") != request_id:
+            raise RuntimeError("camera13 history action belongs to another request")
+        if action.get("action") == "reboot_fallback":
+            raise RuntimeError("camera13 reboot fallback occurred during acceptance")
+        if action.get("status") != "SUCCEEDED" or action.get("rc") != 0:
+            raise RuntimeError("camera13 history contains unfinished/failed action")
+        if action.get("action") == "camera_hard_reset":
+            found_hard_reset = True
+    if not found_hard_reset:
+        raise RuntimeError("camera13 apply-config succeeded without hardware reset")
 
 
 # healthy 최초 관측 후 ISP 레지스터가 settle 됐다고 볼 때까지의 여유(초).
@@ -387,6 +463,9 @@ class SetupManager:
         # camera hard reset 직전에 기록한 same-boot 앵커는 readiness 중 보존한다.
         # reboot 경로와 각 run_setup 시작에서는 반드시 False 로 되돌린다.
         self._preserve_session_anchor: bool = False
+        # A submitted camera13 request with unverified outcome must not be
+        # followed by automatic teardown/reboot from the same manager.
+        self._recovery_outcome_uncertain: bool = False
         # healthy 최초 관측 시각(monotonic) — CAM_READY_SETTLE_SEC 경과 판정용.
         self._cam_ready_seen_at: float | None = None
         # 게이트가 읽는 cam_state 좌표 — 프로파일 오버라이드 시 체크와 같은 값을
@@ -982,13 +1061,24 @@ class SetupManager:
         self.wait_for_boot(stabilize_sec=stabilize_sec)
 
     def reset_and_wait(self, mode: str, stabilize_sec: int, *,
-                       ord_changed: bool, source_changed: bool = False) -> str:
-        """Apply camera13 config or submit an explicit daemon-owned hard reset.
+                       ord_changed: bool, source_changed: bool = False,
+                       require_hard_reset: bool = False) -> str:
+        """Use the camera13 owner and verify real hardware action when required.
 
-        Changed source configuration must use apply-config, since a plain
-        reset request consumes the existing runtime snapshot. Any ambiguous
-        result must not trigger an out-of-band competing reset or reboot.
+        An apply-config success does not imply camera_hard_reset was executed.
+        The acceptance-only strict mode validates the owner tuple and exact
+        request history. Uncertain results must never trigger a second reboot.
         """
+        if self._recovery_outcome_uncertain:
+            raise RuntimeError(
+                "camera13 previous reset outcome unverified; manual inspection required")
+        if require_hard_reset:
+            # Strict setup can have already changed the source; even preflight
+            # failure must not trigger an automatic teardown reboot.
+            self._recovery_outcome_uncertain = True
+        if require_hard_reset and (mode != "camera_hard" or ord_changed):
+            raise RuntimeError("hardware reset acceptance requires camera-only mode")
+
         if mode != "camera_hard" or ord_changed:
             self._preserve_session_anchor = False
             if ord_changed and mode == "camera_hard":
@@ -998,10 +1088,26 @@ class SetupManager:
             self.reboot_and_wait(stabilize_sec=stabilize_sec)
             return "reboot"
 
+        # Capture the immutable service owner *before* submitting any action.
+        # Normal runs preserve the historical CLI-only contract; strict runs
+        # additionally assert the same daemon invocation survived recovery.
+        before = None
+        if require_hard_reset:
+            try:
+                before = _camera_owner(
+                    self.ssh.run(f"cat {RECOVERY_OWNER_PATH}", retries=0))
+                if before.get("lifecycle") != "ACTIVE":
+                    raise RuntimeError("camera13 owner not ACTIVE before reset")
+            except Exception as exc:
+                self._preserve_session_anchor = False
+                raise RuntimeError("camera13 owner preflight failed; no reboot issued") from exc
+
         if not self._prime_same_boot_anchor():
-            # No action has been submitted; this preflight fallback is safe.
             self._preserve_session_anchor = False
             reason = "failed to prime same-boot session anchor"
+            if require_hard_reset:
+                raise RuntimeError(f"camera13 acceptance aborted: {reason}; no reboot issued")
+            # No action has been submitted; retain legacy fallback for normal runs.
             print(f"WARNING: camera hard reset unavailable ({reason}) — falling back to reboot")
             self._local0_log(f"reset FALLBACK camera_hard -> reboot — {reason}")
             self.reboot_and_wait(stabilize_sec=stabilize_sec)
@@ -1011,9 +1117,48 @@ class SetupManager:
         command = _recovery_cli_command(apply_config=source_changed)
         try:
             output = self.ssh.run(command, retries=0)
-            request_id = _parse_recovery_result(
-                output, expected_type=expected_type)
+            request_id = _parse_recovery_result(output, expected_type=expected_type)
+            if require_hard_reset:
+                # CLI writes the terminal result immediately before the owner
+                # completes its final ACTIVE transition. Wait for lifecycle
+                # convergence, but fail immediately if the invocation changes.
+                for attempt in range(12):
+                    after = _camera_owner(
+                        self.ssh.run(f"cat {RECOVERY_OWNER_PATH}", retries=0))
+                    if _owner_identity(before) != _owner_identity(after):
+                        raise RuntimeError("camera13 owner invocation changed")
+                    if after.get("lifecycle") == "ACTIVE":
+                        break
+                    if after.get("lifecycle") not in ("RECOVERING", "APPLYING_CONFIG"):
+                        raise RuntimeError("camera13 owner entered unexpected lifecycle")
+                    if attempt < 11:
+                        time.sleep(1)
+                else:
+                    raise RuntimeError("camera13 owner did not settle to ACTIVE")
+                history = self.ssh.run(
+                    f"cat {RECOVERY_HISTORY_DIR}/{request_id}.json", retries=0)
+                _assert_hardware_recovery(
+                    history, request_id, expected_type, before, after)
+                # This marker is for the read-only postcheck only. It contains
+                # public owner identity, NOT the private daemon token.
+                marker = {
+                    "request_id": request_id,
+                    "type": expected_type,
+                    "checked_at": int(time.time()),
+                    "owner": {k: before[k] for k in (
+                        "boot_id", "invocation_id", "pid", "proc_start_time")},
+                }
+                payload = json.dumps(marker, separators=(",", ":"), sort_keys=True)
+                write = (
+                    f"printf '%s\\n' {shlex.quote(payload)} "
+                    f"> {RECOVERY_AUDIT_PATH} && sync {RECOVERY_AUDIT_PATH} "
+                    f"&& cat {RECOVERY_AUDIT_PATH}"
+                )
+                written = self.ssh.run(write, retries=0)
+                if json.loads(written or "null") != marker:
+                    raise RuntimeError("camera13 postcheck audit marker not persisted")
         except Exception as exc:
+            self._recovery_outcome_uncertain = True
             self._preserve_session_anchor = False
             self._local0_log(
                 f"reset UNCERTAIN camera13 {expected_type} — no second action: {exc}")
@@ -1021,6 +1166,7 @@ class SetupManager:
                 f"camera13 {expected_type} did not report verified success; "
                 "no competing reboot was submitted") from exc
 
+        self._recovery_outcome_uncertain = False
         print(f"Camera13 {expected_type} completed: {request_id}")
         self._local0_log(
             f"reset EFFECTIVE camera13 {expected_type} id={request_id}")
@@ -1127,6 +1273,12 @@ class SetupManager:
         edge_match = (not edge_changes) or self.check_current(edge_changes, EDGECONF_PATH)
         ord_match = (not ord_changes) or self.check_current(ord_changes, ORD_VCM_PATH)
         if edge_match and ord_match:
+            # A hard-reset acceptance case must trigger a fresh hardware
+            # transition; an already-matching source is NOT a successful reset.
+            if (setup_config.get("require_hard_reset")
+                    and setup_config.get("reset_mode") == "camera_hard"):
+                raise RuntimeError(
+                    "camera13 acceptance: setup already matched, no hardware reset executed")
             if (ready_camera_init
                     and setup_config.get("reset_mode", "reboot") == "camera_hard"):
                 if not self._prime_same_boot_anchor():
@@ -1172,6 +1324,9 @@ class SetupManager:
                 stabilize_sec,
                 ord_changed=bool(ord_changes),
                 source_changed=bool(edge_changes),
+                **({"require_hard_reset": True}
+                   if setup_config.get("require_hard_reset")
+                   and reset_mode == "camera_hard" else {}),
             )
             self._local0_log(f"setup DONE — back online + stabilize {stabilize_sec}s passed")
 
@@ -1260,6 +1415,10 @@ class SetupManager:
         있어 **복구가 한 번도 실행되지 않았다**(pim-check#75). `setup:` 쪽도 계속
         읽어 하위 호환을 지키되, 둘 다 있으면 teardown 쪽만 쓴다(중복 실행 금지).
         """
+        if self._recovery_outcome_uncertain:
+            raise RuntimeError(
+                "camera13 cleanup deferred: recovery outcome unverified; "
+                "do not submit a competing reboot or apply-config")
         self._clear_readiness()
         teardown_config = teardown_config or {}
         edge_changes = setup_config.get("edgeconf_changes", {})

@@ -154,12 +154,24 @@ class TestResolveCases(unittest.TestCase):
             [
                 ("regression", "multi_4ch_720p"),
                 ("delta", "multi_1ch_0_fhd"),
+                ("delta", "camera_reset_postcheck"),
                 ("delta", "720p_2ch"),
             ],
         )
         self.assertEqual(plan.execution["reset_mode"], "camera_hard")
         self.assertTrue(plan.execution["stop_on_fail"])
         self.assertEqual(plan.gate["threshold_pass_rate"], 1.0)
+
+        # Postcheck must run while the daemon owner is unchanged, BEFORE the
+        # ORD/VCM case intentionally downgrades camera_hard to full reboot.
+        from config import load_profile
+        profiles_dir = os.path.join(root, "profiles")
+        self.assertTrue(load_profile(
+            profiles_dir, case="multi_4ch_720p")["setup"]["require_hard_reset"])
+        self.assertTrue(load_profile(
+            profiles_dir, case="multi_1ch_0_fhd")["setup"]["require_hard_reset"])
+        ord_case = load_profile(profiles_dir, case="720p_2ch")
+        self.assertTrue(ord_case["setup"]["ord_vcm_changes"])
 
 
 if __name__ == "__main__":

@@ -14,6 +14,9 @@ description: '1-channel "1ch_0" combination at fhd with channel-unique settings'
 tags: [multi, comprehensive]
 
 setup:
+  # Acceptance with reset_mode=camera_hard must prove an actual hardware action.
+  # Normal reboot-mode plans ignore this stricter evidence gate.
+  require_hard_reset: true
 
   edgeconf_changes:
     .VHL_CAM.cam_width: 1920

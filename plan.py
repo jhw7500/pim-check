@@ -671,6 +671,9 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # 못하므로, finally 가 이 값을 보고 대신 복구한다 — graceful shutdown 핸들러가
     # 존재하는 이유가 바로 그 정리다 (pim-check#95 리뷰).
     pending_recovery: str | None = None
+    # A failed/ambiguous daemon-owned recovery may still be active.
+    # No later case, retry, or teardown may submit a competing action.
+    uncertain_recovery = False
     # 마지막 시도의 매니저 홀더 — 위와 같은 이유로 finally 가 회수한다 (#82 리뷰).
     # _run_single_case 는 run_setup **전에** 홀더를 채우므로, 중단으로 루프의
     # 사후 수확 블록에 도달하지 못해도 원장·스냅샷이 여기 남아 있다.
@@ -747,6 +750,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 if _mgr_holder:
                     last_setup_mgr = _mgr_holder[0]
                     last_mgr_ssh = ssh
+                    if getattr(last_setup_mgr, "_recovery_outcome_uncertain", False) is True:
+                        uncertain_recovery = True
                     # 스냅샷 실패를 채택 **전에** 대조한다 (#82) — 아직 기준선이 없는
                     # 파일의 실패만 기준선을 밀 수 있다(이후 채택되는 스냅샷은 이
                     # 케이스가 이미 변경한 뒤의 상태다). 채택 이후의 실패는 캠페인
@@ -771,7 +776,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 남기므로 재시도 전에도 돈다.
                 # 설정 복원(edge/ord)은 재부팅이 붙으므로 캠페인 끝이 맞다(#68) —
                 # 두 동작은 주기가 다르다. 빈 setup 을 넘겨 복원을 건너뛴다.
-                if pending_recovery and setup_factory is not None:
+                if (pending_recovery and setup_factory is not None
+                        and not uncertain_recovery):
                     # `setup:` 이 없는 케이스는 _run_single_case 가 매니저를 만들지
                     # 않는다(setup_cfg 가 없으면 건너뜀). 복구는 setup 유무와 무관하게
                     # 도달해야 하므로(#75) 그 경우 여기서 만든다.
@@ -782,6 +788,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     except Exception as _exc:  # noqa: BLE001
                         print(f"[plan recovery] WARN: {case_name} 복구 실패 — {_exc}")
                 retries_used = attempt
+                if uncertain_recovery:
+                    print("[plan recovery] ERROR: recovery outcome unverified; "
+                          "stop retries and defer all cleanup")
+                    break
                 if passed:
                     break
                 if attempt < max_retry:
@@ -803,6 +813,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 except Exception:
                     pass  # progress callback 실패는 fatal 아님
 
+            # An unknown recovery outcome halts the entire campaign,
+            # regardless of stop_on_fail policy.
+            if uncertain_recovery:
+                break
             # stop_on_fail
             if not passed and plan.execution["stop_on_fail"]:
                 break
@@ -812,6 +826,9 @@ def execute_plan(plan: Plan, profiles_dir: str,
             if wait > 0 and idx < total:
                 time.sleep(wait)
     finally:
+        if (_mgr_holder and getattr(
+                _mgr_holder[0], "_recovery_outcome_uncertain", False) is True):
+            uncertain_recovery = True
         # 중단으로 루프의 사후 수확 블록에 도달하지 못한 마지막 시도의 매니저를
         # 회수한다 (#82 리뷰 Codex P2) — 원장(suspect)·스냅샷을 캠페인 집계에
         # 반영하고, 아래 teardown 이 같은 인스턴스를 재사용하도록 last_* 도 맞춘다.
@@ -835,6 +852,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
         # 설정을 바꾼 케이스 값). `teardown:` 만 둔 케이스도 복구가 도달해야 한다
         # (pim-check#68 보드 검증 · #75 리뷰).
         if (last_ssh is not None and setup_factory is not None
+                and not uncertain_recovery
                 and (campaign_snapshots or campaign_edge_changes
                      or campaign_ord_changes or last_setup_cfg or last_teardown_cfg)):
             try:
@@ -905,6 +923,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     {"recovery_command": pending_recovery} if pending_recovery else None)
             except Exception as _exc:
                 print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
+        if uncertain_recovery:
+            print("[plan teardown] ERROR: camera13 recovery outcome unverified — "
+                  "automatic source restore and reboot deferred; "
+                  "inspect owner/status/history before manual recovery")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
         if last_ssh is not None:
             try:
