@@ -40,6 +40,15 @@ checks:
     # stabilization(NEED_PRODUCER_SNAPSHOT_AFTER_BOOT)으로 분류 — hard fail 아님.
     early_boot_grace_sec: 180
 
+  # 채널별 프레임 흐름 — 같은 스냅샷의 enc_queue_input 을 sample_sec 간격 2회 읽어
+  # 측정 fps 를 edgeconf fps 와 대조 (checks/frame_flow.py). 기본 OFF: plan 의
+  # case_overrides 로 enabled: true (quick_verify). 케이스 opt-out 은 path: null.
+  frame_flow:
+    enabled: false
+    path: /run/pim-camera/gstApp.json
+    sample_sec: 3
+    fps_tolerance_pct: 10
+
   # max9296 드라이버 배포 조합 단언 (2026-09: 2.11 + prepare/health_raw sysfs ABI).
   # expected_version: null 로 케이스별 비활성화. adapter 1 → ch2/ch3, 2 → ch0/ch1.
   max9296_abi:

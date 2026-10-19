@@ -41,6 +41,9 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     # 첫 통과 뒤 drift(bps·thermal 등) 감시를 대표 케이스에만 남겨 시간을 아낀다.
     "monitor_full_cases": [],
     "reset_mode": "reboot",
+    # True 면 각 case 의 custom_commands 에서 finalize 된 녹화 파일이 필요한 항목
+    # (checks.custom.needs_finalized_recording)을 뺀다 — quick_verify 용. 기본 False.
+    "skip_finalize_checks": False,
 }
 
 DEFAULT_GATE: dict[str, Any] = {
@@ -81,6 +84,9 @@ class Plan:
     gate: dict[str, Any]
     reports: list[dict[str, Any]]
     source_path: str = ""
+    # 모든 case runtime profile 위에 deep-merge 할 plan-level override
+    # (resolve_runtime_profile 의 plan_global). 예: checks.frame_flow.enabled.
+    case_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -252,7 +258,7 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     f"execution.reset_mode: {reset_mode!r} 미지원. "
                     f"허용: {sorted(ALLOWED_RESET_MODES)}"
                 )
-            for key in ("stop_on_fail", "monitor_until_pass"):
+            for key in ("stop_on_fail", "monitor_until_pass", "skip_finalize_checks"):
                 if key in exec_cfg and not isinstance(exec_cfg[key], bool):
                     errors.append(f"execution.{key}은 bool이어야 합니다.")
             for key in ("case_retry", "retry_wait_sec",
@@ -273,6 +279,10 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     errors.append("execution.monitor_cap_sec은 정수 또는 null이어야 합니다.")
                 elif cap < 0:
                     errors.append("execution.monitor_cap_sec은 0 이상이어야 합니다.")
+
+    # case_overrides (옵션) — case profile 에 deep-merge 되는 dict
+    if "case_overrides" in plan_dict and not isinstance(plan_dict["case_overrides"], dict):
+        errors.append("'case_overrides'는 dict이어야 합니다.")
 
     # reports (옵션)
     if "reports" in plan_dict:
@@ -359,6 +369,7 @@ def load_plan(plan_path: str) -> Plan:
         gate=gate,
         reports=raw.get("reports", []),
         source_path=os.path.abspath(plan_path),
+        case_overrides=raw.get("case_overrides") or {},
     )
 
 
@@ -486,7 +497,7 @@ def resolve_runtime_profile(case_profile: dict,
 
     우선순위 (낮음 → 높음): case_profile (= base + case YAML 머지) → plan_global → cli_args.
 
-    plan_global은 plan-level case override (v1에서는 미사용, v1.1+ case_overrides용 placeholder).
+    plan_global은 plan-level case override — plan YAML 의 case_overrides (plan_runtime_profile 경유).
     cli_args는 dict 형태 — 예: {"target": {"host": "10.0.0.5"}, "monitor": {"duration_sec": 60}}.
 
     참고: plan.execution은 머지 대상이 아님 (run policy로 execute_plan이 직접 사용).
@@ -499,6 +510,25 @@ def resolve_runtime_profile(case_profile: dict,
     if cli_args:
         profile = _deep_merge(profile, cli_args)
     return profile
+
+
+def plan_runtime_profile(plan: Plan, case_profile: dict,
+                         cli_args: dict | None = None) -> dict:
+    """plan 이 case profile 에 가하는 변경을 적용한 runtime profile (입력 보존).
+
+    - plan.case_overrides → resolve_runtime_profile 의 plan_global 로 머지
+    - execution.skip_finalize_checks → finalize 의존 custom_commands 항목 제거
+    실행 루프·혼합 타겟 사전 검사·뷰어 체크리스트가 같은 규칙을 보도록 한 곳에 둔다.
+    """
+    runtime = resolve_runtime_profile(case_profile, plan_global=plan.case_overrides or None,
+                                      cli_args=cli_args)
+    check_cfg = runtime.get("checks")
+    if plan.execution.get("skip_finalize_checks") and isinstance(check_cfg, dict) \
+            and check_cfg.get("custom_commands"):
+        from checks.custom import needs_finalized_recording
+        check_cfg["custom_commands"] = [c for c in check_cfg["custom_commands"]
+                                        if not needs_finalized_recording(c)]
+    return runtime
 
 
 # ── Plan Execution (Phase 2) ──────────────────────────────────────
@@ -645,7 +675,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
             _prof = load_profile(profiles_dir, case=_cn)
         except FileNotFoundError:
             continue    # 실행 루프가 PROFILE_NOT_FOUND 로 케이스 단위 보고한다
-        _rt = resolve_runtime_profile(_prof, plan_global=None, cli_args=cli_args)
+        _rt = plan_runtime_profile(plan, _prof, cli_args=cli_args)
         _hosts.setdefault((_rt.get("target") or {}).get("host", DEFAULT_TARGET_HOST), _cn)
     if len(_hosts) > 1:
         _detail = ", ".join(f"{h} ({c})" for h, c in sorted(_hosts.items()))
@@ -717,10 +747,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     break
                 continue
 
-            # CLI 오버라이드 적용
-            runtime = resolve_runtime_profile(case_profile,
-                                              plan_global=None,
-                                              cli_args=cli_args)
+            # plan-level 변경(case_overrides, skip_finalize_checks) + CLI 오버라이드 적용
+            runtime = plan_runtime_profile(plan, case_profile, cli_args=cli_args)
             if runtime.get("setup"):
                 runtime = copy.deepcopy(runtime)
                 runtime["setup"]["reset_mode"] = plan.execution.get(

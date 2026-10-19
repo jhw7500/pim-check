@@ -7,6 +7,7 @@ import os
 from checks.process import ProcessCheck
 from checks.cam_state import CamStateCheck
 from checks.cam_health import CamHealthCheck
+from checks.frame_flow import FrameFlowCheck
 from checks.legacy import LegacyFileCheck
 from checks.max9296_abi import Max9296AbiCheck
 from checks.thermal import ThermalCheck
@@ -23,6 +24,7 @@ ALL_CHECKS = [
     ProcessCheck(),
     CamStateCheck(),
     CamHealthCheck(),
+    FrameFlowCheck(),
     LegacyFileCheck(),
     Max9296AbiCheck(),
     ThermalCheck(),

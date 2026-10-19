@@ -14,6 +14,7 @@ Declarative Release Plan YAML 디렉토리. 각 plan 파일은 (a) 어떤 case �
 |------|-------------|
 | `smoke.yaml` | 빠른 회귀 보호 plan (smoke 케이스만, FW build 직후 sanity check용) |
 | `comprehensive.yaml` | run_comprehensive_verify.py 마이그레이션 결과 (mixed combo + AWB + bps 통합) |
+| `quick_verify.yaml` | comprehensive 와 같은 케이스, finalize 의존 항목 제외 + frame_flow — 빠른 반복용 (릴리스 게이트 아님) |
 | `_template.yaml` | (선택) 새 plan 작성 시 복사용 템플릿. `_` 접두사로 lint/list_plans에서 제외 |
 
 ## Plan YAML 스키마 (v1)
@@ -39,6 +40,14 @@ execution:
   retry_wait_sec: 0          # 재시도 사이 대기
   reboot_wait_sec: 300       # 재부팅 후 대기 (초)
   wait_between_cases: 0      # 케이스 간 인터벌
+  skip_finalize_checks: false  # true 면 finalize 된 녹화 파일이 필요한 custom_commands 제외
+                               # (분류: checks/custom.py FINALIZE_MARKERS)
+
+# 모든 case runtime profile 에 deep-merge (선택, dict). case YAML 보다 우선.
+case_overrides:
+  checks:
+    frame_flow:
+      enabled: true
 
 # 합격선 (필수)
 gate:

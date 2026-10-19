@@ -8,6 +8,23 @@ from checks.base_check import BaseCheck
 # 타겟에서 실행 금지 패턴 (root로 실행되므로 주의)
 _DANGEROUS_PATTERNS = ["rm -rf", "mkfs", "dd if=", "fdisk", "> /dev/sd", "> /dev/mmc"]
 
+# finalize(닫힌) 녹화 파일이 있어야 판정되는 항목의 명령 표지 — 단일 출처.
+# plan execution.skip_finalize_checks 가 이 분류로 항목을 뺀다 (quick_verify).
+# 표지가 늘거나 케이스 항목이 바뀌면 tests/test_plan_quick_verify.py 의 범주별
+# 개수 고정이 깨진다 — 조용히 커버리지가 빠지지 않게 하는 장치다.
+FINALIZE_MARKERS = (
+    "ffprobe",                         # 닫힌 파일의 fps/bitrate/duration/codec/format 판독
+    "NEED_2_FINALIZES",                # 부팅 후 두 번째 finalize 세션 대기
+    "ONLY_ONE_FILE",                   # finalize 된 파일 2개(파일 간 delta) 필요
+    "chk_cam_operate.sh.*completed",   # 세션 완료 로그로 finalize 세션 조회
+)
+
+
+def needs_finalized_recording(cmd_spec: dict) -> bool:
+    """custom_commands 항목이 finalize 된 녹화 파일을 요구하는지 (FINALIZE_MARKERS)."""
+    command = (cmd_spec or {}).get("command") or ""
+    return any(marker in command for marker in FINALIZE_MARKERS)
+
 
 class CustomCommandCheck(BaseCheck):
     name = "custom_commands"
