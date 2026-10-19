@@ -172,8 +172,11 @@ class TestFullCaseFlow(unittest.TestCase):
             if "jq " in cmd and "> /tmp" in cmd:
                 applied["cam_width"] = True  # apply_changes 쓰기 명령 실행됨
                 return None
+            if "jq " in cmd and "tojson" in cmd:
+                # apply_changes 일괄 read-back: 경로마다 tojson 한 값의 배열
+                return '["1920"]' if applied["cam_width"] else '["1280"]'
             if "jq " in cmd and "> /tmp" not in cmd:
-                # apply 전: 현재값 다름(setup 트리거) / apply 후: read-back verify 통과
+                # apply 전 check_current: 현재값 다름(setup 트리거)
                 return "1920" if applied["cam_width"] else "1280"
             if "cp " in cmd:
                 return "OK"  # backup 성공

@@ -37,6 +37,9 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     # 카메라 case 의 "부팅 후 finalize 2개" 준비 즉시 끝내 단축. 기본 False(comprehensive 는
     # 전체 지속검증 유지). cap 과 달리 검증을 깨지 않는다(통과해야 종료하므로).
     "monitor_until_pass": False,
+    # monitor_until_pass 플랜에서도 전체 monitor(duration 끝까지)를 유지할 케이스 이름.
+    # 첫 통과 뒤 drift(bps·thermal 등) 감시를 대표 케이스에만 남겨 시간을 아낀다.
+    "monitor_full_cases": [],
     "reset_mode": "reboot",
 }
 
@@ -258,6 +261,11 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     errors.append(f"execution.{key}은 정수여야 합니다.")
                 elif key in exec_cfg and exec_cfg[key] < 0:
                     errors.append(f"execution.{key}은 0 이상이어야 합니다.")
+            full = exec_cfg.get("monitor_full_cases")
+            if full is not None and (
+                    not isinstance(full, list)
+                    or not all(isinstance(n, str) and n.strip() for n in full)):
+                errors.append("execution.monitor_full_cases는 케이스 이름(문자열) 리스트여야 합니다.")
             # monitor_cap_sec: None(미사용) 또는 0 이상 정수 (bool 제외)
             cap = exec_cfg.get("monitor_cap_sec")
             if cap is not None:
@@ -619,6 +627,13 @@ def execute_plan(plan: Plan, profiles_dir: str,
     resolved = resolve_cases(plan, profiles_dir)
     total = len(resolved)
 
+    # monitor_full_cases 오타는 drift 감시를 조용히 끈다 — 케이스 시작 전에 거부.
+    full_monitor = set(plan.execution.get("monitor_full_cases") or [])
+    unknown_full = sorted(full_monitor - {cn for _section, cn in resolved})
+    if unknown_full:
+        raise ValueError(
+            f"execution.monitor_full_cases 에 플랜에 없는 케이스: {', '.join(unknown_full)}")
+
     # 혼합 타겟 플랜 거부 (pim-check#96) — 캠페인 스냅샷은 설정 파일 경로만 키로
     # 쓰고 최종 복원은 마지막 케이스의 ssh 한 대에 쓴다. 케이스별 target.host 가
     # 갈리면 보드 A 의 설정이 보드 B 에 복원되고 A 는 변경된 채 남는다 — 아무
@@ -744,7 +759,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
                     monitor_cap_sec=plan.execution.get("monitor_cap_sec"),
-                    monitor_until_pass=plan.execution.get("monitor_until_pass", False),
+                    monitor_until_pass=(plan.execution.get("monitor_until_pass", False)
+                                        and case_name not in full_monitor),
                     mgr_holder=_mgr_holder,
                 )
                 if _mgr_holder:

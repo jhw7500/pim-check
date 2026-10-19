@@ -597,39 +597,55 @@ class SetupManager:
         return bool(out) and out.strip().splitlines()[-1] == "OK"
 
     def apply_changes(self, changes: dict, conf_path: str = EDGECONF_PATH) -> None:
-        """jq --arg를 사용하여 conf 파일에 변경사항을 안전하게 적용한다.
-        각 변경 후 read-back으로 실제 반영 확인. 불일치 시 RuntimeError."""
+        """conf 파일에 변경사항을 jq 한 번으로 적용하고 한 번에 read-back 검증한다.
+
+        키마다 SSH 를 두 번(write + read-back) 쓰면 49키 케이스에서 setup 이 44초
+        걸렸다. bool/숫자/list/dict 는 --argjson 으로 원래 JSON 타입을, 나머지는
+        --arg 로 문자열을 넘긴다(list/dict 를 문자열로 박는 회귀 금지). 하나라도
+        반영이 안 됐거나 read-back 을 못 읽으면 RuntimeError."""
+        if not changes:
+            return
         tmp_path = "/tmp/_conf_tmp.json"
-        for jq_path, value in changes.items():
-            if isinstance(value, bool):
-                jq_value = "true" if value else "false"
-                self._setup_run(
-                    f"jq '{jq_path} = {jq_value}' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
-            elif isinstance(value, (int, float)):
-                self._setup_run(
-                    f"jq --argjson v {value} '{jq_path} = $v' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
-            elif isinstance(value, (list, dict)):
-                json_value = json.dumps(value).replace("'", "'\\''")
-                self._setup_run(
-                    f"jq --argjson v '{json_value}' '{jq_path} = $v' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
+        items = list(changes.items())
+        args, assigns = [], []
+        for idx, (jq_path, value) in enumerate(items):
+            if isinstance(value, (bool, int, float, list, dict)):
+                args.append(f"--argjson v{idx} {shlex.quote(json.dumps(value))}")
             else:
-                safe_value = str(value).replace("'", "'\\''")
-                self._setup_run(
-                    f"jq --arg v '{safe_value}' '{jq_path} = $v' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
-            # Read-back verify: 적용된 값이 기대와 일치하는지 확인
-            actual = self._setup_run(f"jq -c '{jq_path}' {conf_path}")
-            if not self._values_match(actual, value):
+                args.append(f"--arg v{idx} {shlex.quote(str(value))}")
+            assigns.append(f"{jq_path} = $v{idx}")
+        self._setup_run(
+            f"jq {' '.join(args)} {shlex.quote(' | '.join(assigns))} {conf_path} "
+            f"> {tmp_path} && mv {tmp_path} {conf_path}"
+        )
+        # Read-back verify: 경로마다 tojson 한 값을 한 번에 읽어 기대값과 비교
+        expr = "[" + ", ".join(f"({jq_path} | tojson)" for jq_path, _ in items) + "]"
+        out = self._setup_run(f"jq -c {shlex.quote(expr)} {conf_path}")
+        try:
+            actuals = json.loads(out) if out is not None else None
+        except ValueError:
+            actuals = None
+        if not isinstance(actuals, list) or len(actuals) != len(items):
+            raise RuntimeError(
+                f"conf apply verify FAILED [{conf_path}]: read-back unavailable ({out!r})")
+        for (jq_path, value), raw in zip(items, actuals):
+            if not self._json_value_matches(raw, value):
                 raise RuntimeError(
-                    f"conf apply verify FAILED [{conf_path}]: {jq_path} expected {value!r} got {actual!r}"
+                    f"conf apply verify FAILED [{conf_path}]: {jq_path} expected {value!r} got {raw!r}"
                 )
+
+    @staticmethod
+    def _json_value_matches(raw, expected) -> bool:
+        """tojson 문자열 raw 가 expected 와 같은 JSON 값인지 (bool 은 숫자와 구분)."""
+        try:
+            actual = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+        if isinstance(expected, bool) or isinstance(actual, bool):
+            return actual is expected
+        if isinstance(expected, (int, float)):
+            return isinstance(actual, (int, float)) and float(actual) == float(expected)
+        return actual == expected
 
     def restore(self, conf_path: str = EDGECONF_PATH) -> None:
         """BACKUP_DIR의 백업에서 conf 파일을 복원한다."""

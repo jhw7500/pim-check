@@ -192,6 +192,18 @@ class TestLintPlan(unittest.TestCase):
         plan = {**VALID_PLAN, "execution": {"monitor_until_pass": True}}
         self.assertEqual(lint_plan(plan), [])
 
+    def test_monitor_full_cases_must_be_list_of_names(self):
+        for bad in ("fhd_4ch", ["fhd_4ch", ""], [3], {"fhd_4ch": True}):
+            with self.subTest(bad=bad):
+                plan = {**VALID_PLAN, "execution": {"monitor_full_cases": bad}}
+                errors = lint_plan(plan)
+                self.assertTrue(any("monitor_full_cases" in e for e in errors), errors)
+
+    def test_monitor_full_cases_list_ok(self):
+        plan = {**VALID_PLAN, "execution": {"monitor_until_pass": True,
+                                             "monitor_full_cases": ["fhd_4ch"]}}
+        self.assertEqual(lint_plan(plan), [])
+
     def test_monitor_cap_sec_must_be_int_or_null(self):
         plan = {**VALID_PLAN, "execution": {"monitor_cap_sec": "150"}}
         errors = lint_plan(plan)

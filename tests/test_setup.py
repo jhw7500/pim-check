@@ -29,68 +29,90 @@ class TestApplyEdgeconfChanges(unittest.TestCase):
         self.ssh = MagicMock()
         self.mgr = SetupManager(self.ssh)
 
-    def test_apply_edgeconf_changes(self):
-        """apply_changes()가 각 변경에 대해 jq write + read-back verify를 실행하는지 확인"""
-        changes = {
-            ".VHL_CAM.cam_width": 1920,
-            ".VHL_CAM.cam_height": 1080,
-        }
+    # bool·숫자·리스트·dict·따옴표 문자열을 한 번에 담는 대표 변경 (bps 배열 직렬화
+    # 회귀를 막는 list/dict 와 셸 인용을 깨는 작은따옴표를 반드시 포함한다).
+    CHANGES = {
+        ".VHL_CAM.cam_width": 1920,
+        ".VHL_CAM.fps": 15.5,
+        ".VHL_CAM.capture.enable": False,
+        ".VHL_CAM.i2c2.ch0.bps": [2048, 1024],
+        ".VHL_CAM.meta": {"enabled": True, "tags": ["a", "b"]},
+        ".VHL_CAM.name": "O'Brien \"cam\" $HOME",
+    }
 
-        def side_effect(cmd, **kwargs):
-            # write 명령(> /tmp 포함)은 None, read-back verify는 적용값 반환
-            if "> /tmp" in cmd:
-                return None
-            if "cam_width" in cmd:
-                return "1920"
-            if "cam_height" in cmd:
-                return "1080"
-            return None
+    @staticmethod
+    def _readback_for(changes) -> str:
+        """보드 jq 가 돌려줄 read-back 출력 — 경로마다 tojson 한 문자열의 배열."""
+        import json
+        return json.dumps([json.dumps(v, separators=(",", ":")) for v in changes.values()])
 
-        self.ssh.run.side_effect = side_effect
-        self.mgr.apply_changes(changes)
-        # 변경당 write 1회 + read-back verify 1회 = 총 4회
-        self.assertEqual(self.ssh.run.call_count, 4)
+    def test_apply_batches_into_one_write_and_one_readback(self):
+        """변경 수와 무관하게 SSH 는 write 1회 + read-back 1회만 쓴다 (케이스당 수십 초 절약)."""
+        self.ssh.run.side_effect = [None, self._readback_for(self.CHANGES)]
 
-        write_calls = [str(c) for c in self.ssh.run.call_args_list if "> /tmp" in str(c)]
-        self.assertEqual(len(write_calls), 2)
-        for c in write_calls:
-            self.assertIn("jq", c)
-            self.assertIn(EDGECONF_PATH, c)
+        self.mgr.apply_changes(self.CHANGES)
 
-    def test_bool_change_uses_json_boolean_literal(self):
-        """bool을 Python 정수나 문자열이 아닌 jq boolean literal로 기록한다."""
-        self.ssh.run.side_effect = [None, "false"]
-
-        self.mgr.apply_changes({".feature.enabled": False})
-
+        self.assertEqual(self.ssh.run.call_count, 2)
         write_command = self.ssh.run.call_args_list[0].args[0]
-        self.assertIn("jq '.feature.enabled = false'", write_command)
-        self.assertNotIn("--arg", write_command)
+        self.assertIn(EDGECONF_PATH, write_command)
+        self.assertIn("&& mv ", write_command)
+        for path in self.CHANGES:
+            self.assertIn(path, write_command)
 
-    def test_structured_changes_use_argjson(self):
-        """list/dict를 JSON 문자열이 아니라 원래 JSON 타입으로 기록한다."""
-        cases = (
-            ("list", ["alpha", 2], '["alpha", 2]', '["alpha",2]'),
-            ("dict", {"enabled": True}, '{"enabled": true}', '{"enabled":true}'),
-        )
-        for label, value, shell_json, readback in cases:
+    def test_write_command_produces_original_json_types(self):
+        """생성된 write 명령을 실제 bash+jq 로 돌려 원래 JSON 타입 그대로 기록되는지 본다."""
+        import json
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        if not (shutil.which("jq") and shutil.which("bash")):
+            self.skipTest("local jq/bash unavailable")
+        self.ssh.run.side_effect = [None, self._readback_for(self.CHANGES)]
+        self.mgr.apply_changes(self.CHANGES)
+        write_command = self.ssh.run.call_args_list[0].args[0]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conf = os.path.join(tmp, "conf.json")
+            with open(conf, "w", encoding="utf-8") as f:
+                json.dump({"VHL_CAM": {"i2c2": {"ch0": {"bps": [1, 1]}}, "keep": 7}}, f)
+            local = (write_command.replace(EDGECONF_PATH, conf)
+                     .replace("/tmp/_conf_tmp.json", os.path.join(tmp, "out.json")))
+            subprocess.run(["bash", "-c", local], check=True)
+            with open(conf, encoding="utf-8") as f:
+                doc = json.load(f)
+
+        cam = doc["VHL_CAM"]
+        self.assertEqual(cam["cam_width"], 1920)
+        self.assertEqual(cam["fps"], 15.5)
+        self.assertIs(cam["capture"]["enable"], False)
+        self.assertEqual(cam["i2c2"]["ch0"]["bps"], [2048, 1024])
+        self.assertEqual(cam["meta"], {"enabled": True, "tags": ["a", "b"]})
+        self.assertEqual(cam["name"], "O'Brien \"cam\" $HOME")
+        self.assertEqual(cam["keep"], 7)
+
+    def test_readback_mismatch_names_the_key(self):
+        """read-back 값이 하나라도 다르면 그 경로를 담아 RuntimeError."""
+        import json
+        readback = json.loads(self._readback_for(self.CHANGES))
+        readback[3] = "[1024,1024]"   # .VHL_CAM.i2c2.ch0.bps 가 반영 안 됨
+        self.ssh.run.side_effect = [None, json.dumps(readback)]
+
+        with self.assertRaisesRegex(RuntimeError, r"\.VHL_CAM\.i2c2\.ch0\.bps"):
+            self.mgr.apply_changes(self.CHANGES)
+
+    def test_readback_unavailable_raises(self):
+        """read-back 이 실패(None)하거나 형식이 틀리면 적용 성공으로 보지 않는다."""
+        for label, out in (("none", None), ("garbage", "not json"), ("short", '["1920"]')):
             with self.subTest(label=label):
                 self.ssh.reset_mock(side_effect=True)
-                self.ssh.run.side_effect = [None, readback]
+                self.ssh.run.side_effect = [None, out]
+                with self.assertRaises(RuntimeError):
+                    self.mgr.apply_changes(self.CHANGES)
 
-                self.mgr.apply_changes({".feature.value": value})
-
-                write_command = self.ssh.run.call_args_list[0].args[0]
-                self.assertIn(f"jq --argjson v '{shell_json}'", write_command)
-
-    def test_string_change_shell_escapes_apostrophe(self):
-        """작은따옴표가 있는 문자열도 셸 인용을 깨지 않고 jq에 전달한다."""
-        self.ssh.run.side_effect = [None, '"O\'Brien"']
-
-        self.mgr.apply_changes({".device.name": "O'Brien"})
-
-        write_command = self.ssh.run.call_args_list[0].args[0]
-        self.assertIn("jq --arg v 'O'\\''Brien'", write_command)
+    def test_empty_changes_make_no_ssh_call(self):
+        self.mgr.apply_changes({})
+        self.ssh.run.assert_not_called()
 
 
 class TestRestoreEdgeconf(unittest.TestCase):
