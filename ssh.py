@@ -133,8 +133,10 @@ class SshClient:
                     timeout=timeout,
                     # banner_timeout: 카메라 ISR 부하로 DUT sshd 의 초기 protocol
                     # banner 전송이 지연될 때 "Error reading SSH protocol banner"
-                    # 일시 실패를 방지한다 (paramiko 기본 15s → 30s).
-                    banner_timeout=30,
+                    # 일시 실패를 방지한다 (paramiko 기본 15s → 30s). 호출 단위
+                    # connect_timeout 을 준 짧은 probe(재부팅 대기, #178)는 sshd 기동
+                    # 중 banner 30s 대기에 묶이지 않게 같은 값으로 줄인다.
+                    banner_timeout=30 if connect_timeout is None else timeout,
                     allow_agent=False,
                     look_for_keys=False,
                 )

@@ -62,6 +62,18 @@ class TestParamikoConnectTimeout(unittest.TestCase):
         self.assertEqual(self.ssh_instance.connect.call_args.kwargs["timeout"], 15)
         self.assertEqual(self.ssh_instance.connect.call_count, 2)
 
+    def test_probe_also_shortens_banner_wait_normal_run_keeps_30s(self):
+        """sshd 기동 중 접속(banner 미전송)에서 probe 가 banner 30s 대기에 묶이지 않는다 (#178)."""
+        client = SshClient(host="192.0.2.1")
+        client._use_paramiko = True
+
+        self.assertTrue(client.check_connectivity(connect_timeout=3))
+        self.assertEqual(self.ssh_instance.connect.call_args.kwargs["banner_timeout"], 3)
+
+        client.close()
+        client.run("uptime")
+        self.assertEqual(self.ssh_instance.connect.call_args.kwargs["banner_timeout"], 30)
+
 
 if __name__ == "__main__":
     unittest.main()
