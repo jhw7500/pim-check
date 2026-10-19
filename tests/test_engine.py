@@ -40,8 +40,12 @@ class TestEngine:
         results = engine.run_snapshot()
 
         assert isinstance(results, list)
-        # 8 기본 체크 + cam_health + max9296_abi (2026-08 배포 조합 sync).
-        assert len(results) == 10
+        # 8 기본 체크 + cam_health + max9296_abi (2026-08 배포 조합 sync) + frame_flow.
+        assert len(results) == 11
+        # frame_flow 는 설정이 켜지 않는 한 SSH 없이 Skipped 통과 (다른 plan 판정 불변).
+        frame_flow = next(r for r in results if r["name"] == "frame_flow")
+        assert frame_flow["passed"] is True
+        assert frame_flow["reason"].startswith("Skipped")
         for entry in results:
             assert "name" in entry
             assert "passed" in entry

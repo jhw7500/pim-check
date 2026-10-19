@@ -67,8 +67,13 @@ execution:
   retry_wait_sec: 90            # 원본 RETRY_EXTRA_WAIT=90
   reboot_wait_sec: 300          # 원본 REBOOT_WAIT=300
   wait_between_cases: 0
-  # monitor_until_pass 미사용: comprehensive 는 지속검증 gate(첫 통과 스냅샷 이후의
-  # thermal/process drift 까지 관측해야 함). plan.py DEFAULT_EXECUTION 주석 참조.
+  # 첫 전-체크 통과 스냅샷에서 케이스 종료 (2026-10-19 실측: 통과 뒤 300s 관측이 전체의
+  # 55%). 현재 verify retry 가 관측 결과를 단일 snapshot 으로 대체해 그 창이 판정에 거의
+  # 반영되지 않았다. 통과 뒤 drift(bps·thermal) 감시는 최고 부하 케이스 fhd_4ch 하나에만
+  # 전체 monitor 로 남긴다 — #105 bps drift 는 통과 뒤 관측이 잡은 유일한 실사례다.
+  monitor_until_pass: true
+  monitor_full_cases:
+    - fhd_4ch
 
 gate:
   threshold_pass_rate: 1.0      # release gate는 100% 요구

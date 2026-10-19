@@ -21,7 +21,9 @@ EDGECONF_BACKUP = f"{BACKUP_DIR}/edgeconf_pim.json.bak"
 ORD_VCM_BACKUP = f"{BACKUP_DIR}/ord_vcm_conf.json.bak"
 
 DEFAULT_REBOOT_TIMEOUT = 600   # 10분
-DEFAULT_POLL_INTERVAL = 60     # 1분 (리부트 복구 폴링용 — 부팅은 느려 1분 간격이 적절)
+# 리부트 복귀 폴링 간격. 복귀 판정이 boot_id 변화(wait_for_boot)라 짧게 돌려도 이전
+# 부팅을 복귀로 오판하지 않는다 — 예전 60초 간격은 복귀 감지를 1분 단위로 양자화했다.
+BOOT_POLL_INTERVAL = 5
 RECOVERY_CTL_PATH = "/opt/pim/bin/cam-recoveryctl"
 RECOVERY_WAIT_SEC = 300  # camera13 wait budget; timeout does not cancel the action
 RECOVERY_CLI_RC = "PIM_RECOVERY_CLI_RC="
@@ -97,6 +99,7 @@ CAM_READY_HEARTBEAT_MAX_AGE_SEC = 30
 SESSION_ANCHOR_PATH = "/tmp/pim_check_anchor"
 # 부팅마다 고정된 UUID — 잔존 앵커 판별용 (cam_health 와 동일 출처).
 BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+_BOOT_ID_RE = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 _RECOVERY_RESULT_RE = re.compile(
@@ -403,6 +406,16 @@ def ae_settle_targets(profile: dict) -> list[dict]:
     return targets
 
 
+def recording_readiness_enabled(profile: dict) -> bool:
+    """profile 의 `readiness.recording` — 명시적 false 일 때만 recording 단계를 끈다.
+
+    knob 을 `setup:` 밖에 두는 이유: plan case_overrides 는 모든 케이스에 deep-merge
+    되므로 `setup:` 아래에 두면 setup 이 없는 케이스(process_restart_smoke)에 빈
+    setup 이 생겨 setup/teardown 경로를 탄다."""
+    readiness = (profile or {}).get("readiness")
+    return not (isinstance(readiness, dict) and readiness.get("recording") is False)
+
+
 def readiness_kwargs(profile: dict) -> dict:
     """reboot 후 안정화 readiness 단계 주입 인자를 profile 에서 산출한다
     (plan / run_case 공용 — 중복 제거).
@@ -424,7 +437,10 @@ def readiness_kwargs(profile: dict) -> dict:
         # recording 단계는 카메라/비카메라 구분 없이 항상 주입(기존 plan.py 동작 보존).
         # 비카메라 케이스는 녹화 파일이 안 생겨 stabilize_sec 까지 대기 후 진행(경고)하나,
         # '잘못된 통과'보다 안전하므로 의도된 동작이다 — 카메라 init 게이트는 ready_camera_init 로 분리.
-        "ready_recording_paths": RECORDING_DIRS,
+        # 예외: readiness.recording: false (quick_verify) — 첫 파일(≈1 세그먼트) 대기를
+        # 건너뛴다. 그 경우 파일 ≥1 을 요구하는 체크는 plan_runtime_profile 이 뺀다.
+        "ready_recording_paths": (RECORDING_DIRS if recording_readiness_enabled(profile)
+                                  else []),
         "ready_camera_init": is_camera,
         # 게이트가 읽는 dir·신선도 임계를 **체크와 같은 프로파일 키**에서 가져온다
         # (#103 리뷰) — 프로파일이 checks.cam_state.dir / heartbeat_max_age_sec 를
@@ -445,7 +461,7 @@ def readiness_kwargs(profile: dict) -> dict:
 
 class SetupManager:
     def __init__(self, ssh, reboot_timeout: int = DEFAULT_REBOOT_TIMEOUT,
-                 poll_interval: int = DEFAULT_POLL_INTERVAL):
+                 poll_interval: int = BOOT_POLL_INTERVAL):
         self.ssh = ssh
         self.reboot_timeout = reboot_timeout
         self.poll_interval = poll_interval
@@ -597,39 +613,55 @@ class SetupManager:
         return bool(out) and out.strip().splitlines()[-1] == "OK"
 
     def apply_changes(self, changes: dict, conf_path: str = EDGECONF_PATH) -> None:
-        """jq --arg를 사용하여 conf 파일에 변경사항을 안전하게 적용한다.
-        각 변경 후 read-back으로 실제 반영 확인. 불일치 시 RuntimeError."""
+        """conf 파일에 변경사항을 jq 한 번으로 적용하고 한 번에 read-back 검증한다.
+
+        키마다 SSH 를 두 번(write + read-back) 쓰면 49키 케이스에서 setup 이 44초
+        걸렸다. bool/숫자/list/dict 는 --argjson 으로 원래 JSON 타입을, 나머지는
+        --arg 로 문자열을 넘긴다(list/dict 를 문자열로 박는 회귀 금지). 하나라도
+        반영이 안 됐거나 read-back 을 못 읽으면 RuntimeError."""
+        if not changes:
+            return
         tmp_path = "/tmp/_conf_tmp.json"
-        for jq_path, value in changes.items():
-            if isinstance(value, bool):
-                jq_value = "true" if value else "false"
-                self._setup_run(
-                    f"jq '{jq_path} = {jq_value}' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
-            elif isinstance(value, (int, float)):
-                self._setup_run(
-                    f"jq --argjson v {value} '{jq_path} = $v' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
-            elif isinstance(value, (list, dict)):
-                json_value = json.dumps(value).replace("'", "'\\''")
-                self._setup_run(
-                    f"jq --argjson v '{json_value}' '{jq_path} = $v' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
+        items = list(changes.items())
+        args, assigns = [], []
+        for idx, (jq_path, value) in enumerate(items):
+            if isinstance(value, (bool, int, float, list, dict)):
+                args.append(f"--argjson v{idx} {shlex.quote(json.dumps(value))}")
             else:
-                safe_value = str(value).replace("'", "'\\''")
-                self._setup_run(
-                    f"jq --arg v '{safe_value}' '{jq_path} = $v' {conf_path} "
-                    f"> {tmp_path} && mv {tmp_path} {conf_path}"
-                )
-            # Read-back verify: 적용된 값이 기대와 일치하는지 확인
-            actual = self._setup_run(f"jq -c '{jq_path}' {conf_path}")
-            if not self._values_match(actual, value):
+                args.append(f"--arg v{idx} {shlex.quote(str(value))}")
+            assigns.append(f"{jq_path} = $v{idx}")
+        self._setup_run(
+            f"jq {' '.join(args)} {shlex.quote(' | '.join(assigns))} {conf_path} "
+            f"> {tmp_path} && mv {tmp_path} {conf_path}"
+        )
+        # Read-back verify: 경로마다 tojson 한 값을 한 번에 읽어 기대값과 비교
+        expr = "[" + ", ".join(f"({jq_path} | tojson)" for jq_path, _ in items) + "]"
+        out = self._setup_run(f"jq -c {shlex.quote(expr)} {conf_path}")
+        try:
+            actuals = json.loads(out) if out is not None else None
+        except ValueError:
+            actuals = None
+        if not isinstance(actuals, list) or len(actuals) != len(items):
+            raise RuntimeError(
+                f"conf apply verify FAILED [{conf_path}]: read-back unavailable ({out!r})")
+        for (jq_path, value), raw in zip(items, actuals):
+            if not self._json_value_matches(raw, value):
                 raise RuntimeError(
-                    f"conf apply verify FAILED [{conf_path}]: {jq_path} expected {value!r} got {actual!r}"
+                    f"conf apply verify FAILED [{conf_path}]: {jq_path} expected {value!r} got {raw!r}"
                 )
+
+    @staticmethod
+    def _json_value_matches(raw, expected) -> bool:
+        """tojson 문자열 raw 가 expected 와 같은 JSON 값인지 (bool 은 숫자와 구분)."""
+        try:
+            actual = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+        if isinstance(expected, bool) or isinstance(actual, bool):
+            return actual is expected
+        if isinstance(expected, (int, float)):
+            return isinstance(actual, (int, float)) and float(actual) == float(expected)
+        return actual == expected
 
     def restore(self, conf_path: str = EDGECONF_PATH) -> None:
         """BACKUP_DIR의 백업에서 conf 파일을 복원한다."""
@@ -700,28 +732,69 @@ class SetupManager:
             print(f"  Board network recovery error: {e}")
             return False
 
-    def wait_for_boot(self, stabilize_sec: int = 30) -> None:
-        """타겟이 온라인 복귀할 때까지 폴링한다.
-        timeout 발생 시 네트워크 진단 + 자동 복구 1회 시도 후 재폴링.
+    def _read_boot_id(self) -> str | None:
+        """현재 부팅의 boot_id. 불통·명령 실패·UUID 형식 불일치면 None."""
+        try:
+            out = self.ssh.run(f"cat {BOOT_ID_PATH}")
+        except Exception:
+            return None
+        out = out.strip() if isinstance(out, str) else ""
+        return out if _BOOT_ID_RE.fullmatch(out) else None
+
+    def wait_for_boot(self, stabilize_sec: int = 30, *,
+                      prev_boot_id: str | None = None) -> None:
+        """reboot 후 타겟이 **새 부팅**으로 온라인 복귀할 때까지 폴링한다.
+
+        응답만으로는 복귀가 아니다 — 녹화 중 reboot 은 프로세스 종료가 길어 실제
+        재부팅이 한참 늦을 수 있고, 그동안 이전 부팅이 SSH 에 응답한다. 판정:
+          - prev_boot_id 가 있으면: 현재 boot_id 를 읽어 값이 달라야 새 부팅.
+            (일시 단절 뒤 같은 boot_id 가 응답해도 이전 부팅이다.)
+          - prev_boot_id 가 없으면(reboot 전 읽기 실패): reboot 후 접속 단절을 한 번
+            이상 관측해야 새 부팅으로 본다. 단절 없이 응답이 이어지면 이전 부팅이다.
+        경과 시간은 monotonic 실측 — 불통 시 check 1회가 ConnectTimeout 을 쓰므로
+        sleep 합산은 예산을 부풀린다. timeout 시 네트워크 진단 + 자동 복구 1회 후 재폴링.
 
         Args:
             stabilize_sec: 복귀 후 추가 안정화 대기 시간(초)
+            prev_boot_id: reboot 직전에 읽은 boot_id (reboot_and_wait 가 넘긴다)
 
         Raises:
-            TimeoutError: 복구 후에도 reboot_timeout 내에 복귀하지 않을 때
+            TimeoutError: 복구 후에도 reboot_timeout 내에 새 부팅이 확인되지 않을 때
         """
+        if prev_boot_id is None:
+            print("  pre-reboot boot_id unavailable — requiring a connectivity loss "
+                  "before accepting the target as rebooted")
+        went_down = False
         recovery_attempted = False
-        elapsed = 0
         while True:
+            start = time.monotonic()
+            elapsed = 0
             while elapsed < self.reboot_timeout:
                 if self.ssh.check_connectivity():
-                    print(f"Target back online (after {elapsed}s)")
-                    if stabilize_sec > 0:
-                        self._stabilize(stabilize_sec)
-                    return
-                print(f"  waiting... ({elapsed}/{self.reboot_timeout}s)")
+                    cur = self._read_boot_id() if prev_boot_id is not None else None
+                    if prev_boot_id is not None:
+                        new_boot = cur is not None and cur != prev_boot_id
+                    else:
+                        new_boot = went_down
+                    if new_boot:
+                        how = ("new boot" if prev_boot_id is not None else
+                               "new boot assumed: connectivity was lost, boot_id unverified")
+                        print(f"Target back online (after {elapsed}s, {how})")
+                        if stabilize_sec > 0:
+                            self._stabilize(stabilize_sec)
+                        return
+                    if prev_boot_id is None:
+                        print(f"  target still answering after {elapsed}s with no "
+                              "connectivity loss yet (reboot pending)")
+                    elif cur is None:
+                        print(f"  target answering but boot_id unreadable after {elapsed}s")
+                    else:
+                        print(f"  old boot still up after {elapsed}s (reboot pending)")
+                else:
+                    went_down = True
+                    print(f"  waiting... ({elapsed}/{self.reboot_timeout}s)")
                 time.sleep(self.poll_interval)
-                elapsed += self.poll_interval
+                elapsed = int(time.monotonic() - start)
 
             # Timeout — try recovery once
             if recovery_attempted:
@@ -736,8 +809,7 @@ class SetupManager:
                 self._recover_board_network()
             else:
                 print("  unknown failure mode — skipping recovery")
-            # Reset elapsed and re-poll
-            elapsed = 0
+            # 루프 상단에서 경과 시간을 다시 잰다 (went_down 관측은 유지)
             print("  Recovery attempted, re-polling...")
 
         raise TimeoutError(
@@ -1038,7 +1110,7 @@ class SetupManager:
         stages = self._stabilize_stages()
         names = ", ".join(n for n, _ in stages)
         print(f"Stabilizing (staged readiness, up to {stabilize_sec}s): {names}")
-        # readiness 전용 짧은 간격 사용 — 리부트 복구 poll_interval(60초)이 아니라
+        # readiness 전용 짧은 간격 사용 — 리부트 복구 poll_interval 이 아니라
         # readiness_poll_interval(5초)로 디바운스해 준비되면 거의 즉시 진행한다.
         ready = self.wait_until_ready(
             stages, poll_interval=self.readiness_poll_interval, debounce=2,
@@ -1051,14 +1123,18 @@ class SetupManager:
                   f"proceeding (monitor will validate)")
 
     def reboot_and_wait(self, stabilize_sec: int = 30) -> None:
-        """타겟을 재부팅하고 온라인 복귀를 기다린다."""
-        print("Sending reboot...")
+        """타겟을 재부팅하고 **새 부팅**으로 복귀하기를 기다린다.
+
+        reboot 직전의 boot_id 를 읽어 wait_for_boot 에 넘긴다 — 셧다운이 늦어 이전
+        부팅이 계속 응답해도 복귀로 오판하지 않는다."""
+        prev_boot_id = self._read_boot_id()
+        print(f"Sending reboot... (boot_id {prev_boot_id or 'unavailable'})")
         try:
             self.ssh.run("reboot")
         except Exception:
             pass  # reboot 시 SSH 연결 끊김은 정상
         time.sleep(10)  # 셧다운 대기
-        self.wait_for_boot(stabilize_sec=stabilize_sec)
+        self.wait_for_boot(stabilize_sec=stabilize_sec, prev_boot_id=prev_boot_id)
 
     def reset_and_wait(self, mode: str, stabilize_sec: int, *,
                        ord_changed: bool, source_changed: bool = False,

@@ -37,7 +37,13 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     # 카메라 case 의 "부팅 후 finalize 2개" 준비 즉시 끝내 단축. 기본 False(comprehensive 는
     # 전체 지속검증 유지). cap 과 달리 검증을 깨지 않는다(통과해야 종료하므로).
     "monitor_until_pass": False,
+    # monitor_until_pass 플랜에서도 전체 monitor(duration 끝까지)를 유지할 케이스 이름.
+    # 첫 통과 뒤 drift(bps·thermal 등) 감시를 대표 케이스에만 남겨 시간을 아낀다.
+    "monitor_full_cases": [],
     "reset_mode": "reboot",
+    # True 면 각 case 의 custom_commands 에서 finalize 된 녹화 파일이 필요한 항목
+    # (checks.custom.needs_finalized_recording)을 뺀다 — quick_verify 용. 기본 False.
+    "skip_finalize_checks": False,
 }
 
 DEFAULT_GATE: dict[str, Any] = {
@@ -78,6 +84,9 @@ class Plan:
     gate: dict[str, Any]
     reports: list[dict[str, Any]]
     source_path: str = ""
+    # 모든 case runtime profile 위에 deep-merge 할 plan-level override
+    # (resolve_runtime_profile 의 plan_global). 예: checks.frame_flow.enabled.
+    case_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -249,7 +258,7 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     f"execution.reset_mode: {reset_mode!r} 미지원. "
                     f"허용: {sorted(ALLOWED_RESET_MODES)}"
                 )
-            for key in ("stop_on_fail", "monitor_until_pass"):
+            for key in ("stop_on_fail", "monitor_until_pass", "skip_finalize_checks"):
                 if key in exec_cfg and not isinstance(exec_cfg[key], bool):
                     errors.append(f"execution.{key}은 bool이어야 합니다.")
             for key in ("case_retry", "retry_wait_sec",
@@ -258,6 +267,11 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     errors.append(f"execution.{key}은 정수여야 합니다.")
                 elif key in exec_cfg and exec_cfg[key] < 0:
                     errors.append(f"execution.{key}은 0 이상이어야 합니다.")
+            full = exec_cfg.get("monitor_full_cases")
+            if full is not None and (
+                    not isinstance(full, list)
+                    or not all(isinstance(n, str) and n.strip() for n in full)):
+                errors.append("execution.monitor_full_cases는 케이스 이름(문자열) 리스트여야 합니다.")
             # monitor_cap_sec: None(미사용) 또는 0 이상 정수 (bool 제외)
             cap = exec_cfg.get("monitor_cap_sec")
             if cap is not None:
@@ -265,6 +279,10 @@ def lint_plan(plan_dict: dict[str, Any]) -> list[str]:
                     errors.append("execution.monitor_cap_sec은 정수 또는 null이어야 합니다.")
                 elif cap < 0:
                     errors.append("execution.monitor_cap_sec은 0 이상이어야 합니다.")
+
+    # case_overrides (옵션) — case profile 에 deep-merge 되는 dict
+    if "case_overrides" in plan_dict and not isinstance(plan_dict["case_overrides"], dict):
+        errors.append("'case_overrides'는 dict이어야 합니다.")
 
     # reports (옵션)
     if "reports" in plan_dict:
@@ -351,6 +369,7 @@ def load_plan(plan_path: str) -> Plan:
         gate=gate,
         reports=raw.get("reports", []),
         source_path=os.path.abspath(plan_path),
+        case_overrides=raw.get("case_overrides") or {},
     )
 
 
@@ -478,7 +497,7 @@ def resolve_runtime_profile(case_profile: dict,
 
     우선순위 (낮음 → 높음): case_profile (= base + case YAML 머지) → plan_global → cli_args.
 
-    plan_global은 plan-level case override (v1에서는 미사용, v1.1+ case_overrides용 placeholder).
+    plan_global은 plan-level case override — plan YAML 의 case_overrides (plan_runtime_profile 경유).
     cli_args는 dict 형태 — 예: {"target": {"host": "10.0.0.5"}, "monitor": {"duration_sec": 60}}.
 
     참고: plan.execution은 머지 대상이 아님 (run policy로 execute_plan이 직접 사용).
@@ -491,6 +510,33 @@ def resolve_runtime_profile(case_profile: dict,
     if cli_args:
         profile = _deep_merge(profile, cli_args)
     return profile
+
+
+def plan_runtime_profile(plan: Plan, case_profile: dict,
+                         cli_args: dict | None = None) -> dict:
+    """plan 이 case profile 에 가하는 변경을 적용한 runtime profile (입력 보존).
+
+    - plan.case_overrides → resolve_runtime_profile 의 plan_global 로 머지
+    - execution.skip_finalize_checks → finalize 의존 custom_commands 항목 제거
+    - readiness.recording: false (머지 결과) → 녹화 파일 ≥1 요구 항목 제거
+      (그 파일을 기다리는 readiness 단계가 빠지므로 — setup.readiness_kwargs 와 같은 knob)
+    실행 루프·혼합 타겟 사전 검사·뷰어 체크리스트가 같은 규칙을 보도록 한 곳에 둔다.
+    """
+    from setup import recording_readiness_enabled
+    runtime = resolve_runtime_profile(case_profile, plan_global=plan.case_overrides or None,
+                                      cli_args=cli_args)
+    check_cfg = runtime.get("checks")
+    if plan.execution.get("skip_finalize_checks") and isinstance(check_cfg, dict) \
+            and check_cfg.get("custom_commands"):
+        from checks.custom import needs_finalized_recording
+        check_cfg["custom_commands"] = [c for c in check_cfg["custom_commands"]
+                                        if not needs_finalized_recording(c)]
+    if not recording_readiness_enabled(runtime) and isinstance(check_cfg, dict) \
+            and check_cfg.get("custom_commands"):
+        from checks.custom import needs_recording_file
+        check_cfg["custom_commands"] = [c for c in check_cfg["custom_commands"]
+                                        if not needs_recording_file(c)]
+    return runtime
 
 
 # ── Plan Execution (Phase 2) ──────────────────────────────────────
@@ -619,6 +665,13 @@ def execute_plan(plan: Plan, profiles_dir: str,
     resolved = resolve_cases(plan, profiles_dir)
     total = len(resolved)
 
+    # monitor_full_cases 오타는 drift 감시를 조용히 끈다 — 케이스 시작 전에 거부.
+    full_monitor = set(plan.execution.get("monitor_full_cases") or [])
+    unknown_full = sorted(full_monitor - {cn for _section, cn in resolved})
+    if unknown_full:
+        raise ValueError(
+            f"execution.monitor_full_cases 에 플랜에 없는 케이스: {', '.join(unknown_full)}")
+
     # 혼합 타겟 플랜 거부 (pim-check#96) — 캠페인 스냅샷은 설정 파일 경로만 키로
     # 쓰고 최종 복원은 마지막 케이스의 ssh 한 대에 쓴다. 케이스별 target.host 가
     # 갈리면 보드 A 의 설정이 보드 B 에 복원되고 A 는 변경된 채 남는다 — 아무
@@ -630,7 +683,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
             _prof = load_profile(profiles_dir, case=_cn)
         except FileNotFoundError:
             continue    # 실행 루프가 PROFILE_NOT_FOUND 로 케이스 단위 보고한다
-        _rt = resolve_runtime_profile(_prof, plan_global=None, cli_args=cli_args)
+        _rt = plan_runtime_profile(plan, _prof, cli_args=cli_args)
         _hosts.setdefault((_rt.get("target") or {}).get("host", DEFAULT_TARGET_HOST), _cn)
     if len(_hosts) > 1:
         _detail = ", ".join(f"{h} ({c})" for h, c in sorted(_hosts.items()))
@@ -702,10 +755,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     break
                 continue
 
-            # CLI 오버라이드 적용
-            runtime = resolve_runtime_profile(case_profile,
-                                              plan_global=None,
-                                              cli_args=cli_args)
+            # plan-level 변경(case_overrides, skip_finalize_checks) + CLI 오버라이드 적용
+            runtime = plan_runtime_profile(plan, case_profile, cli_args=cli_args)
             if runtime.get("setup"):
                 runtime = copy.deepcopy(runtime)
                 runtime["setup"]["reset_mode"] = plan.execution.get(
@@ -744,7 +795,8 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
                     monitor_cap_sec=plan.execution.get("monitor_cap_sec"),
-                    monitor_until_pass=plan.execution.get("monitor_until_pass", False),
+                    monitor_until_pass=(plan.execution.get("monitor_until_pass", False)
+                                        and case_name not in full_monitor),
                     mgr_holder=_mgr_holder,
                 )
                 if _mgr_holder:

@@ -8,6 +8,42 @@ from checks.base_check import BaseCheck
 # 타겟에서 실행 금지 패턴 (root로 실행되므로 주의)
 _DANGEROUS_PATTERNS = ["rm -rf", "mkfs", "dd if=", "fdisk", "> /dev/sd", "> /dev/mmc"]
 
+# finalize(닫힌) 녹화 파일이 있어야 판정되는 항목의 명령 표지 — 단일 출처.
+# plan execution.skip_finalize_checks 가 이 분류로 항목을 뺀다 (quick_verify).
+# 표지가 늘거나 케이스 항목이 바뀌면 tests/test_plan_quick_verify.py 의 범주별
+# 개수 고정이 깨진다 — 조용히 커버리지가 빠지지 않게 하는 장치다.
+FINALIZE_MARKERS = (
+    "ffprobe",                         # 닫힌 파일의 fps/bitrate/duration/codec/format 판독
+    "NEED_2_FINALIZES",                # 부팅 후 두 번째 finalize 세션 대기
+    "ONLY_ONE_FILE",                   # finalize 된 파일 2개(파일 간 delta) 필요
+    "chk_cam_operate.sh.*completed",   # 세션 완료 로그로 finalize 세션 조회
+)
+
+
+def needs_finalized_recording(cmd_spec: dict) -> bool:
+    """custom_commands 항목이 finalize 된 녹화 파일을 요구하는지 (FINALIZE_MARKERS)."""
+    command = (cmd_spec or {}).get("command") or ""
+    return any(marker in command for marker in FINALIZE_MARKERS)
+
+
+# 녹화 파일이 놓이는 경로 (SD 정상 / RAM fallback 보관). 보드에는 finalize 된 파일만
+# 보이므로 이 경로를 세어 expected_min ≥ 1 을 요구하는 항목은 첫 파일(≈1 세그먼트)
+# 전에는 통과할 수 없다. 기대 0건(비활성 채널·srt off)은 첫 파일 전에도 참이라 제외.
+RECORDING_FILE_MARKERS = ("/mnt/sd_cam", "/dev/shm/recording")
+
+
+def needs_recording_file(cmd_spec: dict) -> bool:
+    """custom_commands 항목이 녹화 파일이 **하나 이상** 있어야 통과하는지.
+
+    setup 의 recording readiness 단계를 끈 profile(readiness.recording: false)에서
+    빼야 하는 항목 — 그 단계가 바로 첫 녹화 파일을 기다리는 단계다."""
+    spec = cmd_spec or {}
+    command = spec.get("command") or ""
+    minimum = spec.get("expected_min")
+    return (any(marker in command for marker in RECORDING_FILE_MARKERS)
+            and isinstance(minimum, (int, float)) and not isinstance(minimum, bool)
+            and minimum >= 1)
+
 
 class CustomCommandCheck(BaseCheck):
     name = "custom_commands"

@@ -39,6 +39,10 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
     # 부팅 직후 gstApp 기동 ~ camera-health 첫 발행(1Hz) 사이 창 — cam_health 체크가
     # early_boot_grace_sec 안의 파일 부재를 이 토큰으로 분류한다 (checks/cam_health.py).
     "NEED_PRODUCER_SNAPSHOT",
+    # frame_flow 체크의 과도 상태(스냅샷 부재·sequence 정지·enabled 채널 카운터 미증가)
+    # — monitor 가 stable-fail 조기 종료 없이 계속 기다리게 한다. 창이 끝나도 지속되면
+    # merge 결과가 fail 로 남는다 (checks/frame_flow.py).
+    "NEED_FRAME_FLOW",
 )
 
 

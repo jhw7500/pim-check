@@ -5,7 +5,7 @@ tests/test_setup.py - SetupManager 단위 테스트
 import unittest
 from unittest.mock import patch, MagicMock
 
-from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP
+from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP, BOOT_ID_PATH
 
 
 class TestBackupEdgeconf(unittest.TestCase):
@@ -29,68 +29,90 @@ class TestApplyEdgeconfChanges(unittest.TestCase):
         self.ssh = MagicMock()
         self.mgr = SetupManager(self.ssh)
 
-    def test_apply_edgeconf_changes(self):
-        """apply_changes()가 각 변경에 대해 jq write + read-back verify를 실행하는지 확인"""
-        changes = {
-            ".VHL_CAM.cam_width": 1920,
-            ".VHL_CAM.cam_height": 1080,
-        }
+    # bool·숫자·리스트·dict·따옴표 문자열을 한 번에 담는 대표 변경 (bps 배열 직렬화
+    # 회귀를 막는 list/dict 와 셸 인용을 깨는 작은따옴표를 반드시 포함한다).
+    CHANGES = {
+        ".VHL_CAM.cam_width": 1920,
+        ".VHL_CAM.fps": 15.5,
+        ".VHL_CAM.capture.enable": False,
+        ".VHL_CAM.i2c2.ch0.bps": [2048, 1024],
+        ".VHL_CAM.meta": {"enabled": True, "tags": ["a", "b"]},
+        ".VHL_CAM.name": "O'Brien \"cam\" $HOME",
+    }
 
-        def side_effect(cmd, **kwargs):
-            # write 명령(> /tmp 포함)은 None, read-back verify는 적용값 반환
-            if "> /tmp" in cmd:
-                return None
-            if "cam_width" in cmd:
-                return "1920"
-            if "cam_height" in cmd:
-                return "1080"
-            return None
+    @staticmethod
+    def _readback_for(changes) -> str:
+        """보드 jq 가 돌려줄 read-back 출력 — 경로마다 tojson 한 문자열의 배열."""
+        import json
+        return json.dumps([json.dumps(v, separators=(",", ":")) for v in changes.values()])
 
-        self.ssh.run.side_effect = side_effect
-        self.mgr.apply_changes(changes)
-        # 변경당 write 1회 + read-back verify 1회 = 총 4회
-        self.assertEqual(self.ssh.run.call_count, 4)
+    def test_apply_batches_into_one_write_and_one_readback(self):
+        """변경 수와 무관하게 SSH 는 write 1회 + read-back 1회만 쓴다 (케이스당 수십 초 절약)."""
+        self.ssh.run.side_effect = [None, self._readback_for(self.CHANGES)]
 
-        write_calls = [str(c) for c in self.ssh.run.call_args_list if "> /tmp" in str(c)]
-        self.assertEqual(len(write_calls), 2)
-        for c in write_calls:
-            self.assertIn("jq", c)
-            self.assertIn(EDGECONF_PATH, c)
+        self.mgr.apply_changes(self.CHANGES)
 
-    def test_bool_change_uses_json_boolean_literal(self):
-        """bool을 Python 정수나 문자열이 아닌 jq boolean literal로 기록한다."""
-        self.ssh.run.side_effect = [None, "false"]
-
-        self.mgr.apply_changes({".feature.enabled": False})
-
+        self.assertEqual(self.ssh.run.call_count, 2)
         write_command = self.ssh.run.call_args_list[0].args[0]
-        self.assertIn("jq '.feature.enabled = false'", write_command)
-        self.assertNotIn("--arg", write_command)
+        self.assertIn(EDGECONF_PATH, write_command)
+        self.assertIn("&& mv ", write_command)
+        for path in self.CHANGES:
+            self.assertIn(path, write_command)
 
-    def test_structured_changes_use_argjson(self):
-        """list/dict를 JSON 문자열이 아니라 원래 JSON 타입으로 기록한다."""
-        cases = (
-            ("list", ["alpha", 2], '["alpha", 2]', '["alpha",2]'),
-            ("dict", {"enabled": True}, '{"enabled": true}', '{"enabled":true}'),
-        )
-        for label, value, shell_json, readback in cases:
+    def test_write_command_produces_original_json_types(self):
+        """생성된 write 명령을 실제 bash+jq 로 돌려 원래 JSON 타입 그대로 기록되는지 본다."""
+        import json
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        if not (shutil.which("jq") and shutil.which("bash")):
+            self.skipTest("local jq/bash unavailable")
+        self.ssh.run.side_effect = [None, self._readback_for(self.CHANGES)]
+        self.mgr.apply_changes(self.CHANGES)
+        write_command = self.ssh.run.call_args_list[0].args[0]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conf = os.path.join(tmp, "conf.json")
+            with open(conf, "w", encoding="utf-8") as f:
+                json.dump({"VHL_CAM": {"i2c2": {"ch0": {"bps": [1, 1]}}, "keep": 7}}, f)
+            local = (write_command.replace(EDGECONF_PATH, conf)
+                     .replace("/tmp/_conf_tmp.json", os.path.join(tmp, "out.json")))
+            subprocess.run(["bash", "-c", local], check=True)
+            with open(conf, encoding="utf-8") as f:
+                doc = json.load(f)
+
+        cam = doc["VHL_CAM"]
+        self.assertEqual(cam["cam_width"], 1920)
+        self.assertEqual(cam["fps"], 15.5)
+        self.assertIs(cam["capture"]["enable"], False)
+        self.assertEqual(cam["i2c2"]["ch0"]["bps"], [2048, 1024])
+        self.assertEqual(cam["meta"], {"enabled": True, "tags": ["a", "b"]})
+        self.assertEqual(cam["name"], "O'Brien \"cam\" $HOME")
+        self.assertEqual(cam["keep"], 7)
+
+    def test_readback_mismatch_names_the_key(self):
+        """read-back 값이 하나라도 다르면 그 경로를 담아 RuntimeError."""
+        import json
+        readback = json.loads(self._readback_for(self.CHANGES))
+        readback[3] = "[1024,1024]"   # .VHL_CAM.i2c2.ch0.bps 가 반영 안 됨
+        self.ssh.run.side_effect = [None, json.dumps(readback)]
+
+        with self.assertRaisesRegex(RuntimeError, r"\.VHL_CAM\.i2c2\.ch0\.bps"):
+            self.mgr.apply_changes(self.CHANGES)
+
+    def test_readback_unavailable_raises(self):
+        """read-back 이 실패(None)하거나 형식이 틀리면 적용 성공으로 보지 않는다."""
+        for label, out in (("none", None), ("garbage", "not json"), ("short", '["1920"]')):
             with self.subTest(label=label):
                 self.ssh.reset_mock(side_effect=True)
-                self.ssh.run.side_effect = [None, readback]
+                self.ssh.run.side_effect = [None, out]
+                with self.assertRaises(RuntimeError):
+                    self.mgr.apply_changes(self.CHANGES)
 
-                self.mgr.apply_changes({".feature.value": value})
-
-                write_command = self.ssh.run.call_args_list[0].args[0]
-                self.assertIn(f"jq --argjson v '{shell_json}'", write_command)
-
-    def test_string_change_shell_escapes_apostrophe(self):
-        """작은따옴표가 있는 문자열도 셸 인용을 깨지 않고 jq에 전달한다."""
-        self.ssh.run.side_effect = [None, '"O\'Brien"']
-
-        self.mgr.apply_changes({".device.name": "O'Brien"})
-
-        write_command = self.ssh.run.call_args_list[0].args[0]
-        self.assertIn("jq --arg v 'O'\\''Brien'", write_command)
+    def test_empty_changes_make_no_ssh_call(self):
+        self.mgr.apply_changes({})
+        self.ssh.run.assert_not_called()
 
 
 class TestRestoreEdgeconf(unittest.TestCase):
@@ -140,16 +162,21 @@ class TestRebootAndWait(unittest.TestCase):
         states = iter([False, False])
         self.ssh.check_connectivity.side_effect = lambda: next(states, True)
         self.mgr.reboot_and_wait(stabilize_sec=5)
-        # reboot 명령이 호출되었는지 확인
-        self.ssh.run.assert_called_once_with("reboot")
+        # reboot 직전 boot_id 를 읽고(MagicMock 이라 형식 불일치 → 폴백) reboot 을 보낸다
+        self.assertEqual([c.args[0] for c in self.ssh.run.call_args_list],
+                         [f"cat {BOOT_ID_PATH}", "reboot"])
         # 복귀 폴링(F,F,T = 3회) + stabilize 단계의 SSH readiness 재폴링 → 3회 이상
         self.assertGreaterEqual(self.ssh.check_connectivity.call_count, 3)
         # sleep이 호출되었는지 확인 (초기 5초 + 폴링 간격 + stabilize)
         self.assertTrue(mock_sleep.called)
 
-    @patch("setup.time.sleep")
-    def test_reboot_timeout_raises(self, mock_sleep):
-        """check_connectivity가 계속 False일 때 TimeoutError 발생 확인"""
+    @patch("setup.time")
+    def test_reboot_timeout_raises(self, mock_time):
+        """check_connectivity가 계속 False일 때 TimeoutError 발생 확인.
+        경과 시간은 monotonic 실측이므로 sleep 이 시계를 전진시키는 가짜 시계를 쓴다."""
+        clock = [0.0]
+        mock_time.monotonic.side_effect = lambda: clock[0]
+        mock_time.sleep.side_effect = lambda s: clock.__setitem__(0, clock[0] + s)
         self.ssh.check_connectivity.return_value = False
         mgr = SetupManager(self.ssh, reboot_timeout=10, poll_interval=2)
         with self.assertRaises(TimeoutError):

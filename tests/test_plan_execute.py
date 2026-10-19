@@ -10,7 +10,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from config import load_profile
 from plan import (
@@ -376,6 +376,49 @@ class TestExecutePlan(unittest.TestCase):
             engine_factory=self._engine_factory(),
         )
         self.assertTrue(execs[0].passed)
+
+    def _until_pass_per_case(self, plan) -> dict:
+        """execute_plan 이 케이스마다 _run_single_case 에 넘긴 monitor_until_pass."""
+        seen: dict = {}
+
+        def fake_run(ssh, profile, case_name, *args, **kwargs):
+            seen[case_name] = kwargs.get("monitor_until_pass")
+            return [{"name": "x", "passed": True, "reason": "OK"}], True, None
+
+        with patch("plan._run_single_case", side_effect=fake_run):
+            execute_plan(
+                plan, self.tmpdir,
+                ssh_factory=self._ssh_factory(),
+                setup_factory=None,
+                engine_factory=self._engine_factory(),
+            )
+        return seen
+
+    def test_monitor_full_cases_keep_full_monitor_under_until_pass(self):
+        """until_pass 플랜에서도 monitor_full_cases 의 케이스는 전체 모니터(drift 감시)를 유지."""
+        plan = self._plan({"regression": ["case_a", "case_b", "case_c"]},
+                          monitor_until_pass=True, monitor_full_cases=["case_b"])
+        self.assertEqual(self._until_pass_per_case(plan),
+                         {"case_a": True, "case_b": False, "case_c": True})
+
+    def test_monitor_full_cases_default_keeps_plan_flag(self):
+        self.assertEqual(DEFAULT_EXECUTION["monitor_full_cases"], [])
+        plan = self._plan({"regression": ["case_a", "case_b"]}, monitor_until_pass=True)
+        self.assertEqual(self._until_pass_per_case(plan), {"case_a": True, "case_b": True})
+
+    def test_monitor_full_cases_unknown_name_refused_before_any_case(self):
+        """오타로 drift 감시가 조용히 빠지지 않게, 플랜에 없는 이름이면 케이스 시작 전에 거부."""
+        plan = self._plan({"regression": ["case_a"]},
+                          monitor_until_pass=True, monitor_full_cases=["case_typo"])
+        with patch("plan._run_single_case") as run:
+            with self.assertRaisesRegex(ValueError, "case_typo"):
+                execute_plan(
+                    plan, self.tmpdir,
+                    ssh_factory=self._ssh_factory(),
+                    setup_factory=None,
+                    engine_factory=self._engine_factory(),
+                )
+        run.assert_not_called()
 
 
 class TestMonitorCap(unittest.TestCase):

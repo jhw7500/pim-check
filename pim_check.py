@@ -202,7 +202,7 @@ def _run_plan(args) -> int:
     """
     from plan import (
         MixedTargetError, load_plan, execute_plan, load_baseline, evaluate_gate,
-        render_reports,
+        render_reports, plan_runtime_profile,
     )
     from setup import SetupManager
     from engine import Engine
@@ -317,7 +317,8 @@ def _run_plan(args) -> int:
     def _plan_summary(case_name):
         """케이스 설명 + 검증 항목(custom_commands) 추출 (best-effort)."""
         try:
-            prof = load_profile(PROFILES_DIR, case=case_name)
+            # 실행과 같은 plan 규칙(skip_finalize_checks 등)으로 체크리스트를 만든다.
+            prof = plan_runtime_profile(plan, load_profile(PROFILES_DIR, case=case_name))
         except Exception:
             return None, None
         desc = prof.get("description") or prof.get("name")

@@ -1,0 +1,90 @@
+# quick_verify.yaml — comprehensive 와 같은 21 케이스를 녹화 finalize 대기 없이 도는 빠른 반복용 plan
+#
+# 목적: 카메라 설정 반영을 빠르게 반복 확인한다 (릴리스 게이트가 아님).
+#   - 유지: ISP i2c readback(ROTATION/AE/AWB/EXP_TIME), 채널별 cam_state error, edgeconf
+#     jq readback, dmesg fsync 진단, 비활성 채널·srt off 의 파일 0건 확인, 그 외 snapshot 체크 전부.
+#   - 제외(execution.skip_finalize_checks): finalize 된 파일이 필요한 custom_commands —
+#     bitrate·duration·파일 무결성(codec/해상도/fps)·파일 fps·srt sync·mux format.
+#     분류 기준은 checks/custom.py FINALIZE_MARKERS (comprehensive 기준 136/410 항목).
+#   - 제외(case_overrides readiness.recording: false): setup 의 recording readiness 단계
+#     (첫 녹화 파일 ≈1 세그먼트 대기)를 건너뛰고, 녹화 파일 ≥1 을 요구하는 항목도 뺀다 —
+#     checks/custom.py needs_recording_file (comprehensive 기준 4 항목: ts 생성 1 + srt ≥1 3).
+#   - 추가(case_overrides): frame_flow — gstApp camera-health 스냅샷의 채널별
+#     enc_queue_input 증가율로 프레임이 실제로 흐르는지(측정 fps vs edgeconf fps ±10%) 확인.
+#   - 리셋: comprehensive 와 같이 모든 케이스와 캠페인 끝 복원이 reboot 다
+#     (execution.reset_mode 기본값). camera_hard 는 쓰지 않는다 — 실보드 실행 @6074217 에서
+#     setup 시간 이득이 없었고(reboot 케이스 83-89s vs camera_hard 86-111s), require_hard_reset
+#     2 케이스(multi_4ch_720p·multi_1ch_0_fhd)는 재시도 때 설정이 이미 일치해 setup 이 예외로
+#     끝나 case_retry 가 무력화되며, 리셋 전에 세션 앵커를 미리 기록해 녹화 파일 존재/부재
+#     항목의 앵커 기준(#175)을 약하게 만든다.
+#
+# 커버하지 않는 것: pim-check#105 같은 bitrate/duration/파일 무결성 회귀는 여기서 잡히지
+# 않는다. 릴리스 판정은 comprehensive 를 쓴다.
+#
+# 케이스 목록은 comprehensive.yaml 과 같아야 한다 (tests/test_plan_quick_verify.py 가 고정).
+
+name: "Quick Verify (comprehensive cases, no finalize wait)"
+description: |
+  comprehensive 21 케이스에서 finalize 의존 항목을 빼고 frame_flow 로 프레임 흐름만 확인하는
+  빠른 반복용 plan. 릴리스 게이트 아님 — bitrate/duration/파일 무결성은 comprehensive 로.
+
+version: 1
+
+cases:
+  regression:
+    - 720p_2ch
+    - fhd_2ch_03
+    - fhd_3ch_012
+    - fhd_4ch
+    - process_restart_smoke
+
+  delta:
+    - multi_4ch_720p
+    - multi_4ch_fhd
+    - multi_3ch_012_720p
+    - multi_3ch_012_fhd
+    - multi_3ch_123_720p
+    - multi_3ch_123_fhd
+    - multi_2ch_01_720p
+    - multi_2ch_01_fhd
+    - multi_2ch_03_720p
+    - multi_2ch_03_fhd
+    - multi_2ch_12_720p
+    - multi_2ch_12_fhd
+    - multi_1ch_0_720p
+    - multi_1ch_0_fhd
+    - multi_1ch_3_720p
+    - multi_1ch_3_fhd
+
+execution:
+  stop_on_fail: true
+  case_retry: 2
+  retry_wait_sec: 90
+  reboot_wait_sec: 300
+  wait_between_cases: 0
+  # 첫 전-체크 통과 스냅샷에서 케이스 종료 (duration 은 상한).
+  monitor_until_pass: true
+  skip_finalize_checks: true
+
+# 모든 케이스 runtime profile 에 deep-merge (plan_global). frame_flow 는 base.yaml 에서
+# 기본 OFF — process_restart_smoke 는 케이스 yaml 의 frame_flow.path: null 로 opt-out.
+case_overrides:
+  readiness:
+    recording: false
+  checks:
+    frame_flow:
+      enabled: true
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: true
+
+reports:
+  - format: html
+    path: reports/quick_verify/{timestamp}.html
+  - format: junit
+    path: reports/quick_verify/{timestamp}.xml
+  - format: json
+    path: reports/quick_verify/{timestamp}.json
+  - format: markdown_summary
+    path: reports/quick_verify/{timestamp}.md
