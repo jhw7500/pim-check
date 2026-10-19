@@ -125,7 +125,10 @@ checks:
       expected: OK
     # === srt enable=true 실측 ===
     - name: 최근 2분 내 .srt 파일 ≥1 (srt_enable=true 실측)
-      command: find /mnt/sd_cam /dev/shm/recording \( -name '*.srt' -o -name '*.srt.part' \) -mmin -2 2>/dev/null | wc -l | tr -d ' '
+      command: >-
+        ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null);
+        [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0;
+        find /mnt/sd_cam /dev/shm/recording \( -name '*.srt' -o -name '*.srt.part' \) -newermt "$ANCHOR" 2>/dev/null | wc -l | tr -d ' '
       expected_min: 1
     - name: ch0 mp4 duration ~ recording_time*60s (±5s)
       command: "EX=$(jq -r '.VHL_CAM.recording_time' /root/shared_v/edgeconf_pim.json); I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); SESS=$(awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt && /chk_cam_operate.sh.*completed/ && !/: 0 files/' /var/log/cantops/local0.log | awk 'NR==2' | grep -oE '[0-9]{8}_[0-9]{4}'); [ -z \"$SESS\" ] && { echo FAIL:NEED_2_FINALIZES_AFTER_BOOT; exit 0; }; F=$(find /mnt/sd_cam /dev/shm/recording -name \"*${SESS}*-ch0.mp4\" ! -name '*.part' 2>/dev/null | head -1); [ -n \"$F\" ] && D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 \"$F\" 2>/dev/null | cut -d. -f1) && echo \"$D\" | awk -v ex=$((EX*60)) '{if ($1>=ex-5 && $1<=ex+5) print \"OK\"; else printf \"FAIL:%ds_ex=%ds\\n\", $1, ex}' || echo FAIL:NO_FILE"
@@ -136,6 +139,9 @@ checks:
       on_fail: 같은 session prefix에 mp4 또는 srt 누락 (보드 fw finalize 불일치)
     # === disabled channels (ch enable=false → mp4 0건이어야 함) ===
     - name: ch3 disabled (i2c1.ch3.enable=false → mp4 0건)
-      command: find /mnt/sd_cam /dev/shm/recording \( -name '*-ch3.mp4' -o -name '*-ch3.mp4.part' \) -mmin -3 2>/dev/null | wc -l | tr -d ' '
+      command: >-
+        ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null);
+        [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0;
+        find /mnt/sd_cam /dev/shm/recording \( -name '*-ch3.mp4' -o -name '*-ch3.mp4.part' \) -newermt "$ANCHOR" 2>/dev/null | wc -l | tr -d ' '
       expected: '0'
       on_fail: ch3 disabled인데 mp4 생성됨

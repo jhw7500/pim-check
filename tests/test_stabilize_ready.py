@@ -1008,7 +1008,9 @@ class TestCasesUseSessionAnchor:
                 assert "NR==2 && $0==i" in command, label
                 if "FAIL:NO_SESSION_ANCHOR" in command:
                     strict_recording.append(label)
-                    assert "find /dev/shm/recordings" in command, label
+                    # multi_* 녹화 선택 또는 #175 녹화 파일 개수 창
+                    assert ("find /dev/shm/recordings" in command
+                            or "find /mnt/sd_cam /dev/shm/recording \\(" in command), label
                     assert "uptime -s" not in command, label
                     continue
 
@@ -1016,8 +1018,9 @@ class TestCasesUseSessionAnchor:
                 # 로그 readers may still use the boot-time fallback: they do not select
                 # an ordered recording from a prior case.
                 assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, label
-        assert len(strict_recording) == 108, (
-            f"strict 녹화 세션 앵커 사용처가 {len(strict_recording)}건 (기대 108)"
+        assert len(strict_recording) == 118, (
+            f"strict 녹화 세션 앵커 사용처가 {len(strict_recording)}건 "
+            "(기대 118 = multi_* 108 + #175 개수 창 10)"
         )
         assert len(legacy_fallback) >= 30, (
             f"boot-time 폴백 로그 리더가 너무 적다 ({len(legacy_fallback)})"
