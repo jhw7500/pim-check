@@ -128,6 +128,29 @@ def test_post_pass_ssh_error_is_not_pinned():
     assert not any("post_pass_fail" in r for r in results)
 
 
+# ── 이번 부팅의 완성 파일이 아직 없음(FAIL:NO_FILE)은 '준비 중' ─────────────
+
+def test_no_file_reason_is_stabilization():
+    """재부팅 감지가 빨라져 첫 수집이 첫 세그먼트 완성 전에 오면 multi 항목이 NO_FILE 을 낸다."""
+    from verify_retry import is_stabilization_reason
+    reason = ("ch0 BITRATE (~1024kbps ±20%, file-delta 5s): ch0 실측 bitrate 범위(819~1228kbps) "
+              "벗어남 (got: FAIL:NO_FILE)")
+    assert is_stabilization_reason(reason)
+    # 세션 앵커 부재(#175)는 설정 문제라 여전히 실제 실패다.
+    assert not is_stabilization_reason("ch0 srt 0건: x (got: FAIL:NO_SESSION_ANCHOR)")
+
+
+def test_until_pass_waits_through_no_file_instead_of_stable_fail_exit():
+    """NO_FILE 이 3회 이어져도 stable-fail 조기 종료하지 않고 파일이 생겨 통과할 때까지 기다린다."""
+    results, calls = _run(
+        [_snap(ch0="FAIL:NO_FILE")] * 3 + [_snap()],
+        [_snap()],
+        until_pass=True,
+    )
+    assert _failed(results) == {}
+    assert calls == 4
+
+
 # ── 기존 동작 보존 ─────────────────────────────────────────────────
 
 def test_pre_pass_failure_then_pass_still_passes():

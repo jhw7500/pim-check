@@ -36,6 +36,11 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
     # 경우 — 녹화가 완성된 뒤 재시도하면 해소된다.
     "FAIL:NO_BR",   # bitrate 측정 불가 (파일 미완성)
     "FAIL:NO_DUR",  # duration 측정 불가 (파일 미완성)
+    # 이번 부팅(세션 앵커 이후)의 완성 파일이 아직 없음 — 재부팅 감지가 빨라진 뒤(#173·#178)
+    # 첫 수집이 첫 세그먼트 완성 전에 와서 multi 케이스가 3회 연속 NO_FILE → stable-fail
+    # 조기 종료 → case 재시도로 이어졌다(2026-10-19 .4 comprehensive). 끝내 파일이 없으면
+    # 창·재시도 소진 후 fail 로 남는다. (FAIL:NO_SESSION_ANCHOR 는 설정 문제라 해당 없음)
+    "FAIL:NO_FILE",
     # 부팅 직후 gstApp 기동 ~ camera-health 첫 발행(1Hz) 사이 창 — cam_health 체크가
     # early_boot_grace_sec 안의 파일 부재를 이 토큰으로 분류한다 (checks/cam_health.py).
     "NEED_PRODUCER_SNAPSHOT",
