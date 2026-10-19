@@ -518,8 +518,11 @@ def plan_runtime_profile(plan: Plan, case_profile: dict,
 
     - plan.case_overrides → resolve_runtime_profile 의 plan_global 로 머지
     - execution.skip_finalize_checks → finalize 의존 custom_commands 항목 제거
+    - readiness.recording: false (머지 결과) → 녹화 파일 ≥1 요구 항목 제거
+      (그 파일을 기다리는 readiness 단계가 빠지므로 — setup.readiness_kwargs 와 같은 knob)
     실행 루프·혼합 타겟 사전 검사·뷰어 체크리스트가 같은 규칙을 보도록 한 곳에 둔다.
     """
+    from setup import recording_readiness_enabled
     runtime = resolve_runtime_profile(case_profile, plan_global=plan.case_overrides or None,
                                       cli_args=cli_args)
     check_cfg = runtime.get("checks")
@@ -528,6 +531,11 @@ def plan_runtime_profile(plan: Plan, case_profile: dict,
         from checks.custom import needs_finalized_recording
         check_cfg["custom_commands"] = [c for c in check_cfg["custom_commands"]
                                         if not needs_finalized_recording(c)]
+    if not recording_readiness_enabled(runtime) and isinstance(check_cfg, dict) \
+            and check_cfg.get("custom_commands"):
+        from checks.custom import needs_recording_file
+        check_cfg["custom_commands"] = [c for c in check_cfg["custom_commands"]
+                                        if not needs_recording_file(c)]
     return runtime
 
 

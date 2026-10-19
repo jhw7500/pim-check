@@ -26,6 +26,25 @@ def needs_finalized_recording(cmd_spec: dict) -> bool:
     return any(marker in command for marker in FINALIZE_MARKERS)
 
 
+# 녹화 파일이 놓이는 경로 (SD 정상 / RAM fallback 보관). 보드에는 finalize 된 파일만
+# 보이므로 이 경로를 세어 expected_min ≥ 1 을 요구하는 항목은 첫 파일(≈1 세그먼트)
+# 전에는 통과할 수 없다. 기대 0건(비활성 채널·srt off)은 첫 파일 전에도 참이라 제외.
+RECORDING_FILE_MARKERS = ("/mnt/sd_cam", "/dev/shm/recording")
+
+
+def needs_recording_file(cmd_spec: dict) -> bool:
+    """custom_commands 항목이 녹화 파일이 **하나 이상** 있어야 통과하는지.
+
+    setup 의 recording readiness 단계를 끈 profile(readiness.recording: false)에서
+    빼야 하는 항목 — 그 단계가 바로 첫 녹화 파일을 기다리는 단계다."""
+    spec = cmd_spec or {}
+    command = spec.get("command") or ""
+    minimum = spec.get("expected_min")
+    return (any(marker in command for marker in RECORDING_FILE_MARKERS)
+            and isinstance(minimum, (int, float)) and not isinstance(minimum, bool)
+            and minimum >= 1)
+
+
 class CustomCommandCheck(BaseCheck):
     name = "custom_commands"
 

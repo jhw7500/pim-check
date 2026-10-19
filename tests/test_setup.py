@@ -5,7 +5,7 @@ tests/test_setup.py - SetupManager 단위 테스트
 import unittest
 from unittest.mock import patch, MagicMock
 
-from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP
+from setup import SetupManager, EDGECONF_PATH, EDGECONF_BACKUP, BOOT_ID_PATH
 
 
 class TestBackupEdgeconf(unittest.TestCase):
@@ -162,16 +162,21 @@ class TestRebootAndWait(unittest.TestCase):
         states = iter([False, False])
         self.ssh.check_connectivity.side_effect = lambda: next(states, True)
         self.mgr.reboot_and_wait(stabilize_sec=5)
-        # reboot 명령이 호출되었는지 확인
-        self.ssh.run.assert_called_once_with("reboot")
+        # reboot 직전 boot_id 를 읽고(MagicMock 이라 형식 불일치 → 폴백) reboot 을 보낸다
+        self.assertEqual([c.args[0] for c in self.ssh.run.call_args_list],
+                         [f"cat {BOOT_ID_PATH}", "reboot"])
         # 복귀 폴링(F,F,T = 3회) + stabilize 단계의 SSH readiness 재폴링 → 3회 이상
         self.assertGreaterEqual(self.ssh.check_connectivity.call_count, 3)
         # sleep이 호출되었는지 확인 (초기 5초 + 폴링 간격 + stabilize)
         self.assertTrue(mock_sleep.called)
 
-    @patch("setup.time.sleep")
-    def test_reboot_timeout_raises(self, mock_sleep):
-        """check_connectivity가 계속 False일 때 TimeoutError 발생 확인"""
+    @patch("setup.time")
+    def test_reboot_timeout_raises(self, mock_time):
+        """check_connectivity가 계속 False일 때 TimeoutError 발생 확인.
+        경과 시간은 monotonic 실측이므로 sleep 이 시계를 전진시키는 가짜 시계를 쓴다."""
+        clock = [0.0]
+        mock_time.monotonic.side_effect = lambda: clock[0]
+        mock_time.sleep.side_effect = lambda s: clock.__setitem__(0, clock[0] + s)
         self.ssh.check_connectivity.return_value = False
         mgr = SetupManager(self.ssh, reboot_timeout=10, poll_interval=2)
         with self.assertRaises(TimeoutError):

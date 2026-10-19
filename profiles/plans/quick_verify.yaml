@@ -2,12 +2,18 @@
 #
 # 목적: 카메라 설정 반영을 빠르게 반복 확인한다 (릴리스 게이트가 아님).
 #   - 유지: ISP i2c readback(ROTATION/AE/AWB/EXP_TIME), 채널별 cam_state error, edgeconf
-#     jq readback, dmesg fsync 진단, 파일 존재/비활성 채널 확인, 그 외 snapshot 체크 전부.
+#     jq readback, dmesg fsync 진단, 비활성 채널·srt off 의 파일 0건 확인, 그 외 snapshot 체크 전부.
 #   - 제외(execution.skip_finalize_checks): finalize 된 파일이 필요한 custom_commands —
 #     bitrate·duration·파일 무결성(codec/해상도/fps)·파일 fps·srt sync·mux format.
 #     분류 기준은 checks/custom.py FINALIZE_MARKERS (comprehensive 기준 136/410 항목).
+#   - 제외(case_overrides readiness.recording: false): setup 의 recording readiness 단계
+#     (첫 녹화 파일 ≈1 세그먼트 대기)를 건너뛰고, 녹화 파일 ≥1 을 요구하는 항목도 뺀다 —
+#     checks/custom.py needs_recording_file (comprehensive 기준 4 항목: ts 생성 1 + srt ≥1 3).
 #   - 추가(case_overrides): frame_flow — gstApp camera-health 스냅샷의 채널별
 #     enc_queue_input 증가율로 프레임이 실제로 흐르는지(측정 fps vs edgeconf fps ±10%) 확인.
+#   - 리셋(execution.reset_mode: camera_hard): edgeconf 만 바꾸는 multi_* 는 reboot 대신
+#     cam-recoveryctl apply_config. ord_vcm 을 바꾸는 regression 4 케이스와 캠페인 끝 복원은
+#     setup.reset_and_wait 가 reboot 로 내린다.
 #
 # 커버하지 않는 것: pim-check#105 같은 bitrate/duration/파일 무결성 회귀는 여기서 잡히지
 # 않는다. 릴리스 판정은 comprehensive 를 쓴다.
@@ -56,10 +62,13 @@ execution:
   # 첫 전-체크 통과 스냅샷에서 케이스 종료 (duration 은 상한).
   monitor_until_pass: true
   skip_finalize_checks: true
+  reset_mode: camera_hard
 
 # 모든 케이스 runtime profile 에 deep-merge (plan_global). frame_flow 는 base.yaml 에서
 # 기본 OFF — process_restart_smoke 는 케이스 yaml 의 frame_flow.path: null 로 opt-out.
 case_overrides:
+  readiness:
+    recording: false
   checks:
     frame_flow:
       enabled: true
