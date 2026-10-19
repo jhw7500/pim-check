@@ -29,7 +29,7 @@ def needs_finalized_recording(cmd_spec: dict) -> bool:
 # 녹화 파일이 놓이는 경로 (SD 정상 / RAM fallback 보관). 보드에는 finalize 된 파일만
 # 보이므로 이 경로를 세어 expected_min ≥ 1 을 요구하는 항목은 첫 파일(≈1 세그먼트)
 # 전에는 통과할 수 없다. 기대 0건(비활성 채널·srt off)은 첫 파일 전에도 참이라 제외.
-RECORDING_FILE_MARKERS = ("/mnt/sd_cam", "/dev/shm/recording")
+RECORDING_FILE_MARKERS = ("/mnt/sd_cam", "/dev/shm/recordings")
 
 
 def needs_recording_file(cmd_spec: dict) -> bool:

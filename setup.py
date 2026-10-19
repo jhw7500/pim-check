@@ -36,8 +36,8 @@ READINESS_POLL_INTERVAL = 5    # 5초 (단계별 readiness 디바운스 간격)
 
 # 안정화 3차(영상파일 생성) readiness 탐지 경로 — 양쪽 모드를 포괄.
 #  - SD 정상: json tmp_path→final_path (보드 설정값). 통상 마운트는 /mnt/sd_cam.
-#  - SD 비정상(RAM fallback): /dev/shm(최초)→/dev/shm/recording(보관) 고정.
-RECORDING_DIRS = ["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"]
+#  - SD 비정상(RAM fallback): /dev/shm(최초)→/dev/shm/recordings(보관) 고정.
+RECORDING_DIRS = ["/dev/shm", "/dev/shm/recordings", "/mnt/sd_cam"]
 RECORDING_PATTERNS = ["*.part", "*.srt", "*.mp4", "*.ts"]
 
 # 안정화 카메라 init readiness — 보드가 스스로 유지하는 비로그 신호(cam_state)를

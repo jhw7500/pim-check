@@ -23,7 +23,7 @@ from checks.custom import CustomCommandCheck
 CASES_DIR = Path(__file__).resolve().parent.parent / "profiles" / "cases"
 IN_SCOPE_CASES = ("720p_2ch", "fhd_2ch_03", "fhd_3ch_012", "fhd_4ch")
 # 녹화 경로를 패턴 묶음으로 세는 항목 (세션 prefix 로 고르는 finalize 항목과 구분)
-COUNT_FIND = r"find /mnt/sd_cam /dev/shm/recording \("
+COUNT_FIND = r"find /mnt/sd_cam /dev/shm/recordings \("
 EXPECTED_ITEMS = {
     ("720p_2ch", "최근 2분 내 .srt 파일 0건 (srt_enable=false 실측)"),
     ("720p_2ch", "ch2 disabled (i2c1.ch2.enable=false → mp4 0건)"),
@@ -95,7 +95,7 @@ class _Board:
         local = (command
                  .replace("/proc/sys/kernel/random/boot_id", str(self.boot_id))
                  .replace("/tmp/pim_check_anchor", str(self.anchor))
-                 .replace("/dev/shm/recording", str(self.shm))
+                 .replace("/dev/shm/recordings", str(self.shm))
                  .replace("/mnt/sd_cam", str(self.sd)))
         for board_path in ("/proc/", "/tmp/pim_check_anchor", "/dev/shm", "/mnt/"):
             assert board_path not in local, f"unsubstituted board path {board_path}"
