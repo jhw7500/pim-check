@@ -130,7 +130,8 @@ def run_verify_with_retry(
         results = engine.run_snapshot()
         collected, total = 1, 1
     else:
-        results, collected, total = engine.run_monitor(until_pass=until_pass)
+        results, collected, total = engine.run_monitor(
+            until_pass=until_pass, duration_sec=effective_duration)
 
     for attempt in range(2, MAX_ATTEMPTS + 1):
         if not _has_real_fail(results):

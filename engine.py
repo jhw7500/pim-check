@@ -171,7 +171,8 @@ class Engine:
         )
         return sig or None
 
-    def run_monitor(self, until_pass: bool = False) -> tuple[list, int, int]:
+    def run_monitor(self, until_pass: bool = False,
+                    duration_sec: int | None = None) -> tuple[list, int, int]:
         """지정된 duration 동안 interval마다 스냅샷을 수집한다.
 
         모니터링 중 SSH 연결 끊김(thermal shutdown 등)이 발생하면:
@@ -185,10 +186,14 @@ class Engine:
             검증에서, 고정 300s 를 끝까지 기다리지 않고 준비되는 즉시 끝낸다. 통과 전의
             일시 fail(NEED_2_FINALIZES 등)은 merge 하지 않고 통과 스냅샷만 반환한다.
 
+        duration_sec: 관측 길이(초). None 이면 profile monitor.duration_sec. plan 의
+            monitor_cap_sec 로 줄인 길이를 run_verify_with_retry 가 넘긴다(#171).
+
         Returns:
             (merged_results, samples_collected, samples_total)
         """
-        duration = self.profile["monitor"]["duration_sec"]
+        duration = (self.profile["monitor"]["duration_sec"]
+                    if duration_sec is None else duration_sec)
         interval = self.profile["monitor"]["interval_sec"]
         if interval <= 0:
             interval = 5
