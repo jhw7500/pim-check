@@ -7,8 +7,8 @@ tests/test_plan_quick_verify.py — quick_verify plan 계약.
 - quick_verify 는 같은 케이스에서 finalize 항목만 빼고 frame_flow 를 켠다.
 - quick_verify 는 recording readiness 단계(readiness.recording: false)와 녹화 파일 ≥1
   항목(checks.custom.needs_recording_file)을 뺀다.
-- quick_verify 는 reset_mode camera_hard — multi_* 는 camera_hard, ord_vcm 케이스와
-  캠페인 끝 복원은 reboot 로 내려간다.
+- quick_verify 는 reset_mode reboot — 모든 케이스와 캠페인 끝 복원이 reboot 이고
+  require_hard_reset strict 게이트는 걸리지 않는다.
 - comprehensive 는 아무것도 바뀌지 않는다.
 """
 from __future__ import annotations
@@ -235,7 +235,7 @@ def test_quick_verify_execution_gate_reports():
     assert ex["reboot_wait_sec"] == 300
     assert ex["monitor_until_pass"] is True
     assert ex["skip_finalize_checks"] is True
-    assert ex["reset_mode"] == "camera_hard"
+    assert ex["reset_mode"] == "reboot"
     assert plan.gate["threshold_pass_rate"] == 1.0
     assert {(r["format"], r["path"]) for r in plan.reports} == {
         ("html", "reports/quick_verify/{timestamp}.html"),
@@ -293,7 +293,7 @@ def test_comprehensive_runtime_profiles_are_unchanged():
         assert readiness_kwargs(runtime)["ready_recording_paths"] == RECORDING_DIRS
 
 
-# ── quick_verify reset_mode: camera_hard ─────────────────────────
+# ── reset_mode: quick_verify·comprehensive 모두 reboot ────────────
 
 REQ_ID = "01234567-89ab-cdef-0123-456789abcdef"
 OWNER = {"boot_id": "b", "invocation_id": "inv", "token": "t", "pid": 101,
@@ -324,7 +324,8 @@ def _reset_outcomes(plan_path):
     """plan 을 실제 run_setup → reset_and_wait 로 돌려 리셋 결정을 모은다.
 
     보드 동작(설정 적용·스냅샷·앵커·reboot·안정화·검사)만 대체한다.
-    Returns: [(케이스 또는 "<campaign restore>", reset_mode, ord_changed, 결과)]
+    Returns: [(케이스 또는 "<campaign restore>", reset_mode, ord_changed, 결과,
+               require_hard_reset)]
     """
     outcomes: list = []
     current = {"case": None}
@@ -334,7 +335,8 @@ def _reset_outcomes(plan_path):
 
     def reset_spy(self, mode, stabilize_sec, **kw):
         result = real_reset(self, mode, stabilize_sec, **kw)
-        outcomes.append((current["case"], mode, kw["ord_changed"], result))
+        outcomes.append((current["case"], mode, kw["ord_changed"], result,
+                         kw.get("require_hard_reset", False)))
         return result
 
     def teardown_spy(self, setup_config, teardown_config=None):
@@ -378,25 +380,32 @@ def _reset_outcomes(plan_path):
 ORD_CASES = {"720p_2ch", "fhd_2ch_03", "fhd_3ch_012", "fhd_4ch"}
 
 
-def test_quick_verify_multi_cases_use_camera_hard_ord_cases_reboot():
+STRICT_CASES = {"multi_4ch_720p", "multi_1ch_0_fhd"}
+
+
+def test_quick_verify_every_case_reboots_and_never_engages_strict_gate():
+    # strict 게이트를 가진 케이스가 실제로 있어야 "걸리지 않는다"가 공허하지 않다
+    for case_name in STRICT_CASES:
+        assert load_profile(PROFILES_DIR, case=case_name)["setup"]["require_hard_reset"]
     outcomes = _reset_outcomes(QUICK)
-    per_case = {c: (mode, ord_changed, result) for c, mode, ord_changed, result in outcomes
+    per_case = {c: (mode, ord_changed, result, strict)
+                for c, mode, ord_changed, result, strict in outcomes
                 if c != "<campaign restore>"}
     multi = [c for c in _cases(QUICK) if c.startswith("multi_")]
     assert len(multi) == 16
+    assert STRICT_CASES <= set(multi)
     assert set(per_case) == set(multi) | ORD_CASES      # process_restart_smoke: setup 없음
     for case_name in multi:
-        assert per_case[case_name] == ("camera_hard", False, "camera_hard"), case_name
+        assert per_case[case_name] == ("reboot", False, "reboot", False), case_name
     for case_name in ORD_CASES:
-        assert per_case[case_name] == ("camera_hard", True, "reboot"), case_name
-    # 캠페인 끝 복원: camera_hard 요청이지만 ord_vcm 이 캠페인에 포함돼 reboot 로 내려간다
+        assert per_case[case_name] == ("reboot", True, "reboot", False), case_name
     restore = [o for o in outcomes if o[0] == "<campaign restore>"]
-    assert restore == [("<campaign restore>", "camera_hard", True, "reboot")]
+    assert restore == [("<campaign restore>", "reboot", True, "reboot", False)]
 
 
 def test_comprehensive_still_reboots_every_case():
     outcomes = _reset_outcomes(COMPREHENSIVE)
-    assert outcomes and {(mode, result) for _c, mode, _o, result in outcomes} == {
+    assert outcomes and {(mode, result) for _c, mode, _o, result, _s in outcomes} == {
         ("reboot", "reboot")}
 
 
