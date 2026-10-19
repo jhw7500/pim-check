@@ -24,6 +24,10 @@ DEFAULT_REBOOT_TIMEOUT = 600   # 10분
 # 리부트 복귀 폴링 간격. 복귀 판정이 boot_id 변화(wait_for_boot)라 짧게 돌려도 이전
 # 부팅을 복귀로 오판하지 않는다 — 예전 60초 간격은 복귀 감지를 1분 단위로 양자화했다.
 BOOT_POLL_INTERVAL = 5
+# 재부팅 대기 중 접속 확인(·boot_id 읽기) 1회의 연결 제한 시간. 일반 명령의
+# connect_timeout(15s)을 쓰면 불통 보드에 대한 확인 1회가 15s 막혀 감지가 약 20s
+# 단위로 양자화된다(#178). 일반 명령 경로의 connect_timeout 은 바꾸지 않는다.
+BOOT_PROBE_CONNECT_TIMEOUT = 3
 RECOVERY_CTL_PATH = "/opt/pim/bin/cam-recoveryctl"
 RECOVERY_WAIT_SEC = 300  # camera13 wait budget; timeout does not cancel the action
 RECOVERY_CLI_RC = "PIM_RECOVERY_CLI_RC="
@@ -732,10 +736,15 @@ class SetupManager:
             print(f"  Board network recovery error: {e}")
             return False
 
-    def _read_boot_id(self) -> str | None:
-        """현재 부팅의 boot_id. 불통·명령 실패·UUID 형식 불일치면 None."""
+    def _read_boot_id(self, connect_timeout: int | None = None) -> str | None:
+        """현재 부팅의 boot_id. 불통·명령 실패·UUID 형식 불일치면 None.
+
+        connect_timeout 은 재부팅 대기 중 읽기에만 넘긴다(SshClient.run 과 같음, #178)."""
         try:
-            out = self.ssh.run(f"cat {BOOT_ID_PATH}")
+            if connect_timeout is None:
+                out = self.ssh.run(f"cat {BOOT_ID_PATH}")
+            else:
+                out = self.ssh.run(f"cat {BOOT_ID_PATH}", connect_timeout=connect_timeout)
         except Exception:
             return None
         out = out.strip() if isinstance(out, str) else ""
@@ -770,8 +779,9 @@ class SetupManager:
             start = time.monotonic()
             elapsed = 0
             while elapsed < self.reboot_timeout:
-                if self.ssh.check_connectivity():
-                    cur = self._read_boot_id() if prev_boot_id is not None else None
+                if self.ssh.check_connectivity(connect_timeout=BOOT_PROBE_CONNECT_TIMEOUT):
+                    cur = (self._read_boot_id(connect_timeout=BOOT_PROBE_CONNECT_TIMEOUT)
+                           if prev_boot_id is not None else None)
                     if prev_boot_id is not None:
                         new_boot = cur is not None and cur != prev_boot_id
                     else:

@@ -160,7 +160,7 @@ class TestRebootAndWait(unittest.TestCase):
         """check_connectivity가 False 두 번 후 True 반환 시 정상 완료 확인.
         복귀 후 단계별 stabilize(1차 SSH readiness)도 connectivity 를 재폴링한다."""
         states = iter([False, False])
-        self.ssh.check_connectivity.side_effect = lambda: next(states, True)
+        self.ssh.check_connectivity.side_effect = lambda **_kw: next(states, True)
         self.mgr.reboot_and_wait(stabilize_sec=5)
         # reboot 직전 boot_id 를 읽고(MagicMock 이라 형식 불일치 → 폴백) reboot 을 보낸다
         self.assertEqual([c.args[0] for c in self.ssh.run.call_args_list],
