@@ -119,6 +119,23 @@ class CustomCommandCheck(BaseCheck):
         return (True, "OK")
 
 
+def failing_items(data: dict) -> list[tuple[str, str]]:
+    """custom_commands collect() data → 실패 항목 [(항목 이름, validate 의 issue 문자열)].
+
+    항목 하나씩 validate 를 다시 돌려 체크 reason 과 같은 문자열을 얻는다 — 안정화 지표
+    분류(verify_retry.is_stabilization_reason)를 체크가 아니라 항목 단위로 하기 위함(#170).
+    """
+    if not isinstance(data, dict) or data.get("skipped"):
+        return []
+    check = CustomCommandCheck()
+    out: list[tuple[str, str]] = []
+    for r in data.get("results") or []:
+        passed, issue = check.validate({"results": [r], "skipped": False}, {})
+        if not passed:
+            out.append((r.get("name", "unnamed"), issue))
+    return out
+
+
 def item_results(data: dict) -> list[dict]:
     """custom_commands collect() data → 항목별 [{name, expected, actual, passed}].
 

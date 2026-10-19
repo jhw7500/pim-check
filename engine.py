@@ -12,6 +12,7 @@ import time
 _MEASUREMENT_RE = re.compile(r"(?<![A-Za-z0-9])\d+")
 
 from checks import checks_for_scope
+from checks.custom import failing_items as _custom_failing_items
 from ssh import SshClient, SshTimeoutError, SshConnectionError
 from verify_retry import is_stabilization_reason
 
@@ -20,6 +21,43 @@ DEFAULT_SHUTDOWN_POLL = 60      # 1분
 # until_pass 모니터에서 동일한 '실제 fail'(비-stabilization)이 이만큼 연속 관측되면
 # 지속 결함으로 판단해 조기 종료한다(전 구간 대기 회피).
 STABLE_FAIL_SAMPLES = 3
+
+
+def _all_passed(snap) -> bool:
+    return bool(snap) and all(isinstance(r, dict) and r.get("passed") for r in snap)
+
+
+def _hard_issues(entry: dict) -> list[tuple[str, str]]:
+    """실패 entry 의 비-안정화 실패 [(항목 키, 사유)]. custom_commands 는 항목 단위로 나눈다."""
+    if entry.get("name") == "custom_commands":
+        items = _custom_failing_items(entry.get("data") or {})
+        if items:
+            return [(n, issue) for n, issue in items if not is_stabilization_reason(issue)]
+    reason = entry.get("reason") or ""
+    return [] if is_stabilization_reason(reason) else [(entry.get("name"), reason)]
+
+
+def _post_pass_failures(snapshots: list[list]) -> tuple[int, dict]:
+    """첫 전-체크 통과 snapshot 이후의 비-안정화 실패 — (첫 통과 1-based 번호, {체크: (entry, {항목: 사유})}).
+
+    통과 전(부팅·안정화 구간) 실패와 안정화 지표 실패는 넣지 않는다. 같은 항목은 가장 늦은
+    사유, entry 는 그 체크가 마지막으로 이런 실패를 낸 snapshot 의 것(merge 와 같은 '최신' 기준).
+    """
+    first = next((i for i, snap in enumerate(snapshots) if _all_passed(snap)), None)
+    if first is None:
+        return 0, {}
+    found: dict[str, tuple[dict, dict[str, str]]] = {}
+    for snap in snapshots[first + 1:]:
+        for entry in snap:
+            if not isinstance(entry, dict) or entry.get("passed"):
+                continue
+            issues = _hard_issues(entry)
+            if not issues:
+                continue
+            _prev, seen = found.get(entry["name"], (None, {}))
+            seen.update(issues)
+            found[entry["name"]] = (entry, seen)
+    return first + 1, found
 
 
 class Engine:
@@ -214,7 +252,12 @@ class Engine:
         return (merged, samples_collected, samples_total)
 
     def merge_snapshots(self, snapshots: list[list]) -> list:
-        """여러 스냅샷을 병합한다. 하나라도 실패하면 최종 결과도 실패."""
+        """여러 스냅샷을 병합한다. 하나라도 실패하면 최종 결과도 실패.
+
+        첫 전-체크 통과 snapshot 이후의 비-안정화 실패(post-pass drift)는 같은 체크의 나중
+        일시 실패(NO_BR 등)에 덮이지 않게 reason 에 항목으로 고정하고 `post_pass_fail` 에
+        남긴다 — verify retry 가 이 entry 를 retry snapshot 위에 보존한다(#170).
+        """
         merged: dict[str, dict] = {}
 
         for snapshot in snapshots:
@@ -225,5 +268,14 @@ class Engine:
                 else:
                     if not entry["passed"]:
                         merged[name] = copy.deepcopy(entry)
+
+        first_pass, post_pass = _post_pass_failures(snapshots)
+        for name, (entry, seen) in post_pass.items():
+            sticky = copy.deepcopy(entry)
+            sticky["passed"] = False
+            sticky["post_pass_fail"] = list(seen.values())
+            sticky["reason"] = (f"POST_PASS_FAIL (observed after first all-pass sample "
+                                f"#{first_pass}): " + "; ".join(seen.values()))
+            merged[name] = sticky
 
         return list(merged.values())

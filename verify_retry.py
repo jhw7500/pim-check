@@ -82,6 +82,20 @@ def _has_real_fail(results: list) -> bool:
     )
 
 
+def _keep_post_pass_fails(new_results: list, prev_results: list) -> list:
+    """retry snapshot 결과에 monitor 의 post-pass 실패 entry(#170)를 덮어쓴다.
+
+    full monitor 에서 첫 전-체크 통과 뒤 관측된 비-안정화 실패는 retry snapshot 통과로
+    지워지면 안 된다 — 그 이탈을 잡으려고 창 끝까지 관측하는 것이기 때문이다.
+    """
+    sticky = {r.get("name"): r for r in prev_results
+              if isinstance(r, dict) and r.get("post_pass_fail")}
+    if not sticky:
+        return new_results
+    out = [sticky.pop(r.get("name"), r) if isinstance(r, dict) else r for r in new_results]
+    return out + list(sticky.values())
+
+
 def run_verify_with_retry(
     engine,
     ssh,
@@ -131,7 +145,8 @@ def run_verify_with_retry(
             continue
         try:
             new_results = engine.run_snapshot()
-            results = new_results
+            # monitor 의 post-pass 실패(#170)는 retry snapshot 통과로 지우지 않는다.
+            results = _keep_post_pass_fails(new_results, results)
             # snapshot 재실행은 단일 sample
             collected, total = 1, 1
         except Exception as e:
