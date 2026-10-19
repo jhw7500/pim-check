@@ -107,6 +107,27 @@ def test_post_pass_hard_failure_of_other_check_survives_retry():
     assert "after first all-pass" in failed["thermal"]["reason"]
 
 
+def test_post_pass_command_failure_item_is_not_pinned():
+    """통과 뒤 명령 실패(got: None)는 카메라 이탈이 아니라 접속·명령 문제 — 고정하지 않는다."""
+    results, _calls = _run(
+        [_snap(), _snap(ch0=None, ch1="FAIL:NO_BR")],
+        [_snap(), _snap()],
+    )
+    assert _failed(results) == {}
+    assert not any("post_pass_fail" in r for r in results)
+
+
+def test_post_pass_ssh_error_is_not_pinned():
+    """통과 뒤 SSH_ERROR(일시 접속 끊김)도 이탈로 고정하지 않는다 — retry 판단에 맡긴다."""
+    ssh_err = {"name": "thermal", "passed": False, "reason": "SSH_ERROR: timed out", "data": {}}
+    results, _calls = _run(
+        [_snap(), [ssh_err, _custom(ch1="FAIL:NO_BR")]],
+        [_snap(), _snap()],
+    )
+    assert _failed(results) == {}
+    assert not any("post_pass_fail" in r for r in results)
+
+
 # ── 기존 동작 보존 ─────────────────────────────────────────────────
 
 def test_pre_pass_failure_then_pass_still_passes():

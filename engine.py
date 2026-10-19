@@ -27,14 +27,25 @@ def _all_passed(snap) -> bool:
     return bool(snap) and all(isinstance(r, dict) and r.get("passed") for r in snap)
 
 
+# 접속·명령 실패는 카메라 이탈(drift)이 아니다 — 통과 뒤에 나와도 고정하지 않고 기존 retry
+# 판단에 맡긴다. 일시 SSH 끊김 하나로 full monitor 케이스가 실패로 굳지 않게 한다.
+_INFRA_FAILURE_MARKERS = ("SSH_ERROR", "(got: None)")
+
+
+def _is_pinnable(reason: str) -> bool:
+    return not is_stabilization_reason(reason) and not any(
+        marker in reason for marker in _INFRA_FAILURE_MARKERS)
+
+
 def _hard_issues(entry: dict) -> list[tuple[str, str]]:
-    """실패 entry 의 비-안정화 실패 [(항목 키, 사유)]. custom_commands 는 항목 단위로 나눈다."""
+    """실패 entry 의 고정 대상 실패 [(항목 키, 사유)] — 안정화 지표·접속/명령 실패 제외.
+    custom_commands 는 항목 단위로 나눈다."""
     if entry.get("name") == "custom_commands":
         items = _custom_failing_items(entry.get("data") or {})
         if items:
-            return [(n, issue) for n, issue in items if not is_stabilization_reason(issue)]
+            return [(n, issue) for n, issue in items if _is_pinnable(issue)]
     reason = entry.get("reason") or ""
-    return [] if is_stabilization_reason(reason) else [(entry.get("name"), reason)]
+    return [(entry.get("name"), reason)] if _is_pinnable(reason) else []
 
 
 def _post_pass_failures(snapshots: list[list]) -> tuple[int, dict]:
