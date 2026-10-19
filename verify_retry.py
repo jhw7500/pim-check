@@ -36,6 +36,11 @@ STABILIZATION_INDICATORS: tuple[str, ...] = (
     # 경우 — 녹화가 완성된 뒤 재시도하면 해소된다.
     "FAIL:NO_BR",   # bitrate 측정 불가 (파일 미완성)
     "FAIL:NO_DUR",  # duration 측정 불가 (파일 미완성)
+    # 이번 부팅(세션 앵커 이후)의 완성 파일이 아직 없음 — 재부팅 감지가 빨라진 뒤(#173·#178)
+    # 첫 수집이 첫 세그먼트 완성 전에 와서 multi 케이스가 3회 연속 NO_FILE → stable-fail
+    # 조기 종료 → case 재시도로 이어졌다(2026-10-19 .4 comprehensive). 끝내 파일이 없으면
+    # 창·재시도 소진 후 fail 로 남는다. (FAIL:NO_SESSION_ANCHOR 는 설정 문제라 해당 없음)
+    "FAIL:NO_FILE",
     # 부팅 직후 gstApp 기동 ~ camera-health 첫 발행(1Hz) 사이 창 — cam_health 체크가
     # early_boot_grace_sec 안의 파일 부재를 이 토큰으로 분류한다 (checks/cam_health.py).
     "NEED_PRODUCER_SNAPSHOT",
@@ -82,6 +87,20 @@ def _has_real_fail(results: list) -> bool:
     )
 
 
+def _keep_post_pass_fails(new_results: list, prev_results: list) -> list:
+    """retry snapshot 결과에 monitor 의 post-pass 실패 entry(#170)를 덮어쓴다.
+
+    full monitor 에서 첫 전-체크 통과 뒤 관측된 비-안정화 실패는 retry snapshot 통과로
+    지워지면 안 된다 — 그 이탈을 잡으려고 창 끝까지 관측하는 것이기 때문이다.
+    """
+    sticky = {r.get("name"): r for r in prev_results
+              if isinstance(r, dict) and r.get("post_pass_fail")}
+    if not sticky:
+        return new_results
+    out = [sticky.pop(r.get("name"), r) if isinstance(r, dict) else r for r in new_results]
+    return out + list(sticky.values())
+
+
 def run_verify_with_retry(
     engine,
     ssh,
@@ -116,7 +135,8 @@ def run_verify_with_retry(
         results = engine.run_snapshot()
         collected, total = 1, 1
     else:
-        results, collected, total = engine.run_monitor(until_pass=until_pass)
+        results, collected, total = engine.run_monitor(
+            until_pass=until_pass, duration_sec=effective_duration)
 
     for attempt in range(2, MAX_ATTEMPTS + 1):
         if not _has_real_fail(results):
@@ -131,7 +151,8 @@ def run_verify_with_retry(
             continue
         try:
             new_results = engine.run_snapshot()
-            results = new_results
+            # monitor 의 post-pass 실패(#170)는 retry snapshot 통과로 지우지 않는다.
+            results = _keep_post_pass_fails(new_results, results)
             # snapshot 재실행은 단일 sample
             collected, total = 1, 1
         except Exception as e:

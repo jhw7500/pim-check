@@ -177,9 +177,9 @@ class TestStage3Recording:
     def test_find_command_covers_paths_and_patterns(self):
         mgr = _mgr()
         mgr.ssh.run.return_value = "x.part"
-        mgr._ready_recording(["/dev/shm", "/dev/shm/recording", "/mnt/sd_cam"])
+        mgr._ready_recording(["/dev/shm", "/dev/shm/recordings", "/mnt/sd_cam"])
         cmd = mgr.ssh.run.call_args[0][0]
-        assert "find /dev/shm /dev/shm/recording /mnt/sd_cam" in cmd
+        assert "find /dev/shm /dev/shm/recordings /mnt/sd_cam" in cmd
         for pat in ("*.part", "*.srt", "*.mp4", "*.ts"):
             assert pat in cmd
         assert "-mmin -2" in cmd
@@ -1010,7 +1010,7 @@ class TestCasesUseSessionAnchor:
                     strict_recording.append(label)
                     # multi_* 녹화 선택 또는 #175 녹화 파일 개수 창
                     assert ("find /dev/shm/recordings" in command
-                            or "find /mnt/sd_cam /dev/shm/recording \\(" in command), label
+                            or "find /mnt/sd_cam /dev/shm/recordings \\(" in command), label
                     assert "uptime -s" not in command, label
                     continue
 

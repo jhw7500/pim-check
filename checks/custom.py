@@ -29,7 +29,7 @@ def needs_finalized_recording(cmd_spec: dict) -> bool:
 # 녹화 파일이 놓이는 경로 (SD 정상 / RAM fallback 보관). 보드에는 finalize 된 파일만
 # 보이므로 이 경로를 세어 expected_min ≥ 1 을 요구하는 항목은 첫 파일(≈1 세그먼트)
 # 전에는 통과할 수 없다. 기대 0건(비활성 채널·srt off)은 첫 파일 전에도 참이라 제외.
-RECORDING_FILE_MARKERS = ("/mnt/sd_cam", "/dev/shm/recording")
+RECORDING_FILE_MARKERS = ("/mnt/sd_cam", "/dev/shm/recordings")
 
 
 def needs_recording_file(cmd_spec: dict) -> bool:
@@ -117,6 +117,23 @@ class CustomCommandCheck(BaseCheck):
         if issues:
             return (False, "; ".join(issues))
         return (True, "OK")
+
+
+def failing_items(data: dict) -> list[tuple[str, str]]:
+    """custom_commands collect() data → 실패 항목 [(항목 이름, validate 의 issue 문자열)].
+
+    항목 하나씩 validate 를 다시 돌려 체크 reason 과 같은 문자열을 얻는다 — 안정화 지표
+    분류(verify_retry.is_stabilization_reason)를 체크가 아니라 항목 단위로 하기 위함(#170).
+    """
+    if not isinstance(data, dict) or data.get("skipped"):
+        return []
+    check = CustomCommandCheck()
+    out: list[tuple[str, str]] = []
+    for r in data.get("results") or []:
+        passed, issue = check.validate({"results": [r], "skipped": False}, {})
+        if not passed:
+            out.append((r.get("name", "unnamed"), issue))
+    return out
 
 
 def item_results(data: dict) -> list[dict]:

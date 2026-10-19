@@ -62,7 +62,8 @@ class SshClient:
         # close() 는 멱등이라 명시적 호출 / atexit 가 중복돼도 안전.
         atexit.register(self.close)
 
-    def run(self, command: str, retries: int = 0, retry_wait: int | None = None) -> str | None:
+    def run(self, command: str, retries: int = 0, retry_wait: int | None = None,
+            connect_timeout: int | None = None) -> str | None:
         """타겟에서 명령을 실행하고 stdout을 반환한다.
 
         Args:
@@ -70,6 +71,9 @@ class SshClient:
             retries: 접속 실패 시 재시도 횟수 (기본 0)
             retry_wait: 재시도 간 대기 초. None이면 기존 exponential backoff
                 (min(2^attempt, 10)). 명시 시 일정 시간 대기.
+            connect_timeout: 이 호출이 새로 접속할 때의 제한 시간(초). None 이면
+                self.connect_timeout. 재부팅 대기 확인처럼 불통이면 빨리 끝나야 하는
+                호출용이다(#178) — 일반 명령은 넘기지 않는다.
 
         Returns:
             str: 성공 시 stdout (strip 적용)
@@ -82,7 +86,7 @@ class SshClient:
         last_error = None
         for attempt in range(1 + retries):
             try:
-                return self._run_once(command)
+                return self._run_once(command, connect_timeout)
             except SshConnectionError as e:
                 last_error = e
                 if attempt < retries:
@@ -90,13 +94,13 @@ class SshClient:
                     time.sleep(wait)
         raise last_error
 
-    def _run_once(self, command: str) -> str | None:
+    def _run_once(self, command: str, connect_timeout: int | None = None) -> str | None:
         """단일 SSH 명령 실행."""
         if self._use_paramiko:
-            return self._run_paramiko(command)
-        return self._run_subprocess(command)
+            return self._run_paramiko(command, connect_timeout)
+        return self._run_subprocess(command, connect_timeout)
 
-    def _get_paramiko_client(self):
+    def _get_paramiko_client(self, connect_timeout: int | None = None):
         """캐시된 paramiko client 반환. 없거나 transport 비활성이면 새로 connect.
 
         cache check + connect + assign 전체를 lock 으로 직렬화해 동시 호출이
@@ -119,17 +123,20 @@ class SshClient:
 
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            timeout = self.connect_timeout if connect_timeout is None else connect_timeout
 
             try:
                 client.connect(
                     hostname=self.host,
                     username=self.user,
                     password=self.password,
-                    timeout=self.connect_timeout,
+                    timeout=timeout,
                     # banner_timeout: 카메라 ISR 부하로 DUT sshd 의 초기 protocol
                     # banner 전송이 지연될 때 "Error reading SSH protocol banner"
-                    # 일시 실패를 방지한다 (paramiko 기본 15s → 30s).
-                    banner_timeout=30,
+                    # 일시 실패를 방지한다 (paramiko 기본 15s → 30s). 호출 단위
+                    # connect_timeout 을 준 짧은 probe(재부팅 대기, #178)는 sshd 기동
+                    # 중 banner 30s 대기에 묶이지 않게 같은 값으로 줄인다.
+                    banner_timeout=30 if connect_timeout is None else timeout,
                     allow_agent=False,
                     look_for_keys=False,
                 )
@@ -141,7 +148,7 @@ class SshClient:
                 err_str = str(e).lower()
                 if "timed out" in err_str or "timeout" in err_str:
                     raise SshTimeoutError(
-                        f"SSH connect timed out after {self.connect_timeout}s to {self.user}@{self.host}"
+                        f"SSH connect timed out after {timeout}s to {self.user}@{self.host}"
                     )
                 raise SshConnectionError(
                     f"SSH connection failed to {self.user}@{self.host}: {e}"
@@ -155,13 +162,13 @@ class SshClient:
             self._client = client
             return client
 
-    def _run_paramiko(self, command: str) -> str | None:
+    def _run_paramiko(self, command: str, connect_timeout: int | None = None) -> str | None:
         """paramiko persistent client 로 SSH 명령 실행.
 
         실패(timeout/connection error) 시 캐시된 client 를 invalidate 해
         다음 호출에서 자동 재연결되도록 한다.
         """
-        client = self._get_paramiko_client()
+        client = self._get_paramiko_client(connect_timeout)
         try:
             _stdin, stdout, stderr = client.exec_command(
                 command, timeout=self.command_timeout
@@ -221,14 +228,15 @@ class SshClient:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    def _run_subprocess(self, command: str) -> str | None:
+    def _run_subprocess(self, command: str, connect_timeout: int | None = None) -> str | None:
         """sshpass + subprocess를 사용한 SSH 명령 실행 (Linux 폴백)."""
+        timeout = self.connect_timeout if connect_timeout is None else connect_timeout
         cmd = [
             "sshpass", "-e",
             "ssh",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
-            "-o", f"ConnectTimeout={self.connect_timeout}",
+            "-o", f"ConnectTimeout={timeout}",
             "-o", "LogLevel=ERROR",
             f"{self.user}@{self.host}",
             command,
@@ -258,10 +266,10 @@ class SshClient:
 
         return result.stdout.strip()
 
-    def check_connectivity(self) -> bool:
-        """타겟 접속 가능 여부를 확인한다."""
+    def check_connectivity(self, connect_timeout: int | None = None) -> bool:
+        """타겟 접속 가능 여부를 확인한다. connect_timeout 은 run() 과 같다."""
         try:
-            result = self.run("echo ok")
+            result = self.run("echo ok", connect_timeout=connect_timeout)
             return result == "ok"
         except Exception:
             return False

@@ -44,17 +44,22 @@ class Board:
     blips: 같은 부팅 안의 일시 불통 구간 [(start, end)].
     boot_id: "always" | "never" | "after_reboot" — boot_id 읽기 가능 여부.
     check_cost: check_connectivity 1회가 쓰는 시간(초) — ConnectTimeout 모사.
+    down_probe_blocks: True 면 불통 중 확인 1회가 넘겨받은 connect_timeout 만큼 막힌다
+        (None = SshClient 기본 connect_timeout 15s).
     """
 
     def __init__(self, clock, *, down_at, up_at, blips=(), boot_id="always",
-                 check_cost=0.0):
+                 check_cost=0.0, down_probe_blocks=False):
         self.clock = clock
         self.down_at = down_at
         self.up_at = up_at
         self.blips = list(blips)
         self.boot_id = boot_id
         self.check_cost = check_cost
+        self.down_probe_blocks = down_probe_blocks
         self.commands: list[str] = []
+        self.run_kwargs: list[tuple[str, dict]] = []
+        self.probe_timeouts: list = []
 
     def _up(self):
         t = self.clock.now
@@ -62,12 +67,17 @@ class Board:
             return False
         return t < self.down_at or t >= self.up_at
 
-    def check_connectivity(self):
+    def check_connectivity(self, connect_timeout=None):
+        self.probe_timeouts.append(connect_timeout)
         self.clock.now += self.check_cost
+        if self.down_probe_blocks and not self._up():
+            self.clock.now += 15 if connect_timeout is None else connect_timeout
+            return False
         return self._up()
 
-    def run(self, cmd, **_kw):
+    def run(self, cmd, **kw):
         self.commands.append(cmd)
+        self.run_kwargs.append((cmd, kw))
         if not self._up():
             raise ConnectionError("ssh unreachable")
         if cmd == BOOT_ID_CMD:
@@ -176,3 +186,38 @@ def test_timeout_budget_is_wall_clock_not_sleep_count(clock):
     # reboot 후 10s + (timeout + 폴 1회분) × 2 라운드(복구 1회 포함)
     per_round = 600 + BOOT_POLL_INTERVAL + board.check_cost
     assert clock.now <= 10 + 2 * per_round
+
+
+# ── #178: 재부팅 대기 확인은 짧은 connect timeout ───────────────────
+# 불통 보드에 일반 경로(connect_timeout 15s)로 확인하면 1회가 15s 막혀 감지가 약 20s
+# 단위로 양자화된다(.4 실측 20s×18, 40~43s×3). 대기 중 확인과 boot_id 읽기만 짧게 한다.
+PROBE_LIMIT_SEC = 3
+
+
+def test_reboot_wait_probes_use_short_connect_timeout(clock):
+    board = Board(clock, down_at=5, up_at=73)
+    mgr, online_at = _mgr(board)
+
+    mgr.reboot_and_wait(stabilize_sec=30)
+
+    assert len(online_at) == 1
+    assert board.probe_timeouts
+    assert all(t is not None and 0 < t <= PROBE_LIMIT_SEC for t in board.probe_timeouts)
+    boot_reads = [kw for cmd, kw in board.run_kwargs if cmd == BOOT_ID_CMD]
+    # reboot 전 읽기는 일반 경로(기본 connect_timeout) — 보드가 살아 있을 때다.
+    assert boot_reads[0].get("connect_timeout") is None
+    # 대기 중 boot_id 읽기는 확인과 같은 짧은 제한 시간.
+    assert len(boot_reads) >= 2
+    assert all(0 < (kw.get("connect_timeout") or 99) <= PROBE_LIMIT_SEC
+               for kw in boot_reads[1:])
+
+
+def test_down_probe_is_short_so_detection_lag_is_one_poll(clock):
+    """불통 중 확인 1회가 connect timeout 만큼 막혀도, 감지 지연 ≤ 폴링 간격 + 3s."""
+    board = Board(clock, down_at=5, up_at=73, down_probe_blocks=True)
+    mgr, online_at = _mgr(board)
+
+    mgr.reboot_and_wait(stabilize_sec=30)
+
+    assert len(online_at) == 1
+    assert 0 <= online_at[0] - board.up_at <= BOOT_POLL_INTERVAL + PROBE_LIMIT_SEC
