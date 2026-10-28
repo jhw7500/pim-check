@@ -47,7 +47,7 @@ checks:
       on_fail: "cam_state/recording 디렉토리 없음"
 
     - name: "recording 상태 파일 최근 갱신"
-      command: "find /tmp/cam_state/recording/ -mmin -5 2>/dev/null | wc -l | tr -d ' '"
+      command: "find /tmp/cam_state/recording/ -type f -mmin -5 2>/dev/null | wc -l | tr -d ' '"
       expected_min: 1
       on_fail: "recording 상태 파일이 5분 이내 갱신되지 않음"
 

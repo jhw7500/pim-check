@@ -525,10 +525,11 @@ class SetupManager:
         setup/teardown lifecycle을 보드 로그에서 추적하여 reboot 트리거 디버깅에 활용.
         SSH 실패 시 silent skip (fatal 아님)."""
         try:
-            # shell 안전을 위해 message에서 따옴표/백슬래시 escape
-            safe = message.replace('\\', '\\\\').replace('"', '\\"')
+            # Shell substitution inside double quotes still expands $() and
+            # backticks. shlex.quote makes the entire message one literal arg.
+            safe = shlex.quote(message.replace("\\r", " ").replace("\\n", " "))
             self.ssh.run(
-                f'logger -p local0.notice -t PIM_CHECK "{safe}"',
+                f"logger -p local0.notice -t PIM_CHECK {safe}",
                 retries=0,  # logger는 best-effort, retry 의미 없음
             )
         except Exception:
@@ -1511,6 +1512,10 @@ class SetupManager:
         ord_changes = setup_config.get("ord_vcm_changes", {})
         recovery = (teardown_config.get("recovery_command")
                     or setup_config.get("recovery_command"))
+        recovery_verify = (teardown_config.get("recovery_verify_command")
+                           or setup_config.get("recovery_verify_command"))
+        if recovery_verify and not recovery:
+            raise RuntimeError("recovery_verify_command requires recovery_command")
         inject = setup_config.get("inject_command")
 
         if not edge_changes and not ord_changes and not (recovery or inject):
@@ -1520,6 +1525,14 @@ class SetupManager:
         if recovery:
             self._local0_log("teardown RECOVERY — clearing fault")
             self._exec_commands(recovery, "RECOVERY")
+            # Command output/exit is not proof that the injected fault is cleared.
+            if recovery_verify:
+                observed = self._setup_run(recovery_verify)
+                if not isinstance(observed, str) or observed.strip() != "OK":
+                    self._local0_log("teardown RECOVERY VERIFY FAILED — manual intervention required")
+                    raise RuntimeError(
+                        f"fault recovery postcondition failed: {observed!r}")
+                self._local0_log("teardown RECOVERY VERIFIED — postcondition OK")
 
         # 2) inject-only 모드 (edge/ord 변경 없음)이면 여기서 종료
         if not edge_changes and not ord_changes:

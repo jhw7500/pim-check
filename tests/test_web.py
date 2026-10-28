@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from io import BytesIO
 
 from web import DashboardHandler, _build_dashboard_html, _list_cases
@@ -116,8 +116,10 @@ class TestRunSelectedAPI(unittest.TestCase):
         self.assertEqual(code, 400)
 
     def test_run_selected_returns_count(self):
-        # 실제 타겟 없이 테스트하면 UNREACHABLE/ERROR 반환
-        code, body = self._make_request("/api/run-selected?host=192.168.99.99&cases=720p_2ch")
+        # Route serialization is local-only; never probe a real SSH endpoint.
+        with patch("web._run_test", return_value={
+                "status": "ERROR", "message": "test target offline"}):
+            code, body = self._make_request("/api/run-selected?host=192.168.99.99&cases=720p_2ch")
         self.assertEqual(code, 200)
         data = json.loads(body)
         self.assertEqual(data["count"], 1)

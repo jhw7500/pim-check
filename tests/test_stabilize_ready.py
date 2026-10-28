@@ -1018,9 +1018,9 @@ class TestCasesUseSessionAnchor:
                 # 로그 readers may still use the boot-time fallback: they do not select
                 # an ordered recording from a prior case.
                 assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, label
-        assert len(strict_recording) == 118, (
+        assert len(strict_recording) == 119, (
             f"strict 녹화 세션 앵커 사용처가 {len(strict_recording)}건 "
-            "(기대 118 = multi_* 108 + #175 개수 창 10)"
+            "(기대 119 = multi_* 108 + 녹화 개수 창 11)"
         )
         assert len(legacy_fallback) >= 30, (
             f"boot-time 폴백 로그 리더가 너무 적다 ({len(legacy_fallback)})"

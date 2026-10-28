@@ -39,10 +39,10 @@ checks:
       expected_min: 1
       on_fail: "SD 분리 후 시스템 감지 기록 없음"
 
-    - name: "SD auto-remount within 60s OR /tmp/cam_state 에 보고"
+    - name: "SD auto-remount within 60s"
       command: "for i in $(seq 1 12); do mountpoint -q /mnt/sd_cam && { echo REMOUNTED:$((i*5))s; exit 0; }; sleep 5; done; ls /tmp/cam_state/ 2>&1 | head -1; echo NOT_REMOUNTED"
-      expected_regex: "^REMOUNTED:|NOT_REMOUNTED"  # PASS 둘 다 허용 (감지만 되면 OK)
-      on_fail: "예상치 못한 응답"
+      expected_regex: "^REMOUNTED:[0-9]+s$"  # 미복구는 감지 로그가 있어도 FAIL
+      on_fail: "SD 자동 재마운트 실패 — teardown 복구와 별개로 FAIL"
 
     - name: "no kernel panic"
       # dmesg --level 을 kern.log 로 옮긴 형태 (#69). rsyslog 는 severity 를 줄 안에
@@ -64,3 +64,4 @@ teardown:
     - "sleep 2"
     - "mountpoint -q /mnt/sd_cam && echo 'SD remounted OK' || echo 'remount FAILED'"
     - "ls /mnt/sd_cam | head -3"
+  recovery_verify_command: "mountpoint -q /mnt/sd_cam && echo OK || echo FAIL"

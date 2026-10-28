@@ -7,8 +7,8 @@ checks:
   custom_commands:
     - name: "gstApp RSS < 500MB"
       command: "ps -C gstApp -o rss= | head -1 | tr -d ' '"
-      expected_min: 0
-      on_fail: "gstApp not running or RSS read failed"
+      expected_max: 511999  # ps RSS is KiB: < 500 MiB
+      on_fail: "gstApp RSS exceeds 500 MiB, missing or unreadable"
 
     - name: "System free memory > 100MB"
       command: "grep MemAvailable /proc/meminfo | awk '{print $2}'"

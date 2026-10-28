@@ -32,7 +32,7 @@ checks:
       expected: "RUNNING"
       on_fail: "해상도 변경 후 gstApp 미실행"
 
-    - name: "온도 FHD 대비 낮아짐"
+    - name: "HD 온도 93도 이하 (FHD 비교 아님)"
       command: "cat /sys/devices/virtual/thermal/thermal_zone0/temp | awk '{printf \"%d\", $1/1000}'"
-      expected_min: 0
-      on_fail: "온도 읽기 실패"
+      expected_max: 93
+      on_fail: "HD 온도 93도 초과 또는 측정 실패"

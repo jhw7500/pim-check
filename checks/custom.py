@@ -3,6 +3,9 @@ checks/custom.py - YAML 정의 커스텀 명령 체크
 """
 from __future__ import annotations
 
+import math
+import re
+
 from checks.base_check import BaseCheck
 
 # 타겟에서 실행 금지 패턴 (root로 실행되므로 주의)
@@ -45,6 +48,27 @@ def needs_recording_file(cmd_spec: dict) -> bool:
             and minimum >= 1)
 
 
+def _matches_expected_regex(pattern: object, output: object) -> bool:
+    """A missing output or invalid/non-empty regex must never turn into PASS."""
+    if not isinstance(pattern, str) or not pattern or not isinstance(output, str):
+        return False
+    try:
+        return re.search(pattern, output.strip()) is not None
+    except re.error:
+        return False
+
+
+def _finite_number(value: object) -> float | None:
+    """Reject malformed, NaN and infinite observations in numeric gates."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value.strip() if isinstance(value, str) else value)
+        return number if math.isfinite(number) else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 class CustomCommandCheck(BaseCheck):
     name = "custom_commands"
 
@@ -65,6 +89,8 @@ class CustomCommandCheck(BaseCheck):
                     "name": name, "command": command, "output": None,
                     "expected": cmd_spec.get("expected"),
                     "expected_min": cmd_spec.get("expected_min"),
+                    "expected_max": cmd_spec.get("expected_max"),
+                    "expected_regex": cmd_spec.get("expected_regex"),
                     "on_fail": f"BLOCKED: dangerous command pattern in '{command}'",
                 })
                 continue
@@ -77,6 +103,8 @@ class CustomCommandCheck(BaseCheck):
                 "output": output,
                 "expected": cmd_spec.get("expected"),
                 "expected_min": cmd_spec.get("expected_min"),
+                "expected_max": cmd_spec.get("expected_max"),
+                "expected_regex": cmd_spec.get("expected_regex"),
                 "on_fail": cmd_spec.get("on_fail", f"{name} failed"),
             })
 
@@ -96,20 +124,32 @@ class CustomCommandCheck(BaseCheck):
                     issues.append(f'{r["name"]}: {r["on_fail"]} (got: {output})')
                 continue
 
-            # expected_min: 숫자 최소값
-            if r["expected_min"] is not None:
-                try:
-                    val = int(output.strip()) if output else None
-                except ValueError:
-                    val = None
-                if val is None:
-                    issues.append(f'{r["name"]}: {r["on_fail"]} (non-numeric output: {output})')
+            # Numeric upper/lower bounds must reject invalid observations.
+            low = r.get("expected_min")
+            high = r.get("expected_max")
+            if low is not None or high is not None:
+                val = _finite_number(output)
+                low_n = _finite_number(low) if low is not None else None
+                high_n = _finite_number(high) if high is not None else None
+                if val is None or (low is not None and low_n is None) or (high is not None and high_n is None):
+                    issues.append(f'{r["name"]}: {r["on_fail"]} (non-numeric output/bound: {output})')
                     continue
-                if val < r["expected_min"]:
-                    issues.append(f'{r["name"]}: {r["on_fail"]} ({val} < {r["expected_min"]})')
+                if low_n is not None and val < low_n:
+                    issues.append(f'{r["name"]}: {r["on_fail"]} ({val:g} < {low})')
+                if high_n is not None and val > high_n:
+                    issues.append(f'{r["name"]}: {r["on_fail"]} ({val:g} > {high})')
                 continue
 
-            # expected도 expected_min도 없으면 — 명령 실행 성공 여부만 확인
+            # expected_regex: recovery/respawn proof must match actual output.
+            if r.get("expected_regex") is not None:
+                pattern = r["expected_regex"]
+                if not _matches_expected_regex(pattern, output):
+                    issues.append(
+                        f'{r["name"]}: {r["on_fail"]} '
+                        f'(regex: {pattern!r}, got: {output})')
+                continue
+
+            # expected/expected_min/expected_max/expected_regex 없으면 응답 유무만 확인
             if output is None:
                 issues.append(f'{r["name"]}: {r["on_fail"]} (command returned no output)')
                 continue
@@ -150,17 +190,28 @@ def item_results(data: dict) -> list[dict]:
         actual = output.strip() if isinstance(output, str) else output
         expected = r.get("expected")
         expected_min = r.get("expected_min")
+        expected_max = r.get("expected_max")
+        expected_regex = r.get("expected_regex")
         if expected is not None:
             # actual 은 위에서 정규화(문자열이면 strip, 아니면 원값) — 비문자열 output 도 안전.
             passed = actual is not None and str(actual) == str(expected).strip()
             exp_disp = str(expected)
-        elif expected_min is not None:
-            try:
-                val = int(actual) if actual is not None else None
-            except (ValueError, TypeError):
-                val = None
-            passed = val is not None and val >= expected_min
-            exp_disp = f">= {expected_min}"
+        elif expected_min is not None or expected_max is not None:
+            val = _finite_number(actual)
+            low = _finite_number(expected_min) if expected_min is not None else None
+            high = _finite_number(expected_max) if expected_max is not None else None
+            passed = (val is not None
+                      and (expected_min is None or low is not None and val >= low)
+                      and (expected_max is None or high is not None and val <= high))
+            labels = []
+            if expected_min is not None:
+                labels.append(f">= {expected_min}")
+            if expected_max is not None:
+                labels.append(f"<= {expected_max}")
+            exp_disp = ", ".join(labels)
+        elif expected_regex is not None:
+            passed = _matches_expected_regex(expected_regex, output)
+            exp_disp = f"regex: {expected_regex}"
         else:
             passed = output is not None
             exp_disp = None

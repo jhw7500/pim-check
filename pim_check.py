@@ -36,6 +36,9 @@ from verify_retry import run_verify_with_retry
 
 PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
 
+# Unknown recovery is terminal for same-target batches and repeated runs.
+EXIT_RECOVERY_UNVERIFIED = 4
+
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -466,7 +469,7 @@ def _run_plan(args) -> int:
 def run_case(case_name, host, user, password, duration, save_json=False,
              save_html=False, save_history=False, webhook_url=None,
              quiet=False, save_junit=False) -> int:
-    """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL)."""
+    """단일 케이스를 실행하고 종료 코드를 반환한다 (0=PASS, 1=FAIL, 4=recovery unverified)."""
     profile = load_profile(PROFILES_DIR, case=case_name)
 
     # CLI 오버라이드 (지정된 값만 덮어씀)
@@ -510,10 +513,24 @@ def run_case(case_name, host, user, password, duration, save_json=False,
         try:
             setup_changed = setup_mgr.run_setup(
                 setup_config, **readiness_kwargs(profile))
-        except TimeoutError as e:
+        except Exception as e:
             print(f"ERROR: Setup failed - {e}")
+            # The SSH command may have partially injected the fault.
+            # Attempt a documented recovery, but never restore an unknown
+            # configuration or claim a successful case.
+            recovery_cfg = profile.get("teardown") or {}
+            if recovery_cfg.get("recovery_command"):
+                try:
+                    setup_mgr.run_teardown({}, recovery_cfg)
+                except Exception as recovery_exc:
+                    print(f"ERROR: FAULT_RECOVERY_UNVERIFIED after setup: {recovery_exc}")
+                    return EXIT_RECOVERY_UNVERIFIED
             return 1
 
+    cleanup_failure = None
+    execution_failure = None
+    results = []
+    collected = total = 0
     try:
         engine = Engine(ssh, profile)
 
@@ -521,7 +538,34 @@ def run_case(case_name, host, user, password, duration, save_json=False,
             engine, ssh, effective_duration,
             log=(None if quiet else print),
         )
+    except Exception as exc:
+        execution_failure = exc
+        results.append({"name": "execution", "passed": False,
+                        "reason": f"Execution failed: {exc}",
+                        "data": {}, "duration_ms": 0})
+    finally:
+        # Teardown is part of the test verdict, not an afterthought. All
+        # reporters and notifications below use the post-teardown result.
+        teardown_config = profile.get("teardown") or {}
+        if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
+            try:
+                setup_mgr.run_teardown(
+                    setup_config if setup_changed else {}, teardown_config)
+            except Exception as exc:
+                cleanup_failure = exc
+                print(f"ERROR: FAULT_RECOVERY_UNVERIFIED: {exc}")
 
+    if execution_failure is not None and cleanup_failure is None:
+        raise execution_failure
+
+    if cleanup_failure is not None:
+        results.append({
+            "name": "teardown_recovery", "passed": False,
+            "reason": f"FAULT_RECOVERY_UNVERIFIED: {cleanup_failure}",
+            "data": {}, "duration_ms": 0,
+        })
+
+    try:
         reporter = Reporter()
         known_issues = profile.get("known_issues")
         if not quiet:
@@ -552,7 +596,8 @@ def run_case(case_name, host, user, password, duration, save_json=False,
 
         # known_issue가 붙은 FAIL은 실패로 치지 않음
         real_fails = [r for r in results if not r["passed"] and "known_issue" not in r]
-        exit_code = 0 if not real_fails else 1
+        exit_code = (EXIT_RECOVERY_UNVERIFIED if cleanup_failure is not None
+                     else 0 if not real_fails else 1)
 
         if webhook_url and exit_code != 0:
             from notifier import send_webhook
@@ -568,18 +613,11 @@ def run_case(case_name, host, user, password, duration, save_json=False,
                 send_fail_email(email_cfg, results, case_name, host)
 
         return exit_code
-    finally:
-        # Teardown: 복원은 setup 이 실제로 변경한 경우에만, 복구(recovery_command)는
-        # 정의돼 있으면 항상. 둘을 묶어 두면 `setup:` 없이 teardown 만 둔 케이스가
-        # 복구되지 않고, setup-skip 경로에서는 스냅샷이 없어 복원이 `.bak` 폴백으로
-        # 떨어져 **바꾸지도 않은 설정을 되돌린다** (pim-check#75 리뷰).
-        teardown_config = profile.get("teardown") or {}
-        if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
-            try:
-                setup_mgr.run_teardown(
-                    setup_config if setup_changed else {}, teardown_config)
-            except TimeoutError as e:
-                print(f"WARNING: Teardown failed - {e}")
+    except Exception as exc:
+        if cleanup_failure is None:
+            raise
+        print(f"ERROR: reporting failed after unverified recovery: {exc}")
+        return EXIT_RECOVERY_UNVERIFIED
 
 
 def _edgeconf_value_matches(current: str | None, target) -> bool:
@@ -880,6 +918,9 @@ def _main_run(args) -> int:
             case_results[case_name] = "PASS" if ret == 0 else "FAIL"
             if ret != 0:
                 worst = ret
+            if ret == EXIT_RECOVERY_UNVERIFIED:
+                print("STOP: recovery unverified; remaining cases were not started.")
+                break
 
         # 요약 테이블
         print(bold("\n=== Summary ==="))
@@ -902,9 +943,12 @@ def _main_run(args) -> int:
         print(f"Watch mode: running every {interval}s (Ctrl+C to stop)")
         try:
             while True:
-                run_case(case, args.host, args.user, args.password,
-                         args.duration, args.json, args.html, True, args.webhook,
-                         args.quiet, args.junit)
+                ret = run_case(case, args.host, args.user, args.password,
+                               args.duration, args.json, args.html, True, args.webhook,
+                               args.quiet, args.junit)
+                if ret == EXIT_RECOVERY_UNVERIFIED:
+                    print("STOP: recovery unverified; watch mode stopped.")
+                    return ret
                 # 매 실행 후 대시보드 자동 갱신
                 from history import save_dashboard
                 report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")

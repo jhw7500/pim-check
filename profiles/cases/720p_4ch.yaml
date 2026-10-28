@@ -130,7 +130,10 @@ checks:
       command: "EX=$(jq -r '.VHL_CAM.i2c1.ch3.bps[1] // 0' /root/shared_v/edgeconf_pim.json); [ \"$EX\" = \"0\" ] && { echo OK; exit 0; }; I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); BOOT=$(awk -v i=\"$I\" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z \"$BOOT\" ] && BOOT=$(uptime -s); SESS=$(awk -v bt=\"$BOOT\" 'substr($0,1,19) > bt && /chk_cam_operate.sh.*completed/ && !/: 0 files/' /var/log/cantops/local0.log | awk 'NR==2' | grep -oE '[0-9]{8}_[0-9]{4}'); [ -z \"$SESS\" ] && { echo FAIL:NEED_2_FINALIZES_AFTER_BOOT; exit 0; }; F=$(find /mnt/sd_cam /dev/shm/recordings -name \"*${SESS}*-ch3.mp4\" ! -name '*.part' 2>/dev/null | head -1); [ -n \"$F\" ] && BR=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv=p=0 \"$F\" 2>/dev/null) && echo \"$BR\" | awk -v ex=\"$EX\" '{br=$1/1000; if (br>=ex*0.8 && br<=ex*1.2) print \"OK\"; else printf \"FAIL:%dkbps_ex=%dkbps\\n\", br, ex}' || echo FAIL:NO_FILE"
       expected: OK
     - name: 최근 2분 내 .srt 파일 ≥1 (srt_enable=true 실측)
-      command: find /mnt/sd_cam /dev/shm/recordings \( -name '*.srt' -o -name '*.srt.part' \) -mmin -2 2>/dev/null | wc -l | tr -d ' '
+      command: >-
+        ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null);
+        [ -z "$ANCHOR" ] && echo FAIL:NO_SESSION_ANCHOR && exit 0;
+        find /mnt/sd_cam /dev/shm/recordings \( -name '*.srt' -o -name '*.srt.part' \) -newermt "$ANCHOR" 2>/dev/null | wc -l | tr -d ' '
       expected_min: 1
       on_fail: srt_enable=true인데 .srt 파일 미생성
     # === i2c register (vflip/hflip/AE/AWB) — 4ch unique signature ===

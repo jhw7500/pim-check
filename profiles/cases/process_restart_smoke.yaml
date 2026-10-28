@@ -1,46 +1,122 @@
-# gstApp + ord + vcm 일괄 강제 종료 후 자동 재시작 sanity
-# reboot 없이 chk_cam_operate + 시스템 watchdog 동시 검증
+# gstApp + ORD + VCM 재시작 복구 검증. 반드시 독점 보드 lease로 실행.
+# 장애 주입은 setup에서 단 한 번만 수행한다. custom_commands는 읽기 전용이다.
+# 이전 run이 비정상 종료해 anchor가 남았다면 덮어쓰거나 재주입하지 않는다.
 name: "process restart smoke (gstApp+ord+vcm)"
-description: "pkill gstApp/ord/vcm → 60s 안에 자동 재시작 + 포트 리슨"
-tags: [smoke, process, watchdog]
+description: "세 프로세스의 강제 종료·자동 재시작·독립 복구 사후조건 검증"
+tags: [smoke, process, watchdog, injection]
 
 monitor:
   duration_sec: 0
+
+setup:
+  # smoke Plan의 case_retry=1, verify_retry 반복 수집에서도 재주입하지 않는다.
+  single_injection: true
+  inject_command: >-
+    S=/tmp/pim_restart_smoke_before; R=/tmp/pim_restart_smoke_state;
+    rm -f "$R";
+    if [ -e "$S" ]; then echo STALE_MARKER > "$R"; exit 0; fi;
+    G=$(pgrep -x gstApp | head -1); O=$(pgrep -x ord | head -1); V=$(pgrep -x vcm | head -1);
+    if [ -z "$G" ] || [ -z "$O" ] || [ -z "$V" ]; then
+      echo PRECONDITION_FAILED > "$R"; exit 0;
+    fi;
+    if ! printf '%s %s %s\n' "$G" "$O" "$V" > "$S"; then
+      echo ANCHOR_FAILED > "$R"; exit 0;
+    fi;
+    pkill -9 -x gstApp; pkill -9 -x ord; pkill -9 -x vcm;
+    sleep 60;
+    G2=$(pgrep -x gstApp | head -1); O2=$(pgrep -x ord | head -1); V2=$(pgrep -x vcm | head -1);
+    if [ -n "$G2" ] && [ -n "$O2" ] && [ -n "$V2" ] &&
+       [ "$G" != "$G2" ] && [ "$O" != "$O2" ] && [ "$V" != "$V2" ]; then
+      echo INJECT_VERIFIED > "$R";
+    else
+      echo AUTO_RECOVERY_FAILED > "$R";
+    fi
 
 checks:
   cam_state:
     dir: /tmp/cam_state
     expected_state: healthy
     max_streak: 0
-  # gstApp 을 60초 pkill 하는 주입 케이스 — kill 구간의 producer stale/prepare
-  # 과도 상태는 주입 효과지 결함이 아니므로 두 체크를 끈다 (fault_gstapp_crash 동일).
+  # 강제 종료 중 snapshot의 stale/prepare 전이는 검사의 대상이 아니다.
   cam_health:
     path: null
-  # frame_flow 도 같은 이유로 끈다 — plan 이 enabled 를 켜도 path: null 이 우선한다.
-  # 켜 두면 과도 상태(NEED_FRAME_FLOW)가 verify retry 재수집을 부르고, 재수집이
-  # custom_commands 의 pkill 을 다시 실행한다.
   frame_flow:
     path: null
   max9296_abi:
     expected_version: null
   custom_commands:
-    - name: 사전 gstApp+ord+vcm 동시 실행
-      command: M=""; for p in gstApp ord vcm; do pgrep -x "$p" >/dev/null || M="$M $p"; done; [ -z "$M" ] && echo ALL_RUNNING || echo "DOWN:$M"
-      expected: ALL_RUNNING
-      on_fail: gstApp/ord/vcm 중 하나 사전 미실행
-    - name: 3 process 일괄 강제 종료 + 60s 대기
-      command: pkill -9 -x gstApp; pkill -9 -x ord; pkill -9 -x vcm; sleep 60; M=""; for p in gstApp ord vcm; do pgrep -x "$p" >/dev/null || M="$M $p"; done; [ -z "$M" ] && echo ALL_RESTARTED || echo "NOT_RESTARTED:$M"
-      expected: ALL_RESTARTED
-      on_fail: gstApp/ord/vcm 중 하나 자동 재시작 못 함 (watchdog 회귀)
-    - name: 재시작 후 cam_state healthy
-      command: cat /tmp/cam_state/state
-      expected: healthy
-      on_fail: 재시작 후 cam_state degraded 잔존
-    - name: 재시작 후 ord 포트 리슨 (10007)
-      command: P=$(jq '.ORD.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c ":$P " || true
+    - name: "3 process 재시작 PID 교체 증거"
+      command: "cat /tmp/pim_restart_smoke_state 2>/dev/null || echo NO_INJECTION_STATE"
+      expected: "INJECT_VERIFIED"
+      on_fail: "초기 PID 대비 세 프로세스의 재기동 확인 실패 / stale marker"
+
+    - name: "재시작 후 gstApp+ord+vcm 모두 실행"
+      command: >-
+        M=""; for p in gstApp ord vcm; do
+          P=$(pgrep -x "$p" | head -1);
+          [ -n "$P" ] && [ -r "/proc/$P/stat" ] &&
+          [ "$(awk '{print $3}' "/proc/$P/stat")" != Z ] || M="$M $p";
+        done;
+        [ -z "$M" ] && echo ALL_RUNNING || echo "DOWN:$M"
+      expected: "ALL_RUNNING"
+      on_fail: "재시작 후 일부 프로세스 없음 / zombie"
+
+    - name: "재시작 후 cam_state healthy"
+      command: "cat /tmp/cam_state/state 2>/dev/null || echo NO_STATE"
+      expected: "healthy"
+      on_fail: "재시작 후 cam_state healthy 복귀 실패"
+
+    - name: "재시작 후 ord 포트 리슨 (10007)"
+      command: >-
+        P=$(jq -er '.ORD.port_num | tonumber | select(. >= 1 and . <= 65535)'
+        /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo 0; exit 0; };
+        ss -H -tln 2>/dev/null | grep -Ec ":$P[[:space:]]" || true
       expected_min: 1
-      on_fail: ord 포트 미리슨
-    - name: 재시작 후 vcm 포트 리슨 (10009)
-      command: P=$(jq '.VCM.port_num' /root/shared_v/ord_vcm_conf.json); ss -tlnp 2>/dev/null | grep -c ":$P " || true
+      on_fail: "ORD 설정 포트 리슨 없음"
+
+    - name: "재시작 후 vcm 포트 리슨 (10009)"
+      command: >-
+        P=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535)'
+        /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo 0; exit 0; };
+        ss -H -tln 2>/dev/null | grep -Ec ":$P[[:space:]]" || true
       expected_min: 1
-      on_fail: vcm 포트 미리슨
+      on_fail: "VCM 설정 포트 리슨 없음"
+
+teardown:
+  # gstApp만 배포된 공식 복구 명령 사용. ORD/VCM 미복구 시 임의 서비스
+  # 재시작·재부팅하지 않는다. watchdog 복귀를 잠깐 대기한 뒤 불확실 상태면 STOP.
+  recovery_command: >-
+    S=/tmp/pim_restart_smoke_before; R=/tmp/pim_restart_smoke_state;
+    [ -r "$S" ] || { echo RECOVERY_DEFERRED; exit 0; };
+    case "$(cat "$R" 2>/dev/null)" in
+      INJECT_VERIFIED|AUTO_RECOVERY_FAILED) ;;
+      *) echo RECOVERY_DEFERRED; exit 0 ;;
+    esac;
+    if ! pgrep -x gstApp >/dev/null; then
+      /opt/pim/bin/cam-recoveryctl request gstapp_restart --source pim-check --reason process-restart-smoke-cleanup --wait 120;
+    fi;
+    echo RECOVERY_ATTEMPTED
+  # OK이면 이 케이스의 marker도 해제. STALE이면 판단없이 지우지 않으며
+  # 후속 케이스 실행을 차단한다(수동 확인 필요).
+  # PID 이후 카메라/포트가 늦게 준비될 수 있어 전체 사후조건을 최대 6회 확인한다.
+  recovery_verify_command: >-
+    S=/tmp/pim_restart_smoke_before; R=/tmp/pim_restart_smoke_state;
+    [ -r "$R" ] && [ "$(cat "$R")" != "STALE_MARKER" ] || { echo FAIL; exit 0; };
+    for i in 1 2 3 4 5 6; do
+      M=""; for p in gstApp ord vcm; do
+        P=$(pgrep -x "$p" | head -1);
+        [ -n "$P" ] && [ -r "/proc/$P/stat" ] &&
+        [ "$(awk '{print $3}' "/proc/$P/stat")" != Z ] || M="$M $p";
+      done;
+      OP=$(jq -er '.ORD.port_num | tonumber | select(. >= 1 and . <= 65535)' /root/shared_v/ord_vcm_conf.json 2>/dev/null);
+      VP=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535)' /root/shared_v/ord_vcm_conf.json 2>/dev/null);
+      if [ -z "$M" ] && [ "$(cat /tmp/cam_state/state 2>/dev/null)" = healthy ] &&
+         [ -n "$OP" ] && [ -n "$VP" ] &&
+         ss -H -tln 2>/dev/null | grep -Eq ":$OP[[:space:]]" &&
+         ss -H -tln 2>/dev/null | grep -Eq ":$VP[[:space:]]"; then
+        rm -f "$S" "$R" && echo OK || echo FAIL;
+        exit 0;
+      fi;
+      [ "$i" -lt 6 ] && sleep 5;
+    done;
+    echo FAIL

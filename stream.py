@@ -170,11 +170,7 @@ class StreamRunner:
         else:
             status = "FAIL"
 
-        # 히스토리 저장
-        if self.reports_dir:
-            append_result(results, self.case_name, self.host, 1, 1, self.reports_dir)
-            save_dashboard(self.reports_dir)
-
+        # 히스토리는 teardown 완료 후 저장한다. 복구 실패를 PASS로 기록하지 않는다.
         # Teardown — 복원은 setup 이 바꿨을 때만, 복구는 정의되면 항상 (pim-check#75 리뷰)
         teardown_config = profile.get("teardown") or {}
         if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
@@ -183,10 +179,20 @@ class StreamRunner:
                 setup_mgr.run_teardown(
                     setup_config if setup_changed else {}, teardown_config)
                 self._emit("phase", {"phase": "teardown", "message": "Teardown complete", "ok": True})
-            except Exception:
-                # best-effort — SSH 예외 등이 새면 done 없이 스레드가 죽어
-                # 검사 결과가 스트림에 도달하지 못한다.
+            except Exception as exc:
+                # 복구 실패 상태에서 PASS를 내보내면 다음 시험이 오염된 보드를
+                # 정상으로 오인한다. 스트림은 닫되 결과와 히스토리는 ERROR로 확정.
+                reason = f"FAULT_RECOVERY_UNVERIFIED: {exc}"
                 self._emit("warning", {"message": "Teardown failed"})
+                self._emit("error", {"message": reason})
+                results.append({"name": "teardown_recovery", "passed": False,
+                                "reason": reason, "data": {}, "duration_ms": 0})
+                total += 1
+                status = "ERROR"
+
+        if self.reports_dir:
+            append_result(results, self.case_name, self.host, 1, 1, self.reports_dir)
+            save_dashboard(self.reports_dir)
 
         self._emit("done", {
             "status": status,

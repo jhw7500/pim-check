@@ -544,7 +544,7 @@ def plan_runtime_profile(plan: Plan, case_profile: dict,
 @dataclass
 class CaseExecution:
     """plan 안에서 단일 case 실행 결과."""
-    section: str                    # "regression" | "delta"
+    section: str                    # "regression" | "delta" | "cleanup"
     case_name: str
     results: list                   # engine.run_snapshot 결과 리스트
     passed: bool                    # 모든 check pass + known_issue 제외 시 True
@@ -652,7 +652,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
         on_case_start: callable (idx, total, case_name, section) — case 시작 시 호출 (선택)
 
     Returns:
-        list[CaseExecution] — case별 실행 결과. plan에 정의된 순서.
+        list[CaseExecution] — plan 순서의 case 결과와 최종 복원 실패 시 cleanup 결과.
     """
     # 지연 import — testability (plan.py 자체는 engine 미의존)
     if engine_factory is None:
@@ -724,6 +724,9 @@ def execute_plan(plan: Plan, profiles_dir: str,
     # 못하므로, finally 가 이 값을 보고 대신 복구한다 — graceful shutdown 핸들러가
     # 존재하는 이유가 바로 그 정리다 (pim-check#95 리뷰).
     pending_recovery: str | None = None
+    pending_recovery_verify: str | None = None
+    # A failed fault cleanup leaves target state unknown: never inject another.
+    fault_recovery_failed = False
     # A failed/ambiguous daemon-owned recovery may still be active.
     # No later case, retry, or teardown may submit a competing action.
     uncertain_recovery = False
@@ -772,7 +775,11 @@ def execute_plan(plan: Plan, profiles_dir: str,
             passed = False
             error: str | None = None
             retries_used = 0
-            max_retry = plan.execution["case_retry"]
+            # Explicit single-shot fault cases must not repeat destructive
+            # injection because smoke/quick_verify has case_retry=1.
+            # Retries are still available to ordinary camera cases.
+            max_retry = (0 if (runtime.get("setup") or {}).get("single_injection") is True
+                         else plan.execution["case_retry"])
             for attempt in range(max_retry + 1):
                 # 이전 attempt 의 ssh 를 정리 — paramiko persistent transport
                 # 가 attempt 사이에 점유되지 않도록. (last_ssh 는 매 attempt
@@ -791,6 +798,9 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 케이스별 복구 블록에 도달하지 못하므로 finally 가 넘겨받아야 한다.
                 pending_recovery = ((runtime.get("teardown") or {}).get("recovery_command")
                                     or (runtime.get("setup") or {}).get("recovery_command"))
+                pending_recovery_verify = (
+                    (runtime.get("teardown") or {}).get("recovery_verify_command")
+                    or (runtime.get("setup") or {}).get("recovery_verify_command"))
                 _mgr_holder: list = []
                 results, passed, error = _run_single_case(
                     ssh, runtime, case_name, engine_factory, setup_factory,
@@ -835,11 +845,22 @@ def execute_plan(plan: Plan, profiles_dir: str,
                     # 도달해야 하므로(#75) 그 경우 여기서 만든다.
                     _rec_mgr = _mgr_holder[0] if _mgr_holder else setup_factory(ssh)
                     try:
-                        _rec_mgr.run_teardown({}, {"recovery_command": pending_recovery})
-                        pending_recovery = None      # 해제 완료 — finally 는 건너뛴다
+                        _recovery_cfg = {"recovery_command": pending_recovery}
+                        if pending_recovery_verify:
+                            _recovery_cfg["recovery_verify_command"] = pending_recovery_verify
+                        _rec_mgr.run_teardown({}, _recovery_cfg)
+                        pending_recovery = None      # postcondition 포함 해제 완료
+                        pending_recovery_verify = None
                     except Exception as _exc:  # noqa: BLE001
-                        print(f"[plan recovery] WARN: {case_name} 복구 실패 — {_exc}")
+                        # Never report a detection PASS if cleanup failed and the
+                        # next case could be measured against a contaminated board.
+                        fault_recovery_failed = True
+                        passed = False
+                        error = f"FAULT_RECOVERY_UNVERIFIED: {case_name}: {_exc}"
+                        print(f"[plan recovery] ERROR: {error}; stop campaign")
                 retries_used = attempt
+                if fault_recovery_failed:
+                    break
                 if uncertain_recovery:
                     print("[plan recovery] ERROR: recovery outcome unverified; "
                           "stop retries and defer all cleanup")
@@ -867,7 +888,7 @@ def execute_plan(plan: Plan, profiles_dir: str,
 
             # An unknown recovery outcome halts the entire campaign,
             # regardless of stop_on_fail policy.
-            if uncertain_recovery:
+            if uncertain_recovery or fault_recovery_failed:
                 break
             # stop_on_fail
             if not passed and plan.execution["stop_on_fail"]:
@@ -904,9 +925,10 @@ def execute_plan(plan: Plan, profiles_dir: str,
         # 설정을 바꾼 케이스 값). `teardown:` 만 둔 케이스도 복구가 도달해야 한다
         # (pim-check#68 보드 검증 · #75 리뷰).
         if (last_ssh is not None and setup_factory is not None
-                and not uncertain_recovery
+                and not uncertain_recovery and not fault_recovery_failed
                 and (campaign_snapshots or campaign_edge_changes
                      or campaign_ord_changes or last_setup_cfg or last_teardown_cfg)):
+            _cleanup_started = time.monotonic()
             try:
                 # setup 을 돌린 그 매니저를 재사용한다 — 인스턴스 상태(스냅샷)가
                 # 이어져야 teardown 복원이 실효한다. ssh 가 갈렸으면(재연결 등)
@@ -970,15 +992,39 @@ def execute_plan(plan: Plan, profiles_dir: str,
                 # 다만 **중단으로 케이스별 복구에 도달하지 못한 fault** 는 여기서 해제해야
                 # 한다 — graceful shutdown 핸들러가 finally 를 돌리는 이유가 그것이다.
                 _campaign_cfg.pop("recovery_command", None)
-                _teardown_mgr.run_teardown(
-                    _campaign_cfg,
-                    {"recovery_command": pending_recovery} if pending_recovery else None)
+                _campaign_cfg.pop("recovery_verify_command", None)
+                _pending_cfg = ({"recovery_command": pending_recovery}
+                                if pending_recovery else None)
+                if _pending_cfg is not None and pending_recovery_verify:
+                    _pending_cfg["recovery_verify_command"] = pending_recovery_verify
+                _teardown_mgr.run_teardown(_campaign_cfg, _pending_cfg)
             except Exception as _exc:
-                print(f"[plan teardown] WARN: cleanup 실패 — {_exc}")
+                # 실제 케이스 결과를 보존하면서 복원 실패도 gate/report/event에 전달한다.
+                _cleanup = CaseExecution(
+                    section="cleanup",
+                    case_name="campaign_restore",
+                    results=[],
+                    passed=False,
+                    retries_used=0,
+                    error=f"FAULT_RECOVERY_UNVERIFIED: campaign restore: {_exc}",
+                    duration_sec=time.monotonic() - _cleanup_started,
+                )
+                executions.append(_cleanup)
+                print(f"[plan teardown] ERROR: {_cleanup.error}")
+                if progress:
+                    try:
+                        progress(len(executions), total + 1,
+                                 _cleanup.case_name, _cleanup)
+                    except Exception:  # noqa: BLE001
+                        pass
         if uncertain_recovery:
             print("[plan teardown] ERROR: camera13 recovery outcome unverified — "
                   "automatic source restore and reboot deferred; "
                   "inspect owner/status/history before manual recovery")
+        if fault_recovery_failed:
+            print("[plan teardown] ERROR: fault cleanup postcondition unverified — "
+                  "automatic restore/reboot and further injection deferred; "
+                  "inspect target before resuming")
         # paramiko persistent transport 마지막 인스턴스 정리. close() 는 멱등.
         if last_ssh is not None:
             try:
@@ -1094,8 +1140,15 @@ def evaluate_gate(plan: Plan,
     total = len(executions)
     pass_rate = (pass_count / total) if total > 0 else 0.0
 
+    # Unknown target recovery overrides even a permissive pass-rate policy.
+    recovery_unverified = any(
+        (exe.error or "").startswith("FAULT_RECOVERY_UNVERIFIED")
+        for exe in executions
+    )
     # verdict
-    if fail_on_regression and regressions:
+    if recovery_unverified:
+        verdict = "FAIL"
+    elif fail_on_regression and regressions:
         verdict = "FAIL"
     elif pass_rate < threshold:
         verdict = "FAIL"

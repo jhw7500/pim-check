@@ -24,10 +24,11 @@ checks:
       expected_min: 1
       on_fail: "ORD TCP 포트 10007이 리슨하지 않음"
 
-    - name: "ORD 로그 파일 최근 갱신"
-      command: "find /var/log -name '*ord*' -mmin -10 2>/dev/null | wc -l | tr -d ' '"
-      expected_min: 0
-      on_fail: "ORD 로그 확인 실패"
+    # expected_min: 0 은 출력이 어떤 값이어도 PASS 이므로 실제 liveness 확인으로 교체.
+    - name: "ORD PID stable over 2s"
+      command: "P=$(pgrep -x ord | head -1); [ -n \"$P\" ] && sleep 2 && kill -0 \"$P\" 2>/dev/null && echo STABLE || echo UNSTABLE"
+      expected: "STABLE"
+      on_fail: "ORD 프로세스가 2초 사이에 종료되거나 PID가 유효하지 않음"
 
     # === ORD 디스크 관리 ===
     - name: "disk_manage 활성화 확인"

@@ -37,6 +37,7 @@ _auto_state = {
     "case": None,
     "host": "192.168.0.5",
     "thread": None,
+    "stop_reason": None,
 }
 
 # 실행 중인 테스트 상태
@@ -86,9 +87,21 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
         if setup_config:
             try:
                 setup_changed = setup_mgr.run_setup(setup_config)
-            except TimeoutError as e:
+            except Exception as e:
+                # Fault injection may have partially run before SSH/setup failed.
+                # Do not leave it unresolved or return a generic PASS.
+                recovery_cfg = profile.get("teardown") or {}
+                if recovery_cfg.get("recovery_command"):
+                    try:
+                        setup_mgr.run_teardown({}, recovery_cfg)
+                    except Exception as cleanup_error:
+                        return {"status": "ERROR", "recovery_unverified": True,
+                                "case": case_name, "host": h, "message":
+                                f"FAULT_RECOVERY_UNVERIFIED after setup failure: {cleanup_error}"}
                 return {"status": "ERROR", "message": f"Setup failed: {e}"}
 
+        results = []
+        collected = total = passed = 0
         try:
             engine = Engine(ssh, profile)
             effective_duration = profile["monitor"].get("duration_sec", 0)
@@ -107,16 +120,13 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
                             if r["name"] == ki["check"] and ki["reason_contains"] in r.get("reason", ""):
                                 r["known_issue"] = ki["label"]
 
-            # 히스토리에 저장
-            append_result(results, case_name, h, collected, total, REPORTS_DIR)
-            save_dashboard(REPORTS_DIR)
-
+            # 히스토리 저장은 teardown 이후로 미룬다: 실패를 PASS로 기록 금지.
             passed = sum(1 for r in results if r["passed"])
             real_fails = [r for r in results if not r["passed"] and "known_issue" not in r]
             status = "PASS" if not real_fails and not any("known_issue" in r for r in results) else \
                      "WARN" if not real_fails else "FAIL"
 
-            return {
+            outcome = {
                 "status": status,
                 "case": case_name,
                 "host": h,
@@ -132,6 +142,14 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
                     for r in results
                 ],
             }
+        except Exception as exc:
+            reason = f"Execution failed: {exc}"
+            results.append({"name": "execution", "passed": False,
+                            "reason": reason, "data": {}, "duration_ms": 0})
+            outcome = {"status": "ERROR", "case": case_name, "host": h,
+                       "message": reason, "passed": passed, "total": len(results),
+                       "checks": [{"name": row["name"], "passed": row["passed"],
+                                   "reason": row.get("reason", "")} for row in results]}
         finally:
             # 복원은 setup 이 바꿨을 때만, 복구는 정의되면 항상 (pim-check#75 리뷰)
             teardown_config = profile.get("teardown") or {}
@@ -139,8 +157,26 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
                 try:
                     setup_mgr.run_teardown(
                         setup_config if setup_changed else {}, teardown_config)
-                except TimeoutError:
-                    pass
+                except Exception as exc:
+                    reason = f"FAULT_RECOVERY_UNVERIFIED: {exc}"
+                    results.append({"name": "teardown_recovery", "passed": False,
+                                    "reason": reason, "data": {}, "duration_ms": 0})
+                    outcome = {"status": "ERROR", "case": case_name, "host": h,
+                               "recovery_unverified": True, "message": reason, "passed": passed,
+                               "total": len(results),
+                               "checks": [{"name": row["name"],
+                                           "passed": row["passed"],
+                                           "reason": row.get("reason", "")}
+                                          for row in results]}
+        try:
+            append_result(results, case_name, h, collected, total, REPORTS_DIR)
+            save_dashboard(REPORTS_DIR)
+        except Exception as exc:
+            if not outcome.get("recovery_unverified"):
+                raise
+            # Reporting must not hide the stop signal from a same-target runner.
+            outcome["message"] += f"; report persistence failed: {exc}"
+        return outcome
     finally:
         _run_state["active"] = False
 
@@ -174,13 +210,20 @@ def _auto_runner():
                 if not _auto_state["running"]:
                     break
                 try:
-                    _run_test(case, host)
+                    outcome = _run_test(case, host)
+                    if outcome.get("recovery_unverified"):
+                        _auto_state["stop_reason"] = outcome.get("message")
+                        _auto_state["running"] = False
+                        break
                 except Exception:
                     pass
         else:
             # 단일 케이스 반복
             try:
-                _run_test(_auto_state["case"], host)
+                outcome = _run_test(_auto_state["case"], host)
+                if outcome.get("recovery_unverified"):
+                    _auto_state["stop_reason"] = outcome.get("message")
+                    _auto_state["running"] = False
             except Exception:
                 pass
 
@@ -845,8 +888,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             for c in case_list:
                 r = _run_test(c, host, duration=duration_int)
                 results.append(r)
+                if r.get("recovery_unverified"):
+                    break
             self._respond(200, json.dumps({
-                "count": len(case_list),
+                "count": len(results),
+                "requested": len(case_list),
+                "stopped": any(r.get("recovery_unverified") for r in results),
                 "results": results,
             }), "application/json")
 
@@ -857,6 +904,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             mode = params.get("mode", ["single"])[0]  # single or rotate
             tag = params.get("tag", [None])[0]
             _auto_state["running"] = True
+            _auto_state["stop_reason"] = None
             _auto_state["case"] = case
             _auto_state["host"] = host
             _auto_state["interval"] = interval
@@ -877,6 +925,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "auto": _auto_state["running"],
                 "active": _run_state["active"],
                 "case": _run_state["case"],
+                "stop_reason": _auto_state.get("stop_reason"),
             }), "application/json")
 
         elif path == "/api/history":
@@ -912,9 +961,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             for c in tagged:
                 r = _run_test(c, host)
                 results.append(r)
+                if r.get("recovery_unverified"):
+                    break
             self._respond(200, json.dumps({
                 "tag": tag,
-                "count": len(tagged),
+                "count": len(results),
+                "requested": len(tagged),
+                "stopped": any(r.get("recovery_unverified") for r in results),
                 "results": results,
             }), "application/json")
 

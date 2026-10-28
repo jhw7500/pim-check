@@ -26,7 +26,7 @@ def deep_merge(base: dict, override: dict) -> dict:
 # `teardown:` 섹션에서 실제로 읽히는 키. 여기 없는 키는 조용히 무시되므로 경고한다 —
 # recovery_command 를 teardown 에 두면 안 읽히던 버그(pim-check#75)가 정확히 그
 # "엉뚱한 섹션에 뒀는데 아무도 말해주지 않는" 형태였다.
-TEARDOWN_KEYS = frozenset({"recovery_command"})
+TEARDOWN_KEYS = frozenset({"recovery_command", "recovery_verify_command"})
 
 
 def _warn_unknown_teardown_keys(profile: dict, case: str | None) -> None:

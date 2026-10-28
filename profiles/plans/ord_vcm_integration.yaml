@@ -1,0 +1,31 @@
+# Isolated read-only ORD/VCM sanity: no fault injection, config mutation or reboot.
+# Run under the board lease only after smoke has finished.
+# It does NOT prove an external OHT request -> recording file transaction.
+name: "ORD/VCM Integration Sanity"
+description: "ORD/VCM configured port handshake, process state and cross-config consistency"
+version: 1
+
+cases:
+  regression:
+    - verify_ord_vcm_integration
+
+execution:
+  stop_on_fail: true
+  case_retry: 0
+  reboot_wait_sec: 300
+  wait_between_cases: 0
+  monitor_until_pass: false
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: html
+    path: reports/ord_vcm_integration/{timestamp}.html
+  - format: junit
+    path: reports/ord_vcm_integration/{timestamp}.xml
+  - format: json
+    path: reports/ord_vcm_integration/{timestamp}.json
+  - format: markdown_summary
+    path: reports/ord_vcm_integration/{timestamp}.md

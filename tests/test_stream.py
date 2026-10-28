@@ -111,7 +111,7 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
     edgeconf 변경 유무는 phase 메시지 분기에만 쓴다.
     """
 
-    def _run(self, profile, mgr):
+    def _run(self, profile, mgr, reports_dir=None):
         with patch("stream.load_profile", return_value=profile), \
              patch("stream.SshClient") as mock_ssh_cls, \
              patch("stream.Engine") as mock_engine_cls, \
@@ -121,7 +121,7 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
             mock_ssh.preflight_check.return_value = []
             mock_ssh_cls.return_value = mock_ssh
             mock_engine_cls.return_value.checks = []
-            runner = StreamRunner("case", "192.168.0.5")
+            runner = StreamRunner("case", "192.168.0.5", reports_dir=reports_dir)
             runner._run()
         events = []
         while not runner.events.empty():
@@ -287,9 +287,33 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
         events = self._run(profile, mgr)
         types = [e["event"] for e in events]
         self.assertIn("warning", types)
+        self.assertIn("error", types)
         done = [e for e in events if e["event"] == "done"]
         self.assertEqual(len(done), 1)
-        self.assertEqual(done[0]["data"]["status"], "PASS")
+        self.assertEqual(done[0]["data"]["status"], "ERROR")
+
+
+    def test_teardown_postcondition_failure_persisted_as_fail_not_pass(self):
+        """A PASS-looking snapshot with unverified recovery must become ERROR."""
+        profile = {"target": {}, "monitor": {"duration_sec": 0}, "checks": {},
+                   "setup": {"inject_command": "inject once"},
+                   "teardown": {"recovery_command": "recover",
+                                "recovery_verify_command": "check"}}
+        mgr = MagicMock()
+        mgr.run_setup.return_value = True
+        mgr.run_teardown.side_effect = RuntimeError("fault recovery postcondition failed")
+        with patch("stream.append_result") as save, patch("stream.save_dashboard"):
+            events = self._run(profile, mgr, reports_dir="/tmp/recovery-test")
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+        self.assertEqual(done[0]["total"], 1)  # synthetic failure
+        errors = [e["data"]["message"] for e in events if e["event"] == "error"]
+        self.assertTrue(any("FAULT_RECOVERY_UNVERIFIED" in x for x in errors))
+        save.assert_called_once()
+        saved_rows = save.call_args.args[0]
+        self.assertEqual(saved_rows[0]["name"], "teardown_recovery")
+        self.assertFalse(saved_rows[0]["passed"])
 
 
 if __name__ == "__main__":

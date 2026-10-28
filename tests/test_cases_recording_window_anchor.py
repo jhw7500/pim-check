@@ -21,10 +21,11 @@ import yaml
 from checks.custom import CustomCommandCheck
 
 CASES_DIR = Path(__file__).resolve().parent.parent / "profiles" / "cases"
-IN_SCOPE_CASES = ("720p_2ch", "fhd_2ch_03", "fhd_3ch_012", "fhd_4ch")
+IN_SCOPE_CASES = ("720p_2ch", "720p_4ch", "fhd_2ch_03", "fhd_3ch_012", "fhd_4ch")
 # 녹화 경로를 패턴 묶음으로 세는 항목 (세션 prefix 로 고르는 finalize 항목과 구분)
 COUNT_FIND = r"find /mnt/sd_cam /dev/shm/recordings \("
 EXPECTED_ITEMS = {
+    ("720p_4ch", "최근 2분 내 .srt 파일 ≥1 (srt_enable=true 실측)"),
     ("720p_2ch", "최근 2분 내 .srt 파일 0건 (srt_enable=false 실측)"),
     ("720p_2ch", "ch2 disabled (i2c1.ch2.enable=false → mp4 0건)"),
     ("720p_2ch", "ch3 disabled (i2c1.ch3.enable=false → mp4 0건)"),
@@ -54,7 +55,7 @@ ITEMS = _items()
 IDS = [f"{case}:{item['name']}" for case, item in ITEMS]
 
 
-def test_in_scope_items_are_the_ten_recording_file_windows():
+def test_in_scope_items_cover_all_recording_file_windows():
     assert {(case, item["name"]) for case, item in ITEMS} == EXPECTED_ITEMS
     assert len(ITEMS) == len(EXPECTED_ITEMS)
 

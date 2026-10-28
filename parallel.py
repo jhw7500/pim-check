@@ -83,11 +83,12 @@ def run_on_target(
         if setup_config:
             try:
                 setup_changed = setup_mgr.run_setup(setup_config)
-            except TimeoutError:
+            except Exception as exc:
                 return {
                     "host": h,
                     "case": case_name,
                     "status": "SETUP_FAILED",
+                    "error": f"Setup failed: {exc}",
                     "results": [],
                     "collected": 0,
                     "total": 0,
@@ -129,8 +130,16 @@ def run_on_target(
             try:
                 setup_mgr.run_teardown(
                     setup_config if setup_changed else {}, teardown_config)
-            except TimeoutError:
-                pass
+            except Exception as exc:
+                # A verified check PASS is not a valid overall PASS when
+                # teardown did not prove recovery of the board.
+                return {
+                    "host": h, "case": case_name, "status": "ERROR",
+                    "error": f"FAULT_RECOVERY_UNVERIFIED: {exc}",
+                    "results": [{"name": "teardown_recovery", "passed": False,
+                                 "reason": str(exc), "data": {}, "duration_ms": 0}],
+                    "collected": 0, "total": 0,
+                }
 
 
 def run_parallel(

@@ -16,8 +16,12 @@ checks:
       on_fail: "shared_v not writable — recording may be blocked"
 
     - name: "Recent recording file exists (last 10min)"
-      command: "find /root/shared_v/ -name '*.mp4' -o -name '*.mkv' -o -name '*.ts' 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | xargs stat -c %Y 2>/dev/null || echo 0"
-      expected_min: 0
+      command: >-
+        F=$(find /mnt/sd_cam /dev/shm/recordings -type f
+        \( -name '*.mp4' -o -name '*.mkv' -o -name '*.ts' \)
+        -mmin -10 2>/dev/null | head -1);
+        [ -n "$F" ] && echo RECENT || echo NO_RECENT_RECORDING
+      expected: "RECENT"
       on_fail: "No recent recording files found — recording may not have resumed"
 
     - name: "dmesg no filesystem errors"

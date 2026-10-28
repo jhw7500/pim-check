@@ -26,6 +26,6 @@ checks:
       on_fail: "RTC time is reset (year < 2024) — battery dead or RTC fault"
 
     - name: "System-RTC time drift < 60s"
-      command: "python3 -c \"import subprocess,time;r=subprocess.run(['hwclock','-r'],capture_output=True,text=True);print(0 if r.returncode!=0 else abs(int(time.time())-int(time.mktime(time.strptime(r.stdout.strip()[:19],'%Y-%m-%d %H:%M:%S')))))\" 2>/dev/null || echo 9999"
-      expected_min: 0
-      on_fail: "System-RTC time drift check failed"
+      command: "python3 -c \"import subprocess,time;r=subprocess.run(['hwclock','-r'],capture_output=True,text=True);print(9999 if r.returncode!=0 else abs(int(time.time())-int(time.mktime(time.strptime(r.stdout.strip()[:19],'%Y-%m-%d %H:%M:%S')))))\" 2>/dev/null || echo 9999"
+      expected_max: 59
+      on_fail: "System-RTC time drift exceeds 59s or RTC read failed"

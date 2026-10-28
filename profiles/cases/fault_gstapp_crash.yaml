@@ -7,7 +7,10 @@ description: "gstApp 강제 kill 후 시스템의 감지 + 자동 회복 능력 
 tags: [fault, injection]
 
 setup:
-  inject_command: "pkill -9 gstApp; sleep 2; echo 'gstApp killed'"
+  inject_command:
+    # 사전 PID를 남겨 실제 종료/재기동이 발생했는지 증명한다.
+    - "rm -f /tmp/pim_fault_gstapp_oldpid; P=$(pgrep -x gstApp | head -1); [ -n \"$P\" ] && { echo \"$P\" > /tmp/pim_fault_gstapp_oldpid; pkill -9 gstApp; } || echo INJECT_FAILED"
+    - "sleep 2"
 
 checks:
   # gstApp 을 의도적으로 죽이는 케이스 — producer 스냅샷이 kill 구간에 stale 이
@@ -19,6 +22,11 @@ checks:
     expected_version: null
 
   custom_commands:
+    - name: "gstApp PID changed after injected crash"
+      command: "B=$(cat /tmp/pim_fault_gstapp_oldpid 2>/dev/null); A=$(pgrep -x gstApp | head -1); [ -n \"$B\" ] && [ -n \"$A\" ] && [ \"$A\" != \"$B\" ] && echo INJECT_CONFIRMED || echo INJECT_NOT_CONFIRMED"
+      expected: "INJECT_CONFIRMED"
+      on_fail: "gstApp PID가 바뀌지 않아 크래시 주입을 확인할 수 없음"
+
     - name: "gstApp respawned within 60s"
       command: "for i in $(seq 1 12); do pgrep -x gstApp > /dev/null && { echo RESPAWNED:$((i*5))s; exit 0; }; sleep 5; done; echo NOT_RESPAWNED"
       expected_regex: "^RESPAWNED:"
@@ -43,3 +51,4 @@ checks:
 
 teardown:
   recovery_command: "pgrep -x gstApp >/dev/null || { /opt/pim/bin/cam-recoveryctl request gstapp_restart --source pim-check --reason fault_gstapp_crash-cleanup --wait 120 && pgrep -x gstApp >/dev/null; }"
+  recovery_verify_command: "pgrep -x gstApp >/dev/null && rm -f /tmp/pim_fault_gstapp_oldpid && echo OK || echo FAIL"

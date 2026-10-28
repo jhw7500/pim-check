@@ -238,8 +238,8 @@ class TestRunOnTarget(unittest.TestCase):
             result = run_on_target("192.168.0.5", "root", "root", None, 0)
             self.assertEqual(result["status"], "FAIL")
 
-    def test_teardown_timeout_swallowed(self):
-        """teardown 중 TimeoutError 발생해도 결과 반환되어야 함 (line 127-130)."""
+    def test_teardown_timeout_returned_as_error(self):
+        """teardown timeout must not leave a PASS result on an unverified board."""
         from unittest.mock import patch, MagicMock
         from parallel import run_on_target
 
@@ -269,7 +269,8 @@ class TestRunOnTarget(unittest.TestCase):
 
             # 예외 전파 없이 결과 반환되어야 함
             result = run_on_target("192.168.0.5", "root", "root", "720p_2ch", 0)
-            self.assertEqual(result["status"], "PASS")
+            self.assertEqual(result["status"], "ERROR")
+            self.assertIn("FAULT_RECOVERY_UNVERIFIED", result["error"])
             mock_mgr.run_teardown.assert_called_once()
 
 

@@ -20,7 +20,6 @@ checks:
       expected: "OK"
       on_fail: "Default gateway not reachable"
 
-    - name: "RTSP port listening (if enabled)"
+    - name: "RTSP port listener count (diagnostic; optional)"
       command: "ss -tlnp 2>/dev/null | grep -c ':554 ' || true"
-      expected_min: 0
-      on_fail: "Cannot check RTSP port"
+      on_fail: "RTSP status diagnostic only — no mandatory service configuration"

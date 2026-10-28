@@ -90,6 +90,7 @@ class ViewerState:
             if name is not None:
                 if name not in self._status:
                     self._cases.append(name)
+                    self.total_cases = max(self.total_cases, len(self._cases))
                 self._status[name] = "running"
                 self.current_case = name
                 phase = event.get("phase")
@@ -115,6 +116,7 @@ class ViewerState:
             if name is not None:
                 if name not in self._status:
                     self._cases.append(name)
+                    self.total_cases = max(self.total_cases, len(self._cases))
                 if result in ("pass", "fail"):
                     self._status[name] = result
                 if result == "fail":

@@ -1,0 +1,40 @@
+# Focused recovery acceptance. Requires an exclusive board lease.
+# Mutates camera/VCM config, reboots, and injects one process-restart fault.
+# See docs/oht-protocol-and-acceptance.md for prerequisites and evidence limits.
+name: "QA Recovery Acceptance"
+description: "720p recording, one process-restart fault, ORD/VCM sanity and final campaign restore"
+version: 1
+
+cases:
+  regression:
+    - 720p_4ch
+    - process_restart_smoke
+    - verify_ord_vcm_integration
+
+case_overrides:
+  # Stop before fault injection even when base/case rules would downgrade a failure.
+  known_issues: []
+
+execution:
+  reset_mode: reboot
+  stop_on_fail: true
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 300
+  wait_between_cases: 0
+  monitor_until_pass: true
+  skip_finalize_checks: false
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: html
+    path: reports/qa_recovery_acceptance/{timestamp}.html
+  - format: junit
+    path: reports/qa_recovery_acceptance/{timestamp}.xml
+  - format: json
+    path: reports/qa_recovery_acceptance/{timestamp}.json
+  - format: markdown_summary
+    path: reports/qa_recovery_acceptance/{timestamp}.md

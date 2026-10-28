@@ -32,5 +32,5 @@ checks:
 
     - name: "DNS 해석 가능"
       command: "cat /etc/resolv.conf 2>/dev/null | grep -c 'nameserver' || echo 0"
-      expected_min: 0
-      on_fail: "resolv.conf 확인 실패"
+      expected_min: 1
+      on_fail: "resolv.conf 에 DNS nameserver가 없음"
