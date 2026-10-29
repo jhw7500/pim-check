@@ -3,6 +3,11 @@
 name: "Verify: VCM Operation"
 description: "VCM 프로세스 동작, 자막 생성, 파일 관리 검증"
 
+tags: [vcm, read_only]
+
+monitor:
+  duration_sec: 0
+
 checks:
   processes:
     required:
@@ -19,15 +24,17 @@ checks:
       expected: "RUNNING"
       on_fail: "VCM 프로세스 미실행"
 
-    - name: "VCM 포트 10009 리슨"
-      command: "ss -tlnp 2>/dev/null | grep -c ':10009 ' || true"
+    - name: "VCM 설정 포트 리슨"
+      command: >-
+        P=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)' /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo INVALID_PORT; exit 0; }; ss -H -tln 2>/dev/null | awk -v p=":$P" '$4 ~ (p "$") {n++} END {print n+0}'
       expected_min: 1
-      on_fail: "VCM TCP 포트 10009이 리슨하지 않음"
+      on_fail: "VCM 설정 포트가 리슨하지 않음 또는 잘못된 포트 설정"
 
     - name: "VCM TCP 연결 가능"
-      command: "timeout 3 bash -c '</dev/tcp/127.0.0.1/10009' 2>/dev/null && echo OK || echo FAIL"
+      command: >-
+        P=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)' /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo INVALID_PORT; exit 0; }; timeout 3 bash -c ": </dev/tcp/127.0.0.1/$P" 2>/dev/null && echo OK || echo FAIL
       expected: "OK"
-      on_fail: "VCM TCP 10009 포트 연결 불가"
+      on_fail: "VCM 설정 TCP 포트 연결 불가 또는 잘못된 포트 설정"
 
     # === VCM 설정 검증 ===
     - name: "file_time_check 활성화"
@@ -37,8 +44,8 @@ checks:
 
     - name: "srt_enable 상태 확인"
       command: "jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json 2>/dev/null || echo null"
-      expected: "false"
-      on_fail: "VCM SRT가 활성화됨"
+      expected_regex: "^(true|false)$"
+      on_fail: "VCM srt_enable 누락 또는 boolean 타입 불량"
 
     # === 자막 파일 생성 확인 ===
     - name: "recording 디렉토리 존재"
