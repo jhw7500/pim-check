@@ -10,8 +10,11 @@ does not fully represent normal ORD production retention at a 90% volume
 threshold and a 1,000-root-file limit.
 
 The pure module scripts/qa_managed_retention_policy.py estimates:
-- Expected newly recorded KiB and filenames for the campaign.
-- Needed root-file rotations, with 100-file reserve.
+- Expected newly recorded KiB and root-file entries for the campaign.
+  Budget two entries (MP4 and SRT) per channel per recording segment
+  when SRT disablement has not been independently attested.
+- Needed root-file rotations, counting files (not only video segments),
+  with 100-file reserve.
 - Needed verified recycle reclamation before the configured 90% limit,
   with an additional 512MiB size reserve.
 - Possible rotation work from the proven cleanup interval and bounded
@@ -42,3 +45,17 @@ and unchanged. To deploy a managed mode, independently review the
 new policy, audit the installed source and writer-completion protocol,
 pin a separate safe source commit, verify cleanup and restore
 scheduling, and request explicit owner-approved campaign admission.
+
+
+## MP4 + SRT file-count correction
+
+The observed board root contained 467 MP4 files and 467 SRT files, and
+VCM had `srt_enable=true`. For a 45-minute / four-channel campaign of
+one-minute segments, the conservative projection is **360 root file
+entries** (180 MP4 + 180 SRT), not only 180 video segments. From a
+934-file root snapshot, this proposal requires 394 eligible closed-file
+rotations to retain the 100-file reserve. These are planning figures,
+not a live deletion count or permission to clean storage.
+The legacy source-pinned no-delete gate counts 180 video segments in
+its file projection; that alone cannot prove MP4+SRT headroom.
+The canonical gate remains unchanged and BLOCKED for the actual board.
