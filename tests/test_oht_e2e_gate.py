@@ -26,6 +26,7 @@ def synthetic_ready():
         target_copy=True,
         event_auto_remove=False,
         disk_management_enabled=False,
+        recording_writer_lifecycle_verified=True,  # synthetic verified lifecycle
         disk_used_percent=50,
         disk_limit_percent=90,
         minimum_headroom_percent=5,
@@ -171,6 +172,42 @@ def test_recording_disk_management_can_be_allowed_only_with_scoped_proof(synthet
         disk_management_enabled=True,
         allow_existing_recording_deletion=True,
         automatic_cleanup_scope_verified=True,
+    )
+    assert assess_copy_preflight(sample) == ()
+
+
+@pytest.mark.parametrize("proof", [None, False, 1, "true"])
+def test_writer_lifecycle_unverified_blocks_automatic_cleanup_even_with_permission(
+    synthetic_ready, proof
+):
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=True,
+        disk_management_enabled=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+        recording_writer_lifecycle_verified=proof,
+        disk_used_percent=90,
+    )
+    blockers = assess_copy_preflight(sample)
+    assert "RECORDING_WRITER_LIFECYCLE_UNVERIFIED" in blockers
+    assert "DISK_LIMIT_REACHED" in blockers
+
+
+def test_no_writer_lifecycle_proof_needed_when_both_retention_modes_disabled(synthetic_ready):
+    sample = replace(synthetic_ready, recording_writer_lifecycle_verified=None)
+    assert assess_copy_preflight(sample) == ()
+
+
+def test_verified_writer_lifecycle_with_scoped_cleanup_can_use_byte_budget(synthetic_ready):
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=True,
+        disk_management_enabled=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+        recording_writer_lifecycle_verified=True,
+        disk_used_percent=90,
     )
     assert assess_copy_preflight(sample) == ()
 

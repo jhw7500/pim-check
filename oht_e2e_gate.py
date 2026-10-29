@@ -32,6 +32,10 @@ class CopyPreflight:
     # cannot prune unrelated files (rather than trusting the consent alone).
     automatic_cleanup_scope_verified: bool | None = None
     disk_management_enabled: bool | None = None
+    # A filename age threshold alone cannot prove that the recorder closed
+    # its write FD. Require an independently verified writer/finalizer
+    # lifecycle contract whenever automatic retention may delete files.
+    recording_writer_lifecycle_verified: bool | None = None
 
     disk_used_percent: int | None = None
     disk_limit_percent: int | None = None
@@ -88,9 +92,10 @@ def assess_copy_preflight(observation: CopyPreflight) -> tuple[str, ...]:
     deletion_possible = event_cleanup or recording_cleanup
     deletion_authorized = observation.allow_existing_recording_deletion is True
     scope_verified = observation.automatic_cleanup_scope_verified is True
+    writer_verified = observation.recording_writer_lifecycle_verified is True
     cleanup_verified = (
         deletion_possible and deletion_authorized
-        and scope_verified and recording_cleanup
+        and scope_verified and recording_cleanup and writer_verified
     )
     if observation.event_auto_remove is not True and observation.event_auto_remove is not False:
         blockers.append("AUTO_DELETE_POLICY_UNVERIFIED")
@@ -100,6 +105,8 @@ def assess_copy_preflight(observation: CopyPreflight) -> tuple[str, ...]:
     if (observation.event_auto_remove is not False
             or observation.disk_management_enabled is not False) and not deletion_authorized:
         blockers.append("AUTO_DELETE_NOT_DISABLED")
+    if deletion_possible and not writer_verified:
+        blockers.append("RECORDING_WRITER_LIFECYCLE_UNVERIFIED")
     if deletion_possible and deletion_authorized:
         if not scope_verified:
             blockers.append("AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED")
