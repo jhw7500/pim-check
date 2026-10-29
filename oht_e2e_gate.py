@@ -25,6 +25,13 @@ class CopyPreflight:
     srt_enabled: bool | None = None
     target_copy: bool | None = None
     event_auto_remove: bool | None = None
+    # The caller must opt in for this individual E2E session; never default
+    # to permission to delete older recordings.
+    allow_existing_recording_deletion: bool | None = None
+    # Independent source/config evidence must confirm the automatic cleanup
+    # cannot prune unrelated files (rather than trusting the consent alone).
+    automatic_cleanup_scope_verified: bool | None = None
+    disk_management_enabled: bool | None = None
 
     disk_used_percent: int | None = None
     disk_limit_percent: int | None = None
@@ -71,22 +78,42 @@ def assess_copy_preflight(observation: CopyPreflight) -> tuple[str, ...]:
     if not _integer(observation.recovery_journal_files, 0) or observation.recovery_journal_files != 0:
         blockers.append("RECOVERY_JOURNAL_NOT_CLEAN")
 
+    # The user's deletion permission applies to existing recordings ONLY,
+    # never to arbitrary board files. An actual run must also verify the
+    # specific ORD cleanup behavior and its configured scope.
+    deletion_requested = observation.event_auto_remove is True
+    deletion_authorized = observation.allow_existing_recording_deletion is True
+    cleanup_verified = (
+        deletion_requested
+        and deletion_authorized
+        and observation.automatic_cleanup_scope_verified is True
+        and observation.disk_management_enabled is True
+    )
+    if observation.event_auto_remove is not False and not deletion_authorized:
+        blockers.append("AUTO_DELETE_NOT_DISABLED")
+    if deletion_requested and deletion_authorized:
+        if observation.automatic_cleanup_scope_verified is not True:
+            blockers.append("AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED")
+        if observation.disk_management_enabled is not True:
+            blockers.append("DISK_MANAGEMENT_UNVERIFIED")
+    if observation.event_auto_remove is not True and observation.event_auto_remove is not False:
+        blockers.append("AUTO_DELETE_POLICY_UNVERIFIED")
+
     used, limit = observation.disk_used_percent, observation.disk_limit_percent
     if not _integer(used, 0, 100) or not _integer(limit, 1, 100):
         blockers.append("DISK_POLICY_INVALID")
-    elif used >= limit:
+    elif used >= limit and not cleanup_verified:
         blockers.append("DISK_LIMIT_REACHED")
 
+    # Below the management threshold, reserve percentage headroom as before.
+    # With explicitly authorized, verified ORD pruning, the hard percentage
+    # limit is replaced by the independently measured byte-space budget below.
     margin = observation.minimum_headroom_percent
-    if not _integer(margin, 1, 99):
-        blockers.append("HEADROOM_POLICY_UNVERIFIED")
-    elif _integer(used, 0, 100) and _integer(limit, 1, 100) and used + margin >= limit:
-        blockers.append("DISK_HEADROOM_INSUFFICIENT")
-
-    # COPY can invoke ORD's disk management; do not implicitly approve
-    # a run that might prune unrelated recordings.
-    if observation.event_auto_remove is not False:
-        blockers.append("AUTO_DELETE_NOT_DISABLED")
+    if not cleanup_verified:
+        if not _integer(margin, 1, 99):
+            blockers.append("HEADROOM_POLICY_UNVERIFIED")
+        elif _integer(used, 0, 100) and _integer(limit, 1, 100) and used + margin >= limit:
+            blockers.append("DISK_HEADROOM_INSUFFICIENT")
 
     free, projected, reserve = (
         observation.available_kib, observation.expected_new_kib,

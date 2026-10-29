@@ -134,3 +134,152 @@ def test_source_and_lease_flags_are_not_a_proof_of_final_files(synthetic_ready):
     assert assess_copy_preflight(synthetic_ready) == ()
     assert not hasattr(synthetic_ready, "output_file")
     assert not hasattr(synthetic_ready, "copy_ack")
+
+
+@pytest.mark.parametrize("permission", [False, None, 1, "true"])
+def test_auto_cleanup_rejects_missing_or_non_boolean_permission(
+    synthetic_ready, permission
+):
+    sample = replace(
+        synthetic_ready, event_auto_remove=True,
+        allow_existing_recording_deletion=permission,
+        automatic_cleanup_scope_verified=True,
+        disk_management_enabled=True,
+    )
+    assert "AUTO_DELETE_NOT_DISABLED" in assess_copy_preflight(sample)
+
+
+def test_explicitly_approved_verified_recording_cleanup_can_use_byte_budget(
+    synthetic_ready,
+):
+    """Synthetic only: at 90% the native ORD cleaner may prune recordings.
+
+    This does not send an OHT packet and does not attest the real product.
+    """
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+        disk_management_enabled=True,
+        disk_used_percent=90,
+        disk_limit_percent=90,
+        available_kib=25_185_692,
+    )
+    assert assess_copy_preflight(sample) == ()
+
+
+@pytest.mark.parametrize("policy,blocker", [
+    ({"automatic_cleanup_scope_verified": None},
+     "AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED"),
+    ({"automatic_cleanup_scope_verified": 1},
+     "AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED"),
+    ({"automatic_cleanup_scope_verified": False},
+     "AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED"),
+    ({"disk_management_enabled": False}, "DISK_MANAGEMENT_UNVERIFIED"),
+    ({"disk_management_enabled": None}, "DISK_MANAGEMENT_UNVERIFIED"),
+])
+def test_consent_alone_does_not_prove_automatic_cleanup_scope(
+    synthetic_ready, policy, blocker
+):
+    values = {
+        "event_auto_remove": True,
+        "allow_existing_recording_deletion": True,
+        "disk_used_percent": 90,
+        "automatic_cleanup_scope_verified": True,
+        "disk_management_enabled": True,
+        **policy,
+    }
+    blockers = assess_copy_preflight(replace(synthetic_ready, **values))
+    assert blocker in blockers
+    assert "DISK_LIMIT_REACHED" in blockers
+
+
+@pytest.mark.parametrize("budget,blocker", [
+    ({"available_kib": 1_000_000}, "SPACE_BUDGET_EXHAUSTED"),
+    ({"expected_new_kib": None}, "SPACE_BUDGET_UNVERIFIED"),
+    ({"expected_new_kib": 0}, "SPACE_BUDGET_UNVERIFIED"),
+    ({"minimum_reserve_kib": -1}, "SPACE_BUDGET_UNVERIFIED"),
+])
+def test_automatic_cleanup_permission_never_waives_byte_budget(
+    synthetic_ready, budget, blocker
+):
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+        disk_management_enabled=True,
+        disk_used_percent=90,
+        **budget,
+    )
+    assert blocker in assess_copy_preflight(sample)
+
+
+def test_delete_permission_does_not_waive_installed_binary_or_runtime_proof(
+    synthetic_ready,
+):
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+        disk_management_enabled=True,
+        disk_used_percent=90,
+        source_contract_verified=False,
+        merged_runtime_verified=False,
+        machine_id_length=None,
+    )
+    blockers = assess_copy_preflight(sample)
+    assert "AUTO_DELETE_NOT_DISABLED" not in blockers
+    assert "DISK_LIMIT_REACHED" not in blockers
+    assert "SOURCE_BINDING_UNVERIFIED" in blockers
+    assert "ACTIVE_RUNTIME_UNVERIFIED" in blockers
+    assert "MACHINE_ID_INVALID" in blockers
+
+
+def test_unexpected_auto_delete_policy_still_blocks_even_with_consent(
+    synthetic_ready,
+):
+    sample = replace(
+        synthetic_ready, event_auto_remove=None,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+        disk_management_enabled=True,
+    )
+    blockers = assess_copy_preflight(sample)
+    assert "AUTO_DELETE_POLICY_UNVERIFIED" in blockers
+
+
+def test_permission_is_never_persistently_enabled_by_default():
+    assert CopyPreflight().allow_existing_recording_deletion is None
+
+
+def test_observed_board_after_user_allows_old_recording_deletion():
+    """Permission resolves only the policy blocker, not missing proof."""
+    snapshot = CopyPreflight(
+        source_contract_verified=False,
+        exclusive_lease_verified=False,
+        merged_runtime_verified=False,
+        machine_id_length=None,
+        ord_port=10007,
+        vcm_port=10009,
+        recording_minutes=1,
+        srt_enabled=True,
+        target_copy=True,
+        event_auto_remove=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=None,
+        disk_management_enabled=True,
+        disk_used_percent=90,
+        disk_limit_percent=90,
+        available_kib=25_185_692,
+        recovery_journal_files=0,
+    )
+    blockers = assess_copy_preflight(snapshot)
+    assert "AUTO_DELETE_NOT_DISABLED" not in blockers
+    assert "AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED" in blockers
+    assert "DISK_LIMIT_REACHED" in blockers
+    assert "SPACE_BUDGET_UNVERIFIED" in blockers
+    assert "SOURCE_BINDING_UNVERIFIED" in blockers
+    assert "ACTIVE_RUNTIME_UNVERIFIED" in blockers

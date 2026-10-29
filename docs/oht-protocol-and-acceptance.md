@@ -188,14 +188,28 @@ timeout, 복구 불확실, 최종 복원 실패, 설정 hash 불일치가 있으
 - 기계 ID 정확히 **6바이트**, ORD·VCM TCP 설정 포트 유효,
   유효한 recording_time, SRT와 COPY 활성화. `jq length`의 문자열 글자 수는
   UTF-8 바이트 수와 같다는 보장이 없으므로 기계 ID 바이트 길이를 대신하지 않는다.
-- 녹화물 자동 삭제가 **비활성**이거나 기존 데이터 보전과 삭제 영향이
-  별도 안전 절차로 독립 검증돼야 한다. 현재 오프라인 판정은 보수적으로
-  `event_auto_remove=true`이면 `AUTO_DELETE_NOT_DISABLED`로 거부한다.
-- 보드 `df` 사용률이 ORD `disk_limit_per`에 도달하지 않아야 한다.
-  운영자가 확인한 최소 headroom(%)을 별도 지정해 `used% + headroom% < limit%`
-  조건을 요구한다. 복사·SRT·영상 예상 증가량과 별도 예약 여유도
-  **각각 양수로 명시**한 뒤 실제 가용 공간이 남아야 한다.
-  여유율이나 예산, 사용률을 알 수 없으면 거부한다.
+- 기존 녹화물 자동 삭제는 기본적으로 허용하지 않는다. 사용자가
+  **이번 시험에서 기존 녹화물 삭제를 허용**하면
+  `allow_existing_recording_deletion=True`를 명시할 수 있다.
+  그러나 `automatic_cleanup_scope_verified=True`와
+  `disk_management_enabled=True`를 **별도 검증된 근거로** 확인해야 하며,
+  다른 설정·영상 이외의 파일 삭제를 포함하는 무제한 허가는 아니다.
+  동의만으로 `event_auto_remove=true`가 정상적으로 동작한다거나
+  ORD의 정리 범위가 적절하다고 추정하지 않는다.
+- 삭제를 허용하지 않는 일반 모드에서는 보드 `df` 사용률에
+  `minimum_headroom_percent`를 더한 값이 ORD `disk_limit_per`보다
+  **작아야** 한다. 반면 기존 녹화물 삭제가 명시적으로 허용되고
+  ORD 자동 정리의 범위·활성화가 검증됐다면, 이 비율 기준 대신
+  실제 `available_kib`가 `expected_new_kib + minimum_reserve_kib`보다
+  **커야 한다**는 별도 용량 예산으로 판정할 수 있다.
+  예상 증가량과 예약 여유량은 각각 양수여야 하며, 값이 없으면 거부한다.
+
+2026-10-29 후속 요청에서 **기존 녹화물 삭제 허용** 의사가 확인되었다.
+따라서 `AUTO_DELETE_NOT_DISABLED`는 무조건적인 정책 차단이 아니며
+실제 시험별 명시적 동의·ORD 정리 범위 확인·정확한 byte-space 예산을
+충족하면 해제할 수 있다. 그러나 이 대화의 허용은 지금 즉시 임의 경로에
+`rm`을 실행하거나 기타 설정을 삭제한다는 지시가 아니다.
+별도 승인으로 전체 보드를 초기화하는 것과도 구분한다.
 
 2026-10-29 UTC 03:45의 읽기 전용 실측에서
 `pim-mp=0.6.3.2+jhw.camera19`, `df /mnt/sd_cam=90%`,
