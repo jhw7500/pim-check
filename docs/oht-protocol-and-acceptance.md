@@ -188,7 +188,11 @@ timeout, 복구 불확실, 최종 복원 실패, 설정 hash 불일치가 있으
 - 기계 ID 정확히 **6바이트**, ORD·VCM TCP 설정 포트 유효,
   유효한 recording_time, SRT와 COPY 활성화. `jq length`의 문자열 글자 수는
   UTF-8 바이트 수와 같다는 보장이 없으므로 기계 ID 바이트 길이를 대신하지 않는다.
-- 기존 녹화물 자동 삭제는 기본적으로 허용하지 않는다. 사용자가
+- 기존 녹화물 자동 삭제는 기본적으로 허용하지 않는다. ORD의
+  `disk_manage=true`는 일반 녹화물 개수·용량 초과 시 정리를 시도하므로,
+  `event_auto_remove=false`만으로 녹화물 삭제가 꺼진 것은 아니다.
+  **두 정책의 활성/비활성 상태를 각각 확인**하며, 하나라도 미확인이면
+  보수적으로 차단한다. 사용자가
   **이번 시험에서 기존 녹화물 삭제를 허용**하면
   `allow_existing_recording_deletion=True`를 명시할 수 있다.
   그러나 `automatic_cleanup_scope_verified=True`와

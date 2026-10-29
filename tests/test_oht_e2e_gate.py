@@ -25,6 +25,7 @@ def synthetic_ready():
         srt_enabled=True,
         target_copy=True,
         event_auto_remove=False,
+        disk_management_enabled=False,
         disk_used_percent=50,
         disk_limit_percent=90,
         minimum_headroom_percent=5,
@@ -134,6 +135,44 @@ def test_source_and_lease_flags_are_not_a_proof_of_final_files(synthetic_ready):
     assert assess_copy_preflight(synthetic_ready) == ()
     assert not hasattr(synthetic_ready, "output_file")
     assert not hasattr(synthetic_ready, "copy_ack")
+
+
+def test_recording_disk_management_is_independent_of_event_auto_remove(synthetic_ready):
+    """Disabling EVENT retention does not disable normal recording cleanup."""
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=False,
+        disk_management_enabled=True,
+        allow_existing_recording_deletion=None,
+    )
+    assert "AUTO_DELETE_NOT_DISABLED" in assess_copy_preflight(sample)
+
+
+def test_unknown_recording_disk_management_policy_fails_closed(synthetic_ready):
+    sample = replace(synthetic_ready, disk_management_enabled=None)
+    assert "DISK_MANAGEMENT_UNVERIFIED" in assess_copy_preflight(sample)
+
+
+def test_recording_disk_management_consent_requires_cleanup_scope(synthetic_ready):
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=False,
+        disk_management_enabled=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=None,
+    )
+    assert "AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED" in assess_copy_preflight(sample)
+
+
+def test_recording_disk_management_can_be_allowed_only_with_scoped_proof(synthetic_ready):
+    sample = replace(
+        synthetic_ready,
+        event_auto_remove=False,
+        disk_management_enabled=True,
+        allow_existing_recording_deletion=True,
+        automatic_cleanup_scope_verified=True,
+    )
+    assert assess_copy_preflight(sample) == ()
 
 
 @pytest.mark.parametrize("permission", [False, None, 1, "true"])

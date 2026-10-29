@@ -81,23 +81,32 @@ def assess_copy_preflight(observation: CopyPreflight) -> tuple[str, ...]:
     # The user's deletion permission applies to existing recordings ONLY,
     # never to arbitrary board files. An actual run must also verify the
     # specific ORD cleanup behavior and its configured scope.
-    deletion_requested = observation.event_auto_remove is True
+    # Normal recording retention and event-copy retention are independent.
+    # event_auto_remove=False does NOT disable automatic SD recording cleanup.
+    event_cleanup = observation.event_auto_remove is True
+    recording_cleanup = observation.disk_management_enabled is True
+    deletion_possible = event_cleanup or recording_cleanup
     deletion_authorized = observation.allow_existing_recording_deletion is True
+    scope_verified = observation.automatic_cleanup_scope_verified is True
     cleanup_verified = (
-        deletion_requested
-        and deletion_authorized
-        and observation.automatic_cleanup_scope_verified is True
-        and observation.disk_management_enabled is True
+        deletion_possible and deletion_authorized
+        and scope_verified and recording_cleanup
     )
-    if observation.event_auto_remove is not False and not deletion_authorized:
-        blockers.append("AUTO_DELETE_NOT_DISABLED")
-    if deletion_requested and deletion_authorized:
-        if observation.automatic_cleanup_scope_verified is not True:
-            blockers.append("AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED")
-        if observation.disk_management_enabled is not True:
-            blockers.append("DISK_MANAGEMENT_UNVERIFIED")
     if observation.event_auto_remove is not True and observation.event_auto_remove is not False:
         blockers.append("AUTO_DELETE_POLICY_UNVERIFIED")
+    if observation.disk_management_enabled is not True and observation.disk_management_enabled is not False:
+        blockers.append("DISK_MANAGEMENT_UNVERIFIED")
+    # Unknown cleanup toggles are treated as potentially active until proven disabled.
+    if (observation.event_auto_remove is not False
+            or observation.disk_management_enabled is not False) and not deletion_authorized:
+        blockers.append("AUTO_DELETE_NOT_DISABLED")
+    if deletion_possible and deletion_authorized:
+        if not scope_verified:
+            blockers.append("AUTOMATIC_CLEANUP_SCOPE_UNVERIFIED")
+        # The event policy cannot prove the actual disk manager is active.
+        if event_cleanup and observation.disk_management_enabled is not True:
+            if "DISK_MANAGEMENT_UNVERIFIED" not in blockers:
+                blockers.append("DISK_MANAGEMENT_UNVERIFIED")
 
     used, limit = observation.disk_used_percent, observation.disk_limit_percent
     if not _integer(used, 0, 100) or not _integer(limit, 1, 100):
