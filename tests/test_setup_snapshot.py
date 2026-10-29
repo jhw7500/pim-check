@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from setup import EDGECONF_PATH, ORD_VCM_PATH, SetupManager
 
 
@@ -291,3 +293,115 @@ class TestSnapshotFailureLedger:
         mgr._snapshot_failures.add(EDGECONF_PATH)
         mgr.run_setup({})                      # 변경도 inject 도 없음 — 조기 False
         assert mgr._snapshot_failures == set()
+
+
+# A command failure without an exception must still stop the teardown/reset chain.
+ORIGINAL_CONFIG_B64 = "eyJhIjogMX0="  # {"a": 1}
+CHANGED_CONFIG_B64 = "eyJhIjogMn0="   # {"a": 2}
+
+
+@pytest.mark.parametrize("had_snapshot", [False, True])
+@pytest.mark.parametrize("backup,readback", [
+    (None, ORIGINAL_CONFIG_B64),
+    ("", ORIGINAL_CONFIG_B64),
+    ("invalid base64", ORIGINAL_CONFIG_B64),
+    ("aW52YWxpZCBqc29u", "aW52YWxpZCBqc29u"),
+    (ORIGINAL_CONFIG_B64, None),
+    (ORIGINAL_CONFIG_B64, ""),
+    (ORIGINAL_CONFIG_B64, CHANGED_CONFIG_B64),
+])
+def test_unverified_backup_restore_stops_before_reset(had_snapshot, backup, readback):
+    mgr = _mgr()
+    mgr._local0_log = MagicMock()
+    mgr.reset_and_wait = MagicMock()
+    if had_snapshot:
+        mgr._config_snapshots[EDGECONF_PATH] = ORIGINAL_CONFIG_B64
+    responses = (["FAIL"] if had_snapshot else []) + [backup, readback]
+    mgr.ssh.run.side_effect = responses
+
+    with pytest.raises(RuntimeError, match="restore"):
+        mgr.run_teardown({"edgeconf_changes": {".a": 2}, "reboot_after": True})
+
+    mgr.reset_and_wait.assert_not_called()
+    assert not any("teardown RESTORED" in call.args[0]
+                   for call in mgr._local0_log.call_args_list)
+
+
+def test_backup_that_drifted_from_snapshot_is_rejected_before_copy():
+    mgr = _mgr()
+    mgr._local0_log = MagicMock()
+    mgr.reset_and_wait = MagicMock()
+    mgr._config_snapshots[EDGECONF_PATH] = ORIGINAL_CONFIG_B64
+    mgr.ssh.run.side_effect = ["FAIL", CHANGED_CONFIG_B64, CHANGED_CONFIG_B64]
+
+    with pytest.raises(RuntimeError, match="restore"):
+        mgr.run_teardown({"edgeconf_changes": {".a": 2}, "reboot_after": True})
+
+    commands = [call.args[0] for call in mgr.ssh.run.call_args_list]
+    assert not any(command.startswith("cp ") for command in commands)
+    mgr.reset_and_wait.assert_not_called()
+
+
+@pytest.mark.parametrize("had_snapshot", [False, True])
+def test_verified_backup_restore_allows_reset(had_snapshot):
+    mgr = _mgr()
+    mgr._local0_log = MagicMock()
+    mgr.reset_and_wait = MagicMock()
+    if had_snapshot:
+        mgr._config_snapshots[EDGECONF_PATH] = ORIGINAL_CONFIG_B64
+    responses = (["FAIL"] if had_snapshot else []) + [
+        ORIGINAL_CONFIG_B64, "eyJhIjog\nMX0=\n",
+    ]
+    mgr.ssh.run.side_effect = responses
+
+    mgr.run_teardown({"edgeconf_changes": {".a": 2}, "reboot_after": True})
+
+    mgr.reset_and_wait.assert_called_once()
+    assert any(command.args[0].startswith("cp ") for command in mgr.ssh.run.call_args_list)
+
+
+@pytest.mark.parametrize("failure", [None, "missing-backup", "drifted-backup", "copy-error", "copy-no-op"])
+def test_restore_executes_verified_copy_against_local_files(tmp_path, monkeypatch, failure):
+    """Run the generated shell with temporary paths; no board or global sync."""
+    import base64
+    import os
+    import shlex
+    import subprocess
+
+    backup = tmp_path / "original config.json"
+    target = tmp_path / "active config.json"
+    original = b'{\n  "a": 1, "keep": "original"\n}\n'
+    changed = b'{"a": 2}\n'
+    if failure != "missing-backup":
+        backup.write_bytes(changed if failure == "drifted-backup" else original)
+    target.write_bytes(changed)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    sync = bindir / "sync"
+    sync.write_text("#!/bin/sh\nexit 0\n")
+    sync.chmod(0o755)
+    if failure in {"copy-error", "copy-no-op"}:
+        cp = bindir / "cp"
+        cp.write_text("#!/bin/sh\nexit " + ("1" if failure == "copy-error" else "0") + "\n")
+        cp.chmod(0o755)
+    env = {**os.environ, "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")}
+
+    def local_run(command, **_kwargs):
+        # Both source and destination are test-owned, quoted local paths.
+        assert shlex.quote(str(backup)) in command
+        proc = subprocess.run(["/bin/sh", "-c", command], capture_output=True,
+                              text=True, env=env, timeout=5)
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    mgr = _mgr()
+    mgr.ssh.run.side_effect = local_run
+    monkeypatch.setattr(mgr, "_backup_path", lambda _path: str(backup))
+    mgr._config_snapshots[str(target)] = base64.b64encode(original).decode()
+
+    if failure is None:
+        mgr.restore(str(target))
+        assert target.read_bytes() == original
+    else:
+        with pytest.raises(RuntimeError, match="restore"):
+            mgr.restore(str(target))
+        assert target.read_bytes() == changed

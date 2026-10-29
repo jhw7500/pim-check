@@ -121,9 +121,10 @@ class TestRestoreEdgeconf(unittest.TestCase):
         self.mgr = SetupManager(self.ssh)
 
     def test_restore_edgeconf(self):
-        """restore()가 백업 파일을 원래 위치로 복사하는지 확인"""
+        """restore()가 검증한 백업을 복사하고 실제 내용을 다시 확인한다."""
+        self.ssh.run.side_effect = ["eyJhIjogMX0=", "eyJhIjogMX0="]
         self.mgr.restore()
-        self.assertEqual(self.ssh.run.call_count, 1)
+        self.assertEqual(self.ssh.run.call_count, 2)
         cmd = self.ssh.run.call_args[0][0]
         self.assertIn(f"cp {EDGECONF_BACKUP} {EDGECONF_PATH}", cmd)
 

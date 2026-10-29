@@ -211,3 +211,32 @@ def test_cli_report_or_notification_error_preserves_recovery_exit(sink, unknown_
             with pytest.raises(OSError, match="report sink unavailable"):
                 pim_check.run_case("process_restart_smoke", "mock-board",
                                    "root", "root", 0, **kwargs)
+
+
+def test_cli_real_restore_failure_returns_recovery_stop_code():
+    """Exercise the real teardown and restore chain, only replacing remote I/O."""
+    import pim_check
+    from setup import EDGECONF_PATH, SetupManager
+
+    ssh = fake_ssh()
+    ssh.run.return_value = None  # failed remote writes need not raise
+    mgr = SetupManager(ssh)
+    mgr._config_snapshots[EDGECONF_PATH] = "eyJhIjogMX0="
+    mgr.run_setup = MagicMock(return_value=True)
+    mgr._local0_log = MagicMock()
+    mgr.reset_and_wait = MagicMock()
+    profile = deepcopy(PROFILE)
+    profile["setup"] = {"edgeconf_changes": {".a": 2}, "reboot_after": True}
+    profile["teardown"] = {}
+    rows = [{"name": "mock-check", "passed": True, "reason": "OK",
+             "data": {}, "duration_ms": 1}]
+    with patch("pim_check.load_profile", return_value=profile), \
+         patch("pim_check.SshClient", return_value=ssh), \
+         patch("pim_check.SetupManager", return_value=mgr), \
+         patch("pim_check.Engine", return_value=fake_engine()), \
+         patch("pim_check.run_verify_with_retry", return_value=(rows, 1, 1)):
+        rc = pim_check.run_case("restore_failure", "mock-board",
+                                "root", "root", 0, quiet=True)
+
+    assert rc == 4
+    mgr.reset_and_wait.assert_not_called()

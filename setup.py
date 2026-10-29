@@ -486,6 +486,8 @@ class SetupManager:
         # A submitted camera13 request with unverified outcome must not be
         # followed by automatic teardown/reboot from the same manager.
         self._recovery_outcome_uncertain: bool = False
+        # run_setup 예외 전에 설정 적용/주입을 시도했는지 기록한다.
+        self._setup_mutation_attempted: bool = False
         # healthy 최초 관측 시각(monotonic) — CAM_READY_SETTLE_SEC 경과 판정용.
         self._cam_ready_seen_at: float | None = None
         # 게이트가 읽는 cam_state 좌표 — 프로파일 오버라이드 시 체크와 같은 값을
@@ -669,9 +671,29 @@ class SetupManager:
         return actual == expected
 
     def restore(self, conf_path: str = EDGECONF_PATH) -> None:
-        """BACKUP_DIR의 백업에서 conf 파일을 복원한다."""
-        backup_path = self._backup_path(conf_path)
-        self._setup_run(f"cp {backup_path} {conf_path} && sync")
+        """백업 원본과 복원 후 실제 바이트를 확인하고 실패를 호출자에게 전달한다."""
+        backup_path = shlex.quote(self._backup_path(conf_path))
+        target_path = shlex.quote(conf_path)
+        payload = self._setup_run(f"base64 -w0 {backup_path} 2>/dev/null")
+        compact = re.sub(r"\s+", "", payload) if isinstance(payload, str) else ""
+        try:
+            json.loads(base64.b64decode(compact, validate=True))
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                f"conf restore verify FAILED [{conf_path}]: backup unavailable or invalid") from exc
+
+        snapshot = self._config_snapshots.get(conf_path)
+        if snapshot is not None and compact != snapshot:
+            raise RuntimeError(
+                f"conf restore verify FAILED [{conf_path}]: backup differs from original snapshot")
+
+        # Read-back is reached only after the copy and sync both succeed.
+        out = self._setup_run(
+            f"cp {backup_path} {target_path} && sync && base64 -w0 {target_path}")
+        restored = re.sub(r"\s+", "", out) if isinstance(out, str) else ""
+        if restored != compact:
+            raise RuntimeError(
+                f"conf restore verify FAILED [{conf_path}]: restored bytes do not match backup")
 
     def _ping(self, ip: str, count: int = 1, timeout: int = 2) -> bool:
         """ICMP ping. True if reachable."""
@@ -1325,6 +1347,7 @@ class SetupManager:
             True: 변경 또는 inject가 적용됨 (teardown 필요)
             False: skip됨
         """
+        self._setup_mutation_attempted = False
         self._preserve_session_anchor = False
         # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
         self._ready_processes_list = list(ready_processes or [])
@@ -1353,6 +1376,7 @@ class SetupManager:
             # inject-only 모드: edgeconf 변경 없이 fault만 주입
             if inject:
                 self._local0_log("setup INJECT-ONLY mode")
+                self._setup_mutation_attempted = True
                 self._exec_commands(inject, "INJECT")
                 return True  # teardown에서 recovery 필요
             return False
@@ -1390,6 +1414,7 @@ class SetupManager:
                 print("ERROR: Failed to backup edgeconf — aborting setup")
                 self._local0_log("setup ABORT — edgeconf backup failed")
                 return False
+            self._setup_mutation_attempted = True
             self.apply_changes(edge_changes, EDGECONF_PATH)
 
         if ord_changes and not ord_match:
@@ -1399,6 +1424,7 @@ class SetupManager:
                 print("ERROR: Failed to backup ord_vcm_conf — aborting setup")
                 self._local0_log("setup ABORT — ord_vcm backup failed")
                 return False
+            self._setup_mutation_attempted = True
             self.apply_changes(ord_changes, ORD_VCM_PATH)
 
         self._local0_log("setup APPLIED — issuing reboot")
@@ -1420,6 +1446,7 @@ class SetupManager:
         # inject_command: reboot/stabilize 후 fault 주입 (실제 검증 직전)
         if inject:
             self._local0_log("setup INJECT — applying fault")
+            self._setup_mutation_attempted = True
             self._exec_commands(inject, "INJECT")
         return True
 
@@ -1439,10 +1466,9 @@ class SetupManager:
     def _restore_conf(self, conf_path: str) -> None:
         """호스트 스냅샷으로 복원하고, 불가하면 보드 .bak 로 폴백한다.
 
-        폴백에는 성격이 다른 두 경우가 섞인다. **스냅샷이 애초에 없는 것**은 정상이다
-        (setup-skip 등 — 되돌릴 변경 자체가 없다). 반면 **스냅샷은 있는데 보드 복원이
-        실패한 것**은 이상 징후이고, 폴백은 이 PR 이 없애려던 no-op 경로라 조용히
-        끝난다. 둘을 같은 모양으로 남기면 후자가 정상 로그에 묻히므로 갈라서 찍는다.
+        스냅샷 복원 실패와 스냅샷 부재를 로그에서 구분한다. restore()는 백업을
+        검증하고 실제 복원 결과를 대조한다. 원본 스냅샷이 있으면 그와 다른
+        백업을 거부하므로 부팅 중 갱신된 .bak을 원상복구로 오인하지 않는다.
         """
         had_snapshot = conf_path in self._config_snapshots
         if self.restore_from_snapshot(conf_path):
@@ -1450,7 +1476,7 @@ class SetupManager:
             return
         if had_snapshot:
             print(f"WARNING: snapshot restore failed for {conf_path} — "
-                  f"falling back to board .bak (likely a no-op)")
+                  f"verifying board .bak against the original snapshot")
             self._local0_log(
                 f"teardown RESTORE FAILED from snapshot — {conf_path} (.bak fallback)")
         else:
@@ -1544,8 +1570,8 @@ class SetupManager:
         )
 
         # 호스트 스냅샷 우선 — 보드 .bak 은 재부팅 때 config_guard 가 케이스 설정으로
-        # 덮어써서 복원이 no-op 이 된다 (pim-check#65). 스냅샷이 없을 때만 .bak 로
-        # 폴백한다(스냅샷 실패·설정 미적용 경로 — 오늘과 동일한 동작).
+        # 덮어쓸 수 있다 (pim-check#65). .bak 폴백도 원본/복원 결과 검증을
+        # 통과해야 하며, 실패하면 아래 reset/reboot까지 진행하지 않는다.
         if edge_changes:
             self._restore_conf(EDGECONF_PATH)
         if ord_changes:
