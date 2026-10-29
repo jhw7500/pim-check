@@ -32,7 +32,7 @@ def verified():
         deletion_scope_authorized_for_this_campaign=True,
         full_campaign_restore_runner_verified=True,
         observation_age_seconds=5,
-        eligible_closed_root_recordings=270,
+        eligible_closed_root_files=500,
         eligible_recycle_reclaim_kib=15_000_000,
         cleanup_period_seconds=40,
         max_rotated_files_per_pass=32,
@@ -55,8 +55,8 @@ def test_complete_synthetic_proof_still_cannot_authorize_board():
     assert result["decision"] == "REVIEW_REQUIRED"
     assert not result["execution_authorized"]
     assert result["reason_codes"] == ()
-    assert result["root_rotations_required"] == 214
-    assert result["projected_file_count"] == 180
+    assert result["root_rotations_required"] == 394
+    assert result["projected_file_count"] == 360
     assert result["recycle_reclaim_kib_required"] > 0
     assert result["root_rotations_possible_by_period"] == 67 * 32
 
@@ -95,7 +95,7 @@ def test_fake_recycle_capacity_exceeding_observed_is_rejected():
 
 def test_insufficient_proven_recycle_and_root_capacity():
     proof=replace(verified(),eligible_recycle_reclaim_kib=1000,
-                  eligible_closed_root_recordings=100)
+                  eligible_closed_root_files=100)
     result=assess_managed_retention(measured(),proof)
     assert "RECLAIMABLE_RECYCLE_INSUFFICIENT" in result["reason_codes"]
     assert "ROOT_ROTATION_CAPACITY_INSUFFICIENT" in result["reason_codes"]
@@ -141,3 +141,23 @@ def test_policy_has_no_board_execution_api():
     import qa_managed_retention_policy as policy
     assert not hasattr(policy,"read_live_board")
     assert not hasattr(policy,"execute_cleanup")
+
+
+@pytest.mark.parametrize("duration,expected_count", [
+    (1, 8), (60, 8), (61, 16), (2700, 360),
+])
+def test_projected_root_entries_include_mp4_and_srt(duration, expected_count):
+    result = assess_managed_retention(
+        measured(), verified(), expected_duration_seconds=duration,
+        projected_recording_kib=1000,
+    )
+    assert result["projected_file_count"] == expected_count
+
+
+def test_closed_file_evidence_cannot_be_segment_count_only():
+    result = assess_managed_retention(
+        measured(), replace(verified(), eligible_closed_root_files=393),
+    )
+    assert result["root_rotations_required"] == 394
+    assert result["decision"] == "BLOCK"
+    assert "ROOT_ROTATION_CAPACITY_INSUFFICIENT" in result["reason_codes"]
