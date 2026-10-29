@@ -11,6 +11,8 @@ from qa_acceptance_safety import (
 
 MIN_RESERVE_KIB = 512 * 1024
 MAX_OBSERVATION_AGE_SECONDS = 120
+# Include video plus matching SRT; unknown SRT disablement uses conservative two.
+ROOT_FILES_PER_SEGMENT = 2
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,7 @@ class ManagedRetentionEvidence:
     deletion_scope_authorized_for_this_campaign: bool | None = None
     full_campaign_restore_runner_verified: bool | None = None
     observation_age_seconds: int | None = None
-    eligible_closed_root_recordings: int | None = None
+    eligible_closed_root_files: int | None = None
     eligible_recycle_reclaim_kib: int | None = None
     cleanup_period_seconds: int | None = None
     max_rotated_files_per_pass: int | None = None
@@ -102,7 +104,8 @@ def assess_managed_retention(
     ):
         blockers.append("OBSERVATION_NOT_FRESH")
 
-    projected_files = RECORD_CHANNELS * ((expected_duration_seconds + 59) // 60)
+    projected_files = (RECORD_CHANNELS * ((expected_duration_seconds + 59) // 60)
+                       * ROOT_FILES_PER_SEGMENT)
     required_rotations = max(
         0, snapshot.root_files + projected_files + MIN_FILE_RESERVE
         - snapshot.disk_limit_file
@@ -112,7 +115,7 @@ def assess_managed_retention(
         - (capacity * snapshot.disk_limit_per // 100)
     )
 
-    eligible_root = proof.eligible_closed_root_recordings
+    eligible_root = proof.eligible_closed_root_files
     if not _int(eligible_root) or eligible_root > snapshot.root_files:
         blockers.append("ELIGIBLE_ROOT_ROTATION_UNVERIFIED")
     elif eligible_root < required_rotations:
