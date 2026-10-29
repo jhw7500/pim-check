@@ -10,6 +10,7 @@ direct-copy validator intentionally rejects concatenated or transformed output.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import PurePosixPath
 import re
 
@@ -17,7 +18,27 @@ import re
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SESSION = re.compile(r"^[0-9]{8}_[0-9]{4}$")
 _VIDEO_SUFFIXES = {".mp4", ".ts", ".mkv"}
+# A valid hash/size alone cannot make a file from another recording minute or
+# camera channel part of this COPY result. Seconds of the first video fragment
+# may be nonzero; SRT is minute-aligned by the product naming contract.
+_VIDEO_NAME = re.compile(
+    r"^.+_(?P<session>[0-9]{8}_[0-9]{4})(?P<seconds>[0-5][0-9])-"
+    r"ch(?P<channel>[0-3])\.(?:mp4|ts|mkv)$"
+)
+_SRT_NAME = re.compile(
+    r"^.+_(?P<session>[0-9]{8}_[0-9]{4})00-data\.srt$"
+)
 _ROLES = {"recorded_video", "recorded_srt", "event_video", "event_srt"}
+
+
+def _valid_session(value: object) -> bool:
+    if not isinstance(value, str) or not _SESSION.fullmatch(value):
+        return False
+    try:
+        datetime.strptime(value, "%Y%m%d_%H%M")
+    except ValueError:
+        return False
+    return True
 
 
 def _positive_int(value: object) -> bool:
@@ -95,7 +116,7 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
 
     if not isinstance(bundle.boot_id, str) or not bundle.boot_id.strip():
         issues.append("BOOT_ID_MISSING")
-    if not isinstance(bundle.session, str) or not _SESSION.fullmatch(bundle.session):
+    if not _valid_session(bundle.session):
         issues.append("SESSION_INVALID")
     channels = bundle.enabled_channels
     if (not isinstance(channels, tuple) or not channels
@@ -139,6 +160,11 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
             or any(not _safe_path(path) for path in previous)):
         issues.append("EVENT_BASELINE_MISSING")
         previous = ()
+    if len(set(previous)) != len(previous):
+        issues.append("EVENT_BASELINE_DUPLICATE")
+    if (_safe_path(bundle.event_root)
+            and any(not _is_contained(path, bundle.event_root) for path in previous)):
+        issues.append("EVENT_BASELINE_SCOPE_INVALID")
 
     records: dict[tuple[str, int | None], FinalArtifact] = {}
     paths: set[str] = set()
@@ -175,6 +201,22 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
             or PurePosixPath(artifact.path).suffix not in _VIDEO_SUFFIXES
         ):
             issues.append("ARTIFACT_FORMAT_INVALID")
+        # A file from a different session or channel must never be accepted
+        # merely because its externally supplied metadata says otherwise.
+        file_name = PurePosixPath(artifact.path).name
+        pattern = _VIDEO_NAME if artifact.role.endswith("_video") else _SRT_NAME
+        name_match = pattern.fullmatch(file_name)
+        if name_match is None:
+            issues.append("ARTIFACT_FILENAME_INVALID")
+        else:
+            if name_match.group("session") != bundle.session:
+                issues.append("ARTIFACT_FILENAME_SESSION_MISMATCH")
+            if (artifact.role.endswith("_video")
+                    and (not isinstance(artifact.channel, int)
+                         or isinstance(artifact.channel, bool)
+                         or int(name_match.group("channel")) != artifact.channel)):
+                issues.append("ARTIFACT_FILENAME_CHANNEL_MISMATCH")
+
         if artifact.boot_id != bundle.boot_id:
             issues.append("ARTIFACT_BOOT_MISMATCH")
         if (artifact.session != bundle.session

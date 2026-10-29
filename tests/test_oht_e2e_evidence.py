@@ -223,6 +223,20 @@ def test_duplicate_event_artifact_is_rejected(valid_direct_copy):
     assert "DUPLICATE_ARTIFACT" in evaluate_direct_copy_evidence(bundle)
 
 
+@pytest.mark.parametrize("invalid_session", [
+    "20260230_1230",
+    "20261301_1230",
+    "20261029_2460",
+    "20261029_1260",
+])
+def test_bad_calendar_session_cannot_become_valid_copy_evidence(
+    valid_direct_copy, invalid_session
+):
+    """Even matching-looking metadata must represent a real calendar minute."""
+    bundle = replace(valid_direct_copy, session=invalid_session)
+    assert "SESSION_INVALID" in evaluate_direct_copy_evidence(bundle)
+
+
 def test_second_channel_requires_second_recording_and_copy(valid_direct_copy):
     bundle = replace(valid_direct_copy, enabled_channels=(0, 1))
     assert "REQUIRED_FINAL_FILES_MISSING" in evaluate_direct_copy_evidence(bundle)
@@ -233,6 +247,81 @@ def test_recording_source_may_predate_event_request(valid_direct_copy):
     bundle = _mutate_artifact(valid_direct_copy, "recorded_video",
                               mtime_ns=ANCHOR - 30_000_000_000)
     assert evaluate_direct_copy_evidence(bundle) == ()
+
+
+@pytest.mark.parametrize("role,replacement,expected", [
+    (
+        "recorded_video",
+        SOURCE_VIDEO.replace("_20261029_124000", "_20261029_123900"),
+        "ARTIFACT_FILENAME_SESSION_MISMATCH",
+    ),
+    (
+        "event_video",
+        EVENT_VIDEO.replace("_20261029_124000", "_20261029_124100"),
+        "ARTIFACT_FILENAME_SESSION_MISMATCH",
+    ),
+    (
+        "recorded_srt",
+        SOURCE_SRT.replace("_20261029_124000", "_20261029_123900"),
+        "ARTIFACT_FILENAME_SESSION_MISMATCH",
+    ),
+    (
+        "event_srt",
+        EVENT_SRT.replace("_20261029_124000", "_20261029_123900"),
+        "ARTIFACT_FILENAME_SESSION_MISMATCH",
+    ),
+    (
+        "recorded_video",
+        SOURCE_VIDEO.replace("-ch0.mp4", "-ch1.mp4"),
+        "ARTIFACT_FILENAME_CHANNEL_MISMATCH",
+    ),
+    (
+        "event_video",
+        EVENT_VIDEO.replace("-ch0.mp4", "-ch1.mp4"),
+        "ARTIFACT_FILENAME_CHANNEL_MISMATCH",
+    ),
+    (
+        "recorded_video",
+        SOURCE_VIDEO.replace("-ch0.mp4", "-ch00.mp4"),
+        "ARTIFACT_FILENAME_INVALID",
+    ),
+    (
+        "event_srt",
+        EVENT_SRT.replace("-data.srt", "-debug.srt"),
+        "ARTIFACT_FILENAME_INVALID",
+    ),
+])
+def test_artifact_file_name_must_match_session_and_exact_channel(
+    valid_direct_copy, role, replacement, expected
+):
+    """Valid hash/size and metadata must not launder a different session/file."""
+    bundle = _mutate_artifact(valid_direct_copy, role, path=replacement)
+    assert expected in evaluate_direct_copy_evidence(bundle)
+
+
+def test_first_video_fragment_with_nonzero_seconds_is_valid(valid_direct_copy):
+    """The first fragment can start at 12:40:37 rather than :00."""
+    source = SOURCE_VIDEO.replace("124000-ch0", "124037-ch0")
+    event = EVENT_VIDEO.replace("124000-ch0", "124037-ch0")
+    artifacts = tuple(
+        replace(a, path=source) if a.role == "recorded_video"
+        else replace(a, path=event, source_path=source) if a.role == "event_video"
+        else a for a in valid_direct_copy.artifacts
+    )
+    assert evaluate_direct_copy_evidence(
+        replace(valid_direct_copy, artifacts=artifacts)
+    ) == ()
+
+
+@pytest.mark.parametrize("bad_baseline,expected", [
+    (("/other/outside-event.mp4",), "EVENT_BASELINE_SCOPE_INVALID"),
+    ((EVENT_VIDEO, EVENT_VIDEO), "EVENT_BASELINE_DUPLICATE"),
+])
+def test_event_baseline_is_an_exact_root_scoped_unique_listing(
+    valid_direct_copy, bad_baseline, expected
+):
+    bundle = replace(valid_direct_copy, preexisting_event_paths=bad_baseline)
+    assert expected in evaluate_direct_copy_evidence(bundle)
 
 
 def test_changed_event_content_requires_a_separate_tail_merge_contract(valid_direct_copy):
