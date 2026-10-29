@@ -118,8 +118,33 @@ def test_nondefault_runtime_port_is_used(tmp_path, case, family):
 
 
 @pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
-@pytest.mark.parametrize("left,right,expected", [(True, True, "MATCH"), (False, False, "MATCH"), (True, False, "MISMATCH"), (None, None, "MISMATCH"), ("true", "true", "MISMATCH")])
-def test_event_policy_missing_or_wrong_type_is_not_matching(tmp_path, left, right, expected):
-    item = spec("verify_ord_operation", "event_auto_remove")
+@pytest.mark.parametrize("case", ["verify_ord_operation", "verify_ord_vcm_integration"])
+@pytest.mark.parametrize("left,right,expected", [
+    (True, True, "MATCH"),
+    (False, False, "MATCH"),
+    (True, False, "MISMATCH"),
+    (None, None, "MISMATCH"),
+    ("true", "true", "MISMATCH"),
+    (1, 1, "MISMATCH"),
+    ([], [], "MISMATCH"),
+    ({}, {}, "MISMATCH"),
+])
+def test_event_policy_requires_matching_booleans(tmp_path, case, left, right, expected):
+    item = spec(case, "event_auto_remove")
     result = shell(item, tmp_path, {"ORD": {"event_auto_remove": right}}, {"VHL_CAM": {"event_auto_remove": left}})
     assert result == expected
+    assert passes(item, result) is (expected == "MATCH")
+
+
+@pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
+@pytest.mark.parametrize("case", ["verify_ord_operation", "verify_ord_vcm_integration"])
+@pytest.mark.parametrize("camera,ord", [
+    ({}, {}),
+    ({}, {"event_auto_remove": True}),
+    ({"event_auto_remove": True}, {}),
+])
+def test_event_policy_missing_field_is_not_matching(tmp_path, case, camera, ord):
+    item = spec(case, "event_auto_remove")
+    result = shell(item, tmp_path, {"ORD": ord}, {"VHL_CAM": camera})
+    assert result == "MISMATCH"
+    assert not passes(item, result)

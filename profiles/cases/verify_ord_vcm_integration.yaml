@@ -51,11 +51,13 @@ checks:
         jq -es 'length == 2 and
         (.[0].VHL_CAM | has("event_auto_remove")) and
         (.[1].ORD | has("event_auto_remove")) and
+        (.[0].VHL_CAM.event_auto_remove | type == "boolean") and
+        (.[1].ORD.event_auto_remove | type == "boolean") and
         (.[0].VHL_CAM.event_auto_remove == .[1].ORD.event_auto_remove)'
         /root/shared_v/edgeconf_pim.json /root/shared_v/ord_vcm_conf.json
         >/dev/null 2>&1 && echo MATCH || echo MISMATCH
       expected: "MATCH"
-      on_fail: "edgeconf 와 ORD event_auto_remove 불일치/누락"
+      on_fail: "edgeconf 와 ORD event_auto_remove 불일치/누락/타입 오류"
 
     - name: "ORD disk management config valid"
       command: >-
