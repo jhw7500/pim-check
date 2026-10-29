@@ -111,7 +111,7 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
     edgeconf 변경 유무는 phase 메시지 분기에만 쓴다.
     """
 
-    def _run(self, profile, mgr, reports_dir=None):
+    def _run(self, profile, mgr, reports_dir=None, *, engine_error=None, checks=None):
         with patch("stream.load_profile", return_value=profile), \
              patch("stream.SshClient") as mock_ssh_cls, \
              patch("stream.Engine") as mock_engine_cls, \
@@ -120,7 +120,8 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
             mock_ssh.check_connectivity.return_value = True
             mock_ssh.preflight_check.return_value = []
             mock_ssh_cls.return_value = mock_ssh
-            mock_engine_cls.return_value.checks = []
+            mock_engine_cls.side_effect = engine_error
+            mock_engine_cls.return_value.checks = [] if checks is None else checks
             runner = StreamRunner("case", "192.168.0.5", reports_dir=reports_dir)
             runner._run()
         events = []
@@ -314,6 +315,179 @@ class TestSetupDelegationToRunSetup(unittest.TestCase):
         saved_rows = save.call_args.args[0]
         self.assertEqual(saved_rows[0]["name"], "teardown_recovery")
         self.assertFalse(saved_rows[0]["passed"])
+
+
+    def test_runtime_error_during_setup_recovers_and_closes_stream(self):
+        setup = {"inject_command": "inject"}
+        teardown = {"recovery_command": "recover"}
+        profile = {"target": {}, "checks": {}, "setup": setup, "teardown": teardown}
+        mgr = MagicMock()
+        mgr.run_setup.side_effect = RuntimeError("conf apply verify FAILED")
+        events = self._run(profile, mgr)
+        mgr.run_teardown.assert_called_once_with(setup, teardown)
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+
+    def test_uncertain_camera_recovery_does_not_attempt_cleanup(self):
+        from setup import SetupManager
+        ssh = MagicMock()
+        mgr = SetupManager(ssh)
+        mgr._recovery_outcome_uncertain = True
+        mgr.run_setup = MagicMock(side_effect=RuntimeError("camera recovery result unknown"))
+        mgr.run_teardown = MagicMock(wraps=mgr.run_teardown)
+        profile = {"target": {}, "checks": {}, "setup": {"inject_command": "inject"}}
+        events = self._run(profile, mgr)
+        mgr.run_teardown.assert_not_called()
+        ssh.run.assert_not_called()
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+        errors = [e["data"]["message"] for e in events if e["event"] == "error"]
+        self.assertTrue(any("FAULT_RECOVERY_UNVERIFIED" in msg for msg in errors))
+
+    def test_engine_construction_failure_runs_real_recovery_and_records_error(self):
+        from setup import SetupManager
+        ssh = MagicMock()
+        ssh.run.return_value = "OK"
+        mgr = SetupManager(ssh)
+        mgr._local0_log = MagicMock()
+        profile = {"target": {}, "checks": {}, "setup": {"inject_command": "inject"},
+                   "teardown": {"recovery_command": "recover"}}
+        with patch("stream.append_result") as saved, patch("stream.save_dashboard"):
+            events = self._run(profile, mgr, reports_dir="/tmp/stream-recovery-test",
+                               engine_error=RuntimeError("engine construction failed"))
+        self.assertEqual([call.args[0] for call in ssh.run.call_args_list], ["inject", "recover"])
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+        self.assertEqual(done[0]["total"], 1)
+        rows = saved.call_args.args[0]
+        self.assertFalse(rows[-1]["passed"])
+        self.assertIn("engine construction failed", rows[-1]["reason"])
+
+    def test_check_iteration_failure_preserves_results_and_recovers(self):
+        check = MagicMock()
+        check.name = "first"
+        check.collect.return_value = {}
+        check.validate.return_value = (True, "OK")
+
+        def checks():
+            yield check
+            raise RuntimeError("check iteration failed")
+
+        mgr = MagicMock()
+        mgr.run_setup.return_value = True
+        profile = {"target": {}, "checks": {}, "setup": {"inject_command": "inject"},
+                   "teardown": {"recovery_command": "recover"}}
+        with patch("stream.append_result") as saved, patch("stream.save_dashboard"):
+            events = self._run(profile, mgr, reports_dir="/tmp/stream-recovery-test", checks=checks())
+        mgr.run_teardown.assert_called_once()
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+        self.assertEqual(done[0]["passed"], 1)
+        self.assertEqual(done[0]["total"], 2)
+        rows = saved.call_args.args[0]
+        self.assertTrue(rows[0]["passed"])
+        self.assertFalse(rows[1]["passed"])
+        self.assertIn("check iteration failed", rows[1]["reason"])
+
+    def test_ordinary_check_exception_remains_fail(self):
+        check = MagicMock()
+        check.name = "failed-check"
+        check.collect.side_effect = RuntimeError("ordinary collection failure")
+        events = self._run({"target": {}, "checks": {}}, MagicMock(), checks=[check])
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "FAIL")
+
+
+    def test_matching_hard_reset_rejection_does_not_restore_or_reset(self):
+        """변경 전 수락 거부가 오래된 백업 복원과 reset을 시작하면 안 된다."""
+        import base64
+        from setup import SetupManager
+        ssh = MagicMock()
+        ssh.run.return_value = base64.b64encode(b'{"VHL_CAM":{"fps":1}}').decode()
+        mgr = SetupManager(ssh)
+        mgr.check_current = MagicMock(return_value=True)
+        mgr._local0_log = MagicMock()
+        mgr.reset_and_wait = MagicMock()
+        mgr.run_teardown = MagicMock(wraps=mgr.run_teardown)
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30},
+                 "require_hard_reset": True, "reset_mode": "camera_hard",
+                 "reboot_after": True}
+        events = self._run({"target": {}, "checks": {}, "setup": setup}, mgr)
+        mgr.run_teardown.assert_not_called()
+        mgr.reset_and_wait.assert_not_called()
+        ssh.run.assert_not_called()
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+
+    def test_setup_read_failure_does_not_restore_or_reset(self):
+        """실제 run_setup의 적용 전 읽기 실패도 타겟 정리를 시작하지 않는다."""
+        import base64
+        from setup import SetupManager
+        ssh = MagicMock()
+        ssh.run.return_value = base64.b64encode(b'{"VHL_CAM":{"fps":1}}').decode()
+        mgr = SetupManager(ssh)
+        # 첫 호출은 stream 예고, 두 번째는 run_setup의 실제 사전 확인이다.
+        mgr.check_current = MagicMock(side_effect=[False, RuntimeError("config read failed")])
+        mgr._local0_log = MagicMock()
+        mgr.reset_and_wait = MagicMock()
+        mgr.run_teardown = MagicMock(wraps=mgr.run_teardown)
+        setup = {"edgeconf_changes": {".VHL_CAM.fps": 30}, "reboot_after": True}
+        events = self._run({"target": {}, "checks": {}, "setup": setup}, mgr)
+        mgr.run_teardown.assert_not_called()
+        mgr.reset_and_wait.assert_not_called()
+        ssh.run.assert_not_called()
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+
+    def test_partial_config_apply_failure_keeps_real_manager_cleanup(self):
+        """스냅샷 실패 여부와 무관하게 적용을 시도한 edge/ORD는 복구한다."""
+        from setup import EDGECONF_PATH, ORD_VCM_PATH, SetupManager
+        for key, conf_path in (("edgeconf_changes", EDGECONF_PATH),
+                               ("ord_vcm_changes", ORD_VCM_PATH)):
+            with self.subTest(config=key):
+                mgr = SetupManager(MagicMock())
+                mgr.check_current = MagicMock(return_value=False)
+                mgr._local0_log = MagicMock()
+                mgr._snapshot_or_warn = MagicMock()  # snapshot 없는 부분 적용도 복구 필요
+                mgr.backup = MagicMock(return_value=True)
+                mgr.apply_changes = MagicMock(side_effect=RuntimeError("partial apply failed"))
+                mgr._restore_conf = MagicMock()
+                mgr.reset_and_wait = MagicMock()
+                mgr.run_teardown = MagicMock(wraps=mgr.run_teardown)
+                setup = {key: {".value": 1}, "reboot_after": True}
+                events = self._run({"target": {}, "checks": {}, "setup": setup}, mgr)
+                mgr.run_teardown.assert_called_once_with(setup, {})
+                mgr._restore_conf.assert_called_once_with(conf_path)
+                mgr.reset_and_wait.assert_called_once()
+                done = [e["data"] for e in events if e["event"] == "done"]
+                self.assertEqual(len(done), 1)
+                self.assertEqual(done[0]["status"], "ERROR")
+
+    def test_partial_injection_failure_keeps_real_manager_recovery(self):
+        """inject 명령 제출 뒤 오류면 실제 recovery 명령을 한 번 실행한다."""
+        from setup import SetupManager
+        ssh = MagicMock()
+        ssh.run.side_effect = [RuntimeError("partial injection failed"), "OK"]
+        mgr = SetupManager(ssh)
+        mgr._local0_log = MagicMock()
+        mgr.run_teardown = MagicMock(wraps=mgr.run_teardown)
+        setup = {"inject_command": "inject"}
+        teardown = {"recovery_command": "recover"}
+        profile = {"target": {}, "checks": {}, "setup": setup, "teardown": teardown}
+        events = self._run(profile, mgr)
+        mgr.run_teardown.assert_called_once_with(setup, teardown)
+        self.assertEqual([call.args[0] for call in ssh.run.call_args_list], ["inject", "recover"])
+        done = [e["data"] for e in events if e["event"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["status"], "ERROR")
+
 
 
 if __name__ == "__main__":

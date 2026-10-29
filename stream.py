@@ -15,7 +15,7 @@ from datetime import datetime
 from config import load_profile
 from engine import Engine
 from setup import ORD_VCM_PATH, SetupManager
-from ssh import SshClient, SshConnectionError, SshTimeoutError
+from ssh import SshClient
 from history import append_result, save_dashboard
 
 PROFILES_DIR = ""  # web.py에서 설정
@@ -102,12 +102,19 @@ class StreamRunner:
                 setup_changed = setup_mgr.run_setup(setup_config)
                 if setup_changed:
                     self._emit("phase", {"phase": "setup", "message": "Setup complete", "ok": True})
-            except (TimeoutError, SshTimeoutError, SshConnectionError) as e:
-                # Ssh* 예외는 TimeoutError 계열이 아니다 — 안 잡으면 러너 스레드가
-                # 죽어 부분 적용/주입된 fault 가 보드에 남고, done 없이 스트림이
-                # 매달린다. 복구를 시도하고 반드시 닫는다. 스냅샷은 변경 전에
-                # 찍히므로 이 경로의 복원은 케이스 전 상태로 간다.
+            except Exception as e:
+                # 설정 적용 검증의 RuntimeError도 부분 적용 후에 발생할 수 있다.
                 self._emit("error", {"message": f"Setup failed: {e}"})
+                if getattr(setup_mgr, "_recovery_outcome_uncertain", False) is True:
+                    self._emit("error", {
+                        "message": "FAULT_RECOVERY_UNVERIFIED: camera recovery outcome unknown; cleanup deferred",
+                    })
+                    self._emit("done", {"status": "ERROR", "recovery_unverified": True})
+                    return
+                # 변경 시도 전 거부에는 복원할 이번 실행의 변경이 없다.
+                if getattr(setup_mgr, "_setup_mutation_attempted", None) is False:
+                    self._emit("done", {"status": "ERROR"})
+                    return
                 self._emit("phase", {"phase": "teardown", "message": "Recovering after setup failure..."})
                 try:
                     setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
@@ -121,51 +128,62 @@ class StreamRunner:
 
         # 체크 실행
         self._emit("phase", {"phase": "checks", "message": "Running checks..."})
-        engine = Engine(ssh, profile)
-        config = profile.get("checks", {})
         results = []
+        execution_failed = False
+        try:
+            engine = Engine(ssh, profile)
+            config = profile.get("checks", {})
 
-        for check in engine.checks:
-            self._emit("check_start", {"check": check.name})
-            start_time = time.time()
-            try:
-                data = check.collect(ssh, config)
-                passed, reason = check.validate(data, config)
-            except Exception as exc:
-                data = {}
-                passed = False
-                reason = f"SSH_ERROR: {exc}"
+            for check in engine.checks:
+                self._emit("check_start", {"check": check.name})
+                start_time = time.time()
+                try:
+                    data = check.collect(ssh, config)
+                    passed, reason = check.validate(data, config)
+                except Exception as exc:
+                    data = {}
+                    passed = False
+                    reason = f"SSH_ERROR: {exc}"
 
-            duration_ms = int((time.time() - start_time) * 1000)
-            result = {
-                "name": check.name,
-                "passed": passed,
-                "reason": reason,
-                "data": data,
-                "duration_ms": duration_ms,
-            }
-            results.append(result)
+                duration_ms = int((time.time() - start_time) * 1000)
+                result = {
+                    "name": check.name,
+                    "passed": passed,
+                    "reason": reason,
+                    "data": data,
+                    "duration_ms": duration_ms,
+                }
+                results.append(result)
 
-            # known_issues 적용
-            known_issues = profile.get("known_issues")
-            if known_issues and not passed:
-                for ki in known_issues:
-                    if check.name == ki["check"] and ki["reason_contains"] in reason:
-                        result["known_issue"] = ki["label"]
+                # known_issues 적용
+                known_issues = profile.get("known_issues")
+                if known_issues and not passed:
+                    for ki in known_issues:
+                        if check.name == ki["check"] and ki["reason_contains"] in reason:
+                            result["known_issue"] = ki["label"]
 
-            self._emit("check_result", {
-                "check": check.name,
-                "passed": passed,
-                "reason": reason,
-                "known_issue": result.get("known_issue", ""),
-                "duration_ms": duration_ms,
-            })
+                self._emit("check_result", {
+                    "check": check.name,
+                    "passed": passed,
+                    "reason": reason,
+                    "known_issue": result.get("known_issue", ""),
+                    "duration_ms": duration_ms,
+                })
+
+        except Exception as exc:
+            execution_failed = True
+            reason = f"EXECUTION_EXCEPTION: {exc}"
+            results.append({"name": "execution", "passed": False,
+                            "reason": reason, "data": {}, "duration_ms": 0})
+            self._emit("error", {"message": reason})
 
         # 결과 집계
         total = len(results)
         passed_count = sum(1 for r in results if r["passed"])
         real_fails = [r for r in results if not r["passed"] and "known_issue" not in r]
-        if not real_fails:
+        if execution_failed:
+            status = "ERROR"
+        elif not real_fails:
             status = "PASS" if not any("known_issue" in r for r in results) else "WARN"
         else:
             status = "FAIL"
