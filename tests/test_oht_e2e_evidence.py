@@ -187,6 +187,13 @@ def test_invalid_or_unproven_file_never_counts_as_completed_e2e(
     assert expected in evaluate_direct_copy_evidence(bundle)
 
 
+@pytest.mark.parametrize("role", ["recorded_video", "event_video"])
+def test_boolean_channel_is_not_a_valid_numeric_camera_channel(valid_direct_copy, role):
+    """Python bool == int must not let an invalid channel satisfy E2E evidence."""
+    bundle = _mutate_artifact(valid_direct_copy, role, channel=False)
+    assert "ARTIFACT_FORMAT_INVALID" in evaluate_direct_copy_evidence(bundle)
+
+
 def test_prior_event_file_cannot_be_reused_as_this_event(valid_direct_copy):
     bundle = replace(valid_direct_copy, preexisting_event_paths=(EVENT_VIDEO,))
     assert "STALE_EVENT_ARTIFACT" in evaluate_direct_copy_evidence(bundle)

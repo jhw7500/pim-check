@@ -169,7 +169,9 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
                  PurePosixPath(artifact.path).suffix != ".srt")):
             issues.append("ARTIFACT_FORMAT_INVALID")
         elif artifact.role.endswith("_video") and (
-            artifact.channel not in channels
+            not isinstance(artifact.channel, int)
+            or isinstance(artifact.channel, bool)
+            or artifact.channel not in channels
             or PurePosixPath(artifact.path).suffix not in _VIDEO_SUFFIXES
         ):
             issues.append("ARTIFACT_FORMAT_INVALID")
