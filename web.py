@@ -88,17 +88,27 @@ def _run_test(case_name: str | None, host: str, user: str = "root",
             try:
                 setup_changed = setup_mgr.run_setup(setup_config)
             except Exception as e:
-                # Fault injection may have partially run before SSH/setup failed.
-                # Do not leave it unresolved or return a generic PASS.
-                recovery_cfg = profile.get("teardown") or {}
-                if recovery_cfg.get("recovery_command"):
-                    try:
-                        setup_mgr.run_teardown({}, recovery_cfg)
-                    except Exception as cleanup_error:
-                        return {"status": "ERROR", "recovery_unverified": True,
-                                "case": case_name, "host": h, "message":
-                                f"FAULT_RECOVERY_UNVERIFIED after setup failure: {cleanup_error}"}
-                return {"status": "ERROR", "message": f"Setup failed: {e}"}
+                # An unverified camera13 reset must not be followed by a
+                # competing cleanup, even when a recovery_command is present.
+                if getattr(setup_mgr, "_recovery_outcome_uncertain", False) is True:
+                    return {"status": "ERROR", "recovery_unverified": True,
+                            "case": case_name, "host": h,
+                            "message": f"FAULT_RECOVERY_UNVERIFIED after setup: {e}"}
+                # Rejecting a pre-mutation acceptance/validation request
+                # must not restore a stale board backup or initiate a reset.
+                if getattr(setup_mgr, "_setup_mutation_attempted", None) is False:
+                    return {"status": "ERROR", "case": case_name, "host": h,
+                            "message": f"Setup failed before mutation: {e}"}
+                # Either config application or fault injection may be partial.
+                # Restore both files when needed, not just recovery_command.
+                try:
+                    setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
+                except Exception as cleanup_error:
+                    return {"status": "ERROR", "recovery_unverified": True,
+                            "case": case_name, "host": h, "message":
+                            f"FAULT_RECOVERY_UNVERIFIED after setup failure: {cleanup_error}"}
+                return {"status": "ERROR", "case": case_name, "host": h,
+                        "message": f"Setup failed: {e}"}
 
         results = []
         collected = total = passed = 0

@@ -515,16 +515,20 @@ def run_case(case_name, host, user, password, duration, save_json=False,
                 setup_config, **readiness_kwargs(profile))
         except Exception as e:
             print(f"ERROR: Setup failed - {e}")
-            # The SSH command may have partially injected the fault.
-            # Attempt a documented recovery, but never restore an unknown
-            # configuration or claim a successful case.
-            recovery_cfg = profile.get("teardown") or {}
-            if recovery_cfg.get("recovery_command"):
-                try:
-                    setup_mgr.run_teardown({}, recovery_cfg)
-                except Exception as recovery_exc:
-                    print(f"ERROR: FAULT_RECOVERY_UNVERIFIED after setup: {recovery_exc}")
-                    return EXIT_RECOVERY_UNVERIFIED
+            # Never compete with a camera13 request whose result is unknown.
+            if getattr(setup_mgr, "_recovery_outcome_uncertain", False) is True:
+                print(f"ERROR: FAULT_RECOVERY_UNVERIFIED after setup: {e}")
+                return EXIT_RECOVERY_UNVERIFIED
+            # A refusal before any mutation must not restore an old backup.
+            if getattr(setup_mgr, "_setup_mutation_attempted", None) is False:
+                return 1
+            # Either config application or fault injection may have started.
+            # A missing recovery_command does not mean no config needs restore.
+            try:
+                setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
+            except Exception as recovery_exc:
+                print(f"ERROR: FAULT_RECOVERY_UNVERIFIED after setup: {recovery_exc}")
+                return EXIT_RECOVERY_UNVERIFIED
             return 1
 
     cleanup_failure = None

@@ -78,21 +78,33 @@ def run_on_target(
     setup_config = profile.get("setup")
     setup_mgr = SetupManager(ssh)
     setup_changed = False
+    setup_cleanup_handled = False
 
     try:
         if setup_config:
             try:
                 setup_changed = setup_mgr.run_setup(setup_config)
             except Exception as exc:
-                return {
-                    "host": h,
-                    "case": case_name,
-                    "status": "SETUP_FAILED",
-                    "error": f"Setup failed: {exc}",
-                    "results": [],
-                    "collected": 0,
-                    "total": 0,
+                # The setup-exception branch fully owns cleanup. Without
+                # this marker the outer finally can submit a second action.
+                setup_cleanup_handled = True
+                result = {
+                    "host": h, "case": case_name, "status": "SETUP_FAILED",
+                    "error": f"Setup failed: {exc}", "results": [],
+                    "collected": 0, "total": 0,
                 }
+                if getattr(setup_mgr, "_recovery_outcome_uncertain", False) is True:
+                    result.update(status="ERROR", recovery_unverified=True,
+                                  error=f"FAULT_RECOVERY_UNVERIFIED after setup: {exc}")
+                    return result
+                if getattr(setup_mgr, "_setup_mutation_attempted", None) is False:
+                    return result
+                try:
+                    setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
+                except Exception as cleanup_exc:
+                    result.update(status="ERROR", recovery_unverified=True,
+                                  error=f"FAULT_RECOVERY_UNVERIFIED: {cleanup_exc}")
+                return result
 
         engine = Engine(ssh, profile)
         if effective_duration <= 0:
@@ -126,7 +138,9 @@ def run_on_target(
     finally:
         # 복원은 setup 이 바꿨을 때만, 복구는 정의되면 항상 (pim-check#75 리뷰)
         teardown_config = profile.get("teardown") or {}
-        if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
+        if (not setup_cleanup_handled
+                and ((setup_config and setup_changed)
+                     or teardown_config.get("recovery_command"))):
             try:
                 setup_mgr.run_teardown(
                     setup_config if setup_changed else {}, teardown_config)
@@ -135,6 +149,7 @@ def run_on_target(
                 # teardown did not prove recovery of the board.
                 return {
                     "host": h, "case": case_name, "status": "ERROR",
+                    "recovery_unverified": True,
                     "error": f"FAULT_RECOVERY_UNVERIFIED: {exc}",
                     "results": [{"name": "teardown_recovery", "passed": False,
                                  "reason": str(exc), "data": {}, "duration_ms": 0}],
