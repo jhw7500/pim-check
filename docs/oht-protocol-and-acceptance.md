@@ -167,3 +167,49 @@ timeout, 복구 불확실, 최종 복원 실패, 설정 hash 불일치가 있으
 산출물에는 실행 호스트·소스 identity, 실제 board/build identity, lease 시간,
 설정 전후 hash, 케이스별 결과, 복원 결과, 원시 로그, JSON/JUnit/HTML/Markdown을 포함한다.
 현재 Plan의 PASS는 위 복구 수락 범위이며 외부 OHT→최종 event 파일 E2E PASS를 뜻하지 않는다.
+
+
+## OHT COPY E2E 실행 전 Fail-closed 게이트
+
+`oht_e2e_gate.py`는 보드에 접속하거나 OHT 패킷을 보내지 않는
+**오프라인 사전판정 함수**다. 실제 시험을 허가하거나 보드 exclusive lease를
+대체하지 않는다. 사용자는 안전한 읽기 전용 증거를 확보한 뒤
+`CopyPreflight`를 구성하고 `assess_copy_preflight`의 blocker가 없는지 확인한다.
+입력이 빠지거나 bool을 숫자로 잘못 전달하면 거부한다.
+
+다음 조건은 COPY 이벤트를 전송하기 전 각각 독립적으로 증명해야 한다.
+
+- 분석한 ORD·VCM 프로토콜 소스와 **실제 설치 바이너리**의 동일성 또는
+  검증된 대응 관계. 패키지 버전 문자열이나 EVT_TEST 5바이트 응답만으로
+  소스-바이너리 일치를 추정하지 않는다.
+- 보드 공식 `scripts/with_pim_board.sh`의 **실제 유효한 exclusive lease**,
+  원본·merged runtime 설정의 포트·녹화·이벤트 정책 일치, 복구 저널 정상.
+  메타데이터의 `exclusive_lease_verified=true` 표시는 실제 잠금을 획득하지 않는다.
+- 기계 ID 정확히 **6바이트**, ORD·VCM TCP 설정 포트 유효,
+  유효한 recording_time, SRT와 COPY 활성화. `jq length`의 문자열 글자 수는
+  UTF-8 바이트 수와 같다는 보장이 없으므로 기계 ID 바이트 길이를 대신하지 않는다.
+- 녹화물 자동 삭제가 **비활성**이거나 기존 데이터 보전과 삭제 영향이
+  별도 안전 절차로 독립 검증돼야 한다. 현재 오프라인 판정은 보수적으로
+  `event_auto_remove=true`이면 `AUTO_DELETE_NOT_DISABLED`로 거부한다.
+- 보드 `df` 사용률이 ORD `disk_limit_per`에 도달하지 않아야 한다.
+  운영자가 확인한 최소 headroom(%)을 별도 지정해 `used% + headroom% < limit%`
+  조건을 요구한다. 복사·SRT·영상 예상 증가량과 별도 예약 여유도
+  **각각 양수로 명시**한 뒤 실제 가용 공간이 남아야 한다.
+  여유율이나 예산, 사용률을 알 수 없으면 거부한다.
+
+2026-10-29 UTC 03:45의 읽기 전용 실측에서
+`pim-mp=0.6.3.2+jhw.camera19`, `df /mnt/sd_cam=90%`,
+`ORD.disk_limit_per=90`, `ORD.disk_manage=true`,
+`ORD.event_auto_remove=true`, `ORD.target_copy=true`,
+`VCM.srt_enable=true`, 복구 저널 파일 0건이었다.
+이 자료는 바이너리/소스 attestation이나 실행 예산이 아니므로
+**실제 OHT COPY 요청은 전송하지 않았다**. 자세한 수치와 실행 ID는
+별도 공유 인계의 E2E preflight 근거에 보관한다.
+
+게이트를 모두 통과하더라도 E2E 성공 판정은 별도다. 같은 시험 구간의
+**원시 OHT 요청·응답**, **VCM overlay 및 실제 SRT 본문에 반영된 유일한
+시험 상태**, **종료된 영상·SRT의 파일 유형·크기·타임스탬프·내용**,
+**ORD가 선택한 세션과 복사된 이벤트 산출물의 연결**을 독립적으로 대조한다.
+기존 파일, `.part`, `.srt_done`, `.all_done`, COPY ACK만으로는 PASS를 내리지 않는다.
+정해지지 않은 패킷 형식을 임의 생성하거나, 결과가 불명인 요청을 자동
+재전송하지 않는다.
