@@ -28,6 +28,21 @@ _VIDEO_NAME = re.compile(
 _SRT_NAME = re.compile(
     r"^.+_(?P<session>[0-9]{8}_[0-9]{4})00-data\.srt$"
 )
+# ORD waitingCopy uses sprintf("_rmsMax_%0.1f", rmsMax) on event
+# destinations only. Its scoped retention parser permits up to ten integer
+# digits and an optional minus before a single fractional digit. An event's
+# video and SRT must carry exactly the same tag, or neither carry one.
+_EVENT_RMS_SUFFIX = r"(?:_rmsMax_(?P<rms>-?[0-9]{1,10}\.[0-9]))?"
+_EVENT_VIDEO_NAME = re.compile(
+    r"^.+_(?P<session>[0-9]{8}_[0-9]{4})(?P<seconds>[0-5][0-9])"
+    + _EVENT_RMS_SUFFIX
+    + r"-ch(?P<channel>[0-3])\.(?:mp4|ts|mkv)$"
+)
+_EVENT_SRT_NAME = re.compile(
+    r"^.+_(?P<session>[0-9]{8}_[0-9]{4})00"
+    + _EVENT_RMS_SUFFIX
+    + r"-data\.srt$"
+)
 _ROLES = {"recorded_video", "recorded_srt", "event_video", "event_srt"}
 
 
@@ -168,6 +183,7 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
 
     records: dict[tuple[str, int | None], FinalArtifact] = {}
     paths: set[str] = set()
+    event_rms_tags: set[str | None] = set()
     for artifact in bundle.artifacts:
         key = (artifact.role, artifact.channel)
         if key in records or artifact.path in paths:
@@ -204,13 +220,20 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
         # A file from a different session or channel must never be accepted
         # merely because its externally supplied metadata says otherwise.
         file_name = PurePosixPath(artifact.path).name
-        pattern = _VIDEO_NAME if artifact.role.endswith("_video") else _SRT_NAME
+        pattern = {
+            "recorded_video": _VIDEO_NAME,
+            "event_video": _EVENT_VIDEO_NAME,
+            "recorded_srt": _SRT_NAME,
+            "event_srt": _EVENT_SRT_NAME,
+        }[artifact.role]
         name_match = pattern.fullmatch(file_name)
         if name_match is None:
             issues.append("ARTIFACT_FILENAME_INVALID")
         else:
             if name_match.group("session") != bundle.session:
                 issues.append("ARTIFACT_FILENAME_SESSION_MISMATCH")
+            if artifact.role.startswith("event_"):
+                event_rms_tags.add(name_match.group("rms"))
             if (artifact.role.endswith("_video")
                     and (not isinstance(artifact.channel, int)
                          or isinstance(artifact.channel, bool)
@@ -236,6 +259,9 @@ def evaluate_direct_copy_evidence(bundle: DirectCopyEvidence) -> tuple[str, ...]
                     _positive_int(artifact.mtime_ns)
                     and artifact.mtime_ns <= bundle.anchor_ns):
                 issues.append("STALE_EVENT_ARTIFACT")
+
+    if len(event_rms_tags) > 1:
+        issues.append("EVENT_RMS_TAG_MISMATCH")
 
     required = {("recorded_video", ch) for ch in channels}
     required |= {("event_video", ch) for ch in channels}

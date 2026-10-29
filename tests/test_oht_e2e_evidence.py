@@ -324,6 +324,63 @@ def test_event_baseline_is_an_exact_root_scoped_unique_listing(
     assert expected in evaluate_direct_copy_evidence(bundle)
 
 
+def _event_rms_copy(bundle, *, video_tag, srt_tag):
+    """Mirror ORD waitingCopy's _rmsMax_%0.1f event destination suffix."""
+    artifacts = []
+    for artifact in bundle.artifacts:
+        name = artifact.path
+        if artifact.role == "event_video" and video_tag is not None:
+            name = name.replace("-ch0.mp4", f"_rmsMax_{video_tag}-ch0.mp4")
+        if artifact.role == "event_srt" and srt_tag is not None:
+            name = name.replace("-data.srt", f"_rmsMax_{srt_tag}-data.srt")
+        artifacts.append(replace(artifact, path=name))
+    return replace(bundle, artifacts=tuple(artifacts))
+
+
+@pytest.mark.parametrize("rms", ["12.3", "0.0", "-2.1"])
+def test_valid_ord_vibration_rms_suffix_on_event_video_and_srt(
+    valid_direct_copy, rms
+):
+    """ORD waitingCopy inserts the same one-decimal RMS tag into both copies."""
+    bundle = _event_rms_copy(valid_direct_copy, video_tag=rms, srt_tag=rms)
+    assert evaluate_direct_copy_evidence(bundle) == ()
+
+
+@pytest.mark.parametrize("video_rms,srt_rms", [
+    ("12.3", None),
+    (None, "12.3"),
+    ("12.3", "11.2"),
+])
+def test_event_copy_rms_tags_must_match_across_video_and_srt(
+    valid_direct_copy, video_rms, srt_rms
+):
+    """Mixed or conflicting tags must not pass as a single COPY event."""
+    bundle = _event_rms_copy(
+        valid_direct_copy, video_tag=video_rms, srt_tag=srt_rms
+    )
+    assert "EVENT_RMS_TAG_MISMATCH" in evaluate_direct_copy_evidence(bundle)
+
+
+@pytest.mark.parametrize("bad_tag", ["12.34", "12", "nan", "inf", "12345678901.2"])
+def test_ord_event_rms_suffix_must_match_one_decimal_source_format(
+    valid_direct_copy, bad_tag
+):
+    bundle = _event_rms_copy(
+        valid_direct_copy, video_tag=bad_tag, srt_tag=bad_tag
+    )
+    assert "ARTIFACT_FILENAME_INVALID" in evaluate_direct_copy_evidence(bundle)
+
+
+def test_rms_suffix_in_recording_source_is_not_an_ord_event_copy(
+    valid_direct_copy,
+):
+    bundle = _mutate_artifact(
+        valid_direct_copy, "recorded_video",
+        path=SOURCE_VIDEO.replace("-ch0.mp4", "_rmsMax_12.3-ch0.mp4"),
+    )
+    assert "ARTIFACT_FILENAME_INVALID" in evaluate_direct_copy_evidence(bundle)
+
+
 def test_changed_event_content_requires_a_separate_tail_merge_contract(valid_direct_copy):
     """Tail/merged recordings must not falsely pass exact direct-copy checks."""
     bundle = _mutate_artifact(valid_direct_copy, "event_video", sha256="c" * 64)
