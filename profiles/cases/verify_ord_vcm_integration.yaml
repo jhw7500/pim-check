@@ -21,14 +21,14 @@ checks:
   custom_commands:
     - name: "ORD/VCM config parsed"
       command: >-
-        jq -e '(.ORD | type == "object") and (.VCM | type == "object")'
+        jq -es 'select(length == 1) | .[0] | (.ORD | type == "object") and (.VCM | type == "object")'
         /root/shared_v/ord_vcm_conf.json >/dev/null 2>&1 && echo OK || echo INVALID_CONFIG
       expected: "OK"
       on_fail: "ORD/VCM 설정 파일 또는 JSON 구조 불량"
 
     - name: "ORD uses configured TCP endpoint"
       command: >-
-        P=$(jq -er '.ORD.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)'
+        P=$(jq -esr 'select(length == 1) | .[0].ORD.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)'
         /root/shared_v/ord_vcm_conf.json 2>/dev/null) ||
         { echo INVALID_PORT; exit 0; };
         timeout 3 bash -c ": </dev/tcp/127.0.0.1/$P" 2>/dev/null &&
@@ -38,7 +38,7 @@ checks:
 
     - name: "VCM uses configured TCP endpoint"
       command: >-
-        P=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)'
+        P=$(jq -esr 'select(length == 1) | .[0].VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)'
         /root/shared_v/ord_vcm_conf.json 2>/dev/null) ||
         { echo INVALID_PORT; exit 0; };
         timeout 3 bash -c ": </dev/tcp/127.0.0.1/$P" 2>/dev/null &&
@@ -48,20 +48,21 @@ checks:
 
     - name: "ORD event_auto_remove agrees with camera"
       command: >-
-        jq -es 'length == 2 and
-        (.[0].VHL_CAM | has("event_auto_remove")) and
-        (.[1].ORD | has("event_auto_remove")) and
-        (.[0].VHL_CAM.event_auto_remove | type == "boolean") and
-        (.[1].ORD.event_auto_remove | type == "boolean") and
-        (.[0].VHL_CAM.event_auto_remove == .[1].ORD.event_auto_remove)'
-        /root/shared_v/edgeconf_pim.json /root/shared_v/ord_vcm_conf.json
+        jq -en --slurpfile camera /root/shared_v/edgeconf_pim.json
+        --slurpfile config /root/shared_v/ord_vcm_conf.json
+        '($camera | length == 1) and ($config | length == 1) and
+        ($camera[0].VHL_CAM | has("event_auto_remove")) and
+        ($config[0].ORD | has("event_auto_remove")) and
+        ($camera[0].VHL_CAM.event_auto_remove | type == "boolean") and
+        ($config[0].ORD.event_auto_remove | type == "boolean") and
+        ($camera[0].VHL_CAM.event_auto_remove == $config[0].ORD.event_auto_remove)'
         >/dev/null 2>&1 && echo MATCH || echo MISMATCH
       expected: "MATCH"
       on_fail: "edgeconf 와 ORD event_auto_remove 불일치/누락/타입 오류"
 
     - name: "ORD disk management config valid"
       command: >-
-        jq -e '.ORD.disk_manage == true and
+        jq -es 'select(length == 1) | .[0] | .ORD.disk_manage == true and
         (.ORD.disk_limit_per | type == "number") and
         (.ORD.disk_limit_per >= 1 and .ORD.disk_limit_per <= 100)'
         /root/shared_v/ord_vcm_conf.json >/dev/null 2>&1 &&
@@ -71,7 +72,7 @@ checks:
 
     - name: "VCM recording config valid"
       command: >-
-        jq -e '(.VCM.srt_enable | type == "boolean") and
+        jq -es 'select(length == 1) | .[0] | (.VCM.srt_enable | type == "boolean") and
         (.VCM.file_time_check | type == "boolean")'
         /root/shared_v/ord_vcm_conf.json >/dev/null 2>&1 &&
         echo OK || echo INVALID_VCM_CONFIG

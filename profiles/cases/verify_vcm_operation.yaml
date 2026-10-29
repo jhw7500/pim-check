@@ -26,13 +26,13 @@ checks:
 
     - name: "VCM 설정 포트 리슨"
       command: >-
-        P=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)' /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo INVALID_PORT; exit 0; }; ss -H -tln 2>/dev/null | awk -v p=":$P" '$4 ~ (p "$") {n++} END {print n+0}'
+        P=$(jq -esr 'select(length == 1) | .[0].VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)' /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo INVALID_PORT; exit 0; }; ss -H -tln 2>/dev/null | awk -v p=":$P" '$4 ~ (p "$") {n++} END {print n+0}'
       expected_min: 1
       on_fail: "VCM 설정 포트가 리슨하지 않음 또는 잘못된 포트 설정"
 
     - name: "VCM TCP 연결 가능"
       command: >-
-        P=$(jq -er '.VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)' /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo INVALID_PORT; exit 0; }; timeout 3 bash -c ": </dev/tcp/127.0.0.1/$P" 2>/dev/null && echo OK || echo FAIL
+        P=$(jq -esr 'select(length == 1) | .[0].VCM.port_num | tonumber | select(. >= 1 and . <= 65535 and . == floor)' /root/shared_v/ord_vcm_conf.json 2>/dev/null) || { echo INVALID_PORT; exit 0; }; timeout 3 bash -c ": </dev/tcp/127.0.0.1/$P" 2>/dev/null && echo OK || echo FAIL
       expected: "OK"
       on_fail: "VCM 설정 TCP 포트 연결 불가 또는 잘못된 포트 설정"
 

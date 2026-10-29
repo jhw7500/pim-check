@@ -75,15 +75,17 @@ def test_real_shell_pid_liveness_does_not_include_literal_quote_characters(tmp_p
     assert result.stdout.strip() == ("STABLE" if running else "UNSTABLE")
 
 
-def shell(item, tmp_path, config, edge=None, listener_port=24123):
+def shell(item, tmp_path, config, edge=None, listener_port=24123, *, config_text=None, edge_text=None):
     config_file = tmp_path / "ord_vcm.json"
-    config_file.write_text(json.dumps(config))
+    config_file.write_text(json.dumps(config) if config_text is None else config_text)
     edge_file = tmp_path / "edgeconf.json"
-    edge_file.write_text(json.dumps(edge or {}))
+    edge_file.write_text(json.dumps(edge or {}) if edge_text is None else edge_text)
+    for name in ("trace", "ss-trace"):
+        (tmp_path / name).unlink(missing_ok=True)
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     ss = bindir / "ss"
-    ss.write_text(f"#!/bin/sh\nprintf '%s\\n' 'LISTEN 0 128 127.0.0.1:{listener_port} 0.0.0.0:*'\n")
+    ss.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$SS_TRACE\"\nprintf '%s\\n' 'LISTEN 0 128 127.0.0.1:{listener_port} 0.0.0.0:*'\n")
     ss.chmod(0o755)
     timeout = bindir / "timeout"
     timeout.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$TRACE\"\nexit 0\n")
@@ -91,7 +93,7 @@ def shell(item, tmp_path, config, edge=None, listener_port=24123):
     command = item["command"].replace('/root/shared_v/ord_vcm_conf.json', shlex.quote(str(config_file)))
     command = command.replace('/root/shared_v/edgeconf_pim.json', shlex.quote(str(edge_file)))
     assert '/root/shared_v/' not in command
-    env = {**os.environ, "TRACE": str(tmp_path / "trace"), "PATH": str(bindir) + os.pathsep + os.path.dirname(JQ) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")}
+    env = {**os.environ, "TRACE": str(tmp_path / "trace"), "SS_TRACE": str(tmp_path / "ss-trace"), "PATH": str(bindir) + os.pathsep + os.path.dirname(JQ) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")}
     result = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True, env=env, timeout=5)
     assert result.returncode == 0
     return result.stdout.strip()
@@ -148,3 +150,89 @@ def test_event_policy_missing_field_is_not_matching(tmp_path, case, camera, ord)
     result = shell(item, tmp_path, {"ORD": ord}, {"VHL_CAM": camera})
     assert result == "MISMATCH"
     assert not passes(item, result)
+
+
+# Each path is one JSON document; jq's stream mode must not conceal earlier data.
+VALID_CONFIG = json.dumps({
+    "ORD": {"port_num": 24123, "event_auto_remove": True,
+            "disk_manage": True, "disk_limit_per": 90},
+    "VCM": {"port_num": 24123, "srt_enable": False, "file_time_check": True},
+})
+VALID_CAMERA = '{"VHL_CAM": {"event_auto_remove": true}}'
+INVALID_CONFIG_SOURCES = [
+    pytest.param("", id="empty"),
+    pytest.param(" \n\t", id="whitespace"),
+    pytest.param('{"ORD":', id="malformed"),
+    pytest.param(VALID_CONFIG + "\n" + VALID_CONFIG, id="two-valid-documents"),
+    pytest.param('{"ORD":{"port_num":0},"VCM":{"port_num":0}}\n' + VALID_CONFIG,
+                 id="invalid-then-valid"),
+    pytest.param(VALID_CONFIG + "\n{}", id="valid-then-invalid"),
+    pytest.param(VALID_CONFIG + "\n{", id="valid-then-malformed"),
+]
+PORT_PROBES = [
+    ("verify_ord_operation", "리슨"),
+    ("verify_ord_operation", "TCP 연결"),
+    ("verify_vcm_operation", "리슨"),
+    ("verify_vcm_operation", "TCP 연결"),
+    ("verify_ord_vcm_integration", "ORD uses"),
+    ("verify_ord_vcm_integration", "VCM uses"),
+]
+CONFIG_PROBES = ["config parsed", "disk management config", "recording config valid"]
+
+
+@pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
+@pytest.mark.parametrize("case,text", PORT_PROBES)
+@pytest.mark.parametrize("config_text", INVALID_CONFIG_SOURCES)
+def test_invalid_json_source_never_probes_endpoints(tmp_path, case, text, config_text):
+    item = spec(case, text)
+    output = shell(item, tmp_path, {}, config_text=config_text)
+    assert output == "INVALID_PORT"
+    assert not passes(item, output)
+    assert not (tmp_path / "trace").exists()
+    assert not (tmp_path / "ss-trace").exists()
+
+
+@pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
+@pytest.mark.parametrize("text", CONFIG_PROBES)
+@pytest.mark.parametrize("config_text", INVALID_CONFIG_SOURCES)
+def test_integration_config_requires_one_json_document(tmp_path, text, config_text):
+    item = spec("verify_ord_vcm_integration", text)
+    output = shell(item, tmp_path, {}, config_text=config_text)
+    assert output != "OK"
+    assert not passes(item, output)
+
+
+@pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
+@pytest.mark.parametrize("case,text", PORT_PROBES)
+@pytest.mark.parametrize("port", [24123, "24123"])
+def test_single_json_document_keeps_supported_ports(tmp_path, case, text, port):
+    config = json.loads(VALID_CONFIG)
+    config["ORD"]["port_num"] = config["VCM"]["port_num"] = port
+    item = spec(case, text)
+    output = shell(item, tmp_path, {}, config_text=" \n" + json.dumps(config) + "\n\t")
+    assert output == ("1" if "리슨" in text else "OK")
+    assert passes(item, output)
+
+
+@pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
+@pytest.mark.parametrize("text", CONFIG_PROBES)
+def test_single_json_document_keeps_valid_integration_config(tmp_path, text):
+    item = spec("verify_ord_vcm_integration", text)
+    output = shell(item, tmp_path, {}, config_text=" \n" + VALID_CONFIG + "\n\t")
+    assert output == "OK"
+    assert passes(item, output)
+
+
+@pytest.mark.skipif(JQ is None, reason="actual jq required for shell configuration validation")
+@pytest.mark.parametrize("case", ["verify_ord_operation", "verify_ord_vcm_integration"])
+@pytest.mark.parametrize("edge_text,config_text", [
+    ("", VALID_CAMERA + "\n" + VALID_CONFIG),
+    (VALID_CAMERA + "\n" + VALID_CONFIG, ""),
+    (VALID_CAMERA, VALID_CONFIG + "\n" + VALID_CONFIG),
+    (VALID_CAMERA + "\n" + VALID_CAMERA, VALID_CONFIG),
+])
+def test_event_policy_preserves_each_file_identity(tmp_path, case, edge_text, config_text):
+    item = spec(case, "event_auto_remove")
+    output = shell(item, tmp_path, {}, config_text=config_text, edge_text=edge_text)
+    assert output == "MISMATCH"
+    assert not passes(item, output)
