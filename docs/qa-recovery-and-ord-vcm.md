@@ -71,6 +71,34 @@ ERROR로 종료한다. 설정 적용·장애 주입을 시도하기 전에 거�
 카메라 복구 요청의 결과가 불확실한 상태에서는 추가 정리나 reset 요청을
 제출하지 않고 FAULT_RECOVERY_UNVERIFIED를 알린다.
 
+프로파일 로딩, SSH 생성·접속, preflight, 설정 변경 전 read-back 예고와
+SetupManager 생성에서 예외가 나면 SSE는 오류와 `done(ERROR)`를 한 번씩
+내보내고 종료한다. 비정상 종료를 방치해 keep-alive ping이 반복되지 않게 한다.
+설정 실패 후 정리 또는 최종 teardown 검증이 실패하면 `done`에도
+`recovery_unverified: true`가 포함된다. 히스토리나 대시보드 저장 오류는
+`done(ERROR)`로 끝내며 이미 관측된 복구 불확실 상태를 숨기지 않는다.
+저장 실패가 발생했다면 보고서 파일이 완전하게 기록되었다고 추정하지 않는다.
+
+### CLI·웹·병렬·스트리밍 공통 setup 실패 경계
+
+`run_setup`은 실제 `apply_changes` 또는 fault 주입 명령 **호출 직전**부터
+`_setup_mutation_attempted`를 참으로 기록한다. 이 표식은 명령의 성공 여부나
+최종 복구 성공을 뜻하지 않는다. 네 실행 경로는 다음 우선순위를 지킨다.
+
+1. 카메라 복구 결과 불명(`_recovery_outcome_uncertain`)이면 새 복원·reset을
+   제출하지 않고 복구 미확인으로 종료한다.
+2. 변경·주입 시도가 명시적으로 없었다면(`_setup_mutation_attempted is False`)
+   미변경 타겟의 오래된 백업을 복원하거나 재부팅하지 않는다.
+3. 변경·주입을 시도했거나 시도 여부가 불명확하면 setup 설정과 teardown 설정을
+   함께 넘겨 정리를 한 번 시도한다. 복구 명령이 없어도 변경한 설정을 복원한다.
+   정리 중 오류가 나면 복구 미확인으로 종료한다.
+
+CLI는 복구 미확인에 종료 코드 4를 사용하고, 웹·스트리밍은
+`recovery_unverified: true`를 표면화한다. 병렬 실행도 복구 미확인에
+`status: ERROR`와 `recovery_unverified: true`를 기록한다.
+설정 실패 후 정리를 완료했더라도 실패한 케이스를 PASS로 바꾸지 않는다.
+병렬 실행의 예외 경로는 `finally`에서 정리를 다시 실행하지 않는다.
+
 ## 프로세스 재시작 스모크
 
 process_restart_smoke는 setup에서 장애를 한 번 주입하고,

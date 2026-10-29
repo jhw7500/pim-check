@@ -54,51 +54,63 @@ class StreamRunner:
             "message": f"Starting {self.case_name or 'healthcheck'} on {self.host}",
         })
 
-        profile = load_profile(self.profiles_dir, case=self.case_name)
-        profile["target"]["host"] = self.host
-        profile["target"]["user"] = self.user
-        profile["target"]["password"] = self.password
+        # Failures before any setup mutation must not leave an SSE reader
+        # waiting forever for the terminal "done" event.
+        try:
+            profile = load_profile(self.profiles_dir, case=self.case_name)
+            profile["target"]["host"] = self.host
+            profile["target"]["user"] = self.user
+            profile["target"]["password"] = self.password
 
-        ssh = SshClient(self.host, self.user, self.password)
+            ssh = SshClient(self.host, self.user, self.password)
 
-        # 연결 확인
-        self._emit("phase", {"phase": "connect", "message": f"Connecting to {self.host}..."})
-        if not ssh.check_connectivity():
-            self._emit("error", {"message": f"Cannot connect to {self.host}"})
+            # 연결 확인
+            self._emit("phase", {"phase": "connect", "message": f"Connecting to {self.host}..."})
+            if not ssh.check_connectivity():
+                self._emit("error", {"message": f"Cannot connect to {self.host}"})
+                self._emit("done", {"status": "ERROR"})
+                return
+
+            self._emit("phase", {"phase": "connect", "message": "Connected", "ok": True})
+
+            # Preflight
+            missing = ssh.preflight_check()
+            if missing:
+                self._emit("warning", {"message": f"Missing tools: {', '.join(missing)}"})
+        except Exception as exc:
+            self._emit("error", {"message": f"Preflight failed: {exc}"})
             self._emit("done", {"status": "ERROR"})
             return
-
-        self._emit("phase", {"phase": "connect", "message": "Connected", "ok": True})
-
-        # Preflight
-        missing = ssh.preflight_check()
-        if missing:
-            self._emit("warning", {"message": f"Missing tools: {', '.join(missing)}"})
 
         # Setup — 실행 결정은 다른 4개 경로(cli/web/parallel/plan)처럼 run_setup 에
         # 위임한다 (#77). run_setup 이 inject-only/ord-only 모드와 "이미 일치" skip 을
         # 정식 지원하므로, edgeconf 변경 유무는 phase 메시지 분기에만 쓴다 —
         # 여기서 케이스를 거르면 inject-only fault 케이스가 주입 없이 PASS 한다.
-        setup_config = profile.get("setup")
-        setup_mgr = SetupManager(ssh)
+        try:
+            setup_config = profile.get("setup")
+            setup_mgr = SetupManager(ssh)
+        except Exception as exc:
+            self._emit("error", {"message": f"Setup initialization failed: {exc}"})
+            self._emit("done", {"status": "ERROR"})
+            return
         setup_changed = False
         if setup_config:
-            changes = setup_config.get("edgeconf_changes", {})
-            ord_changes = setup_config.get("ord_vcm_changes", {})
-            if changes or ord_changes:
-                self._emit("phase", {"phase": "setup", "message": "Checking config..."})
-                # skip 예고는 run_setup 과 같은 기준(edge+ord 모두 일치)으로 —
-                # edge 만 보면 ord 가 다른 결합 프로파일에서 "skip" 직후 재부팅한다.
-                edge_match = (not changes) or setup_mgr.check_current(changes)
-                ord_match = (not ord_changes) or setup_mgr.check_current(ord_changes, ORD_VCM_PATH)
-                if edge_match and ord_match:
-                    self._emit("phase", {"phase": "setup", "message": "Config matches, skip reboot", "ok": True})
-                else:
-                    total = len(changes) + len(ord_changes)
-                    self._emit("phase", {"phase": "setup", "message": f"Applying {total} changes + reboot..."})
-            else:
-                self._emit("phase", {"phase": "setup", "message": "No config changes — applying setup (inject)..."})
             try:
+                changes = setup_config.get("edgeconf_changes", {})
+                ord_changes = setup_config.get("ord_vcm_changes", {})
+                if changes or ord_changes:
+                    self._emit("phase", {"phase": "setup", "message": "Checking config..."})
+                    # skip 예고는 run_setup 과 같은 기준(edge+ord 모두 일치)으로 —
+                    # edge 만 보면 ord 가 다른 결합 프로파일에서 "skip" 직후 재부팅한다.
+                    edge_match = (not changes) or setup_mgr.check_current(changes)
+                    ord_match = (not ord_changes) or setup_mgr.check_current(ord_changes, ORD_VCM_PATH)
+                    if edge_match and ord_match:
+                        self._emit("phase", {"phase": "setup", "message": "Config matches, skip reboot", "ok": True})
+                    else:
+                        total = len(changes) + len(ord_changes)
+                        self._emit("phase", {"phase": "setup", "message": f"Applying {total} changes + reboot..."})
+                else:
+                    self._emit("phase", {"phase": "setup", "message": "No config changes — applying setup (inject)..."})
                 setup_changed = setup_mgr.run_setup(setup_config)
                 if setup_changed:
                     self._emit("phase", {"phase": "setup", "message": "Setup complete", "ok": True})
@@ -119,10 +131,16 @@ class StreamRunner:
                 try:
                     setup_mgr.run_teardown(setup_config, profile.get("teardown") or {})
                     self._emit("phase", {"phase": "teardown", "message": "Teardown complete", "ok": True})
-                except Exception:
-                    # teardown 은 best-effort — 어떤 예외도 done 전달을 막으면 안 된다
-                    # (막으면 이 블록이 고치는 매달림을 복구 경로에서 재현한다).
+                except Exception as cleanup_exc:
+                    # A failed cleanup is not merely a warning: the target
+                    # cannot be considered safe for another test.
+                    reason = f"FAULT_RECOVERY_UNVERIFIED: {cleanup_exc}"
                     self._emit("warning", {"message": "Teardown failed"})
+                    self._emit("error", {"message": reason})
+                    self._emit("done", {"status": "ERROR",
+                                        "recovery_unverified": True,
+                                        "message": reason})
+                    return
                 self._emit("done", {"status": "ERROR"})
                 return
 
@@ -191,6 +209,7 @@ class StreamRunner:
         # 히스토리는 teardown 완료 후 저장한다. 복구 실패를 PASS로 기록하지 않는다.
         # Teardown — 복원은 setup 이 바꿨을 때만, 복구는 정의되면 항상 (pim-check#75 리뷰)
         teardown_config = profile.get("teardown") or {}
+        recovery_unverified = False
         if (setup_config and setup_changed) or teardown_config.get("recovery_command"):
             self._emit("phase", {"phase": "teardown", "message": "Restoring config..."})
             try:
@@ -200,6 +219,7 @@ class StreamRunner:
             except Exception as exc:
                 # 복구 실패 상태에서 PASS를 내보내면 다음 시험이 오염된 보드를
                 # 정상으로 오인한다. 스트림은 닫되 결과와 히스토리는 ERROR로 확정.
+                recovery_unverified = True
                 reason = f"FAULT_RECOVERY_UNVERIFIED: {exc}"
                 self._emit("warning", {"message": "Teardown failed"})
                 self._emit("error", {"message": reason})
@@ -208,16 +228,29 @@ class StreamRunner:
                 total += 1
                 status = "ERROR"
 
+        report_failure = None
         if self.reports_dir:
-            append_result(results, self.case_name, self.host, 1, 1, self.reports_dir)
-            save_dashboard(self.reports_dir)
+            try:
+                append_result(results, self.case_name, self.host, 1, 1, self.reports_dir)
+                save_dashboard(self.reports_dir)
+            except Exception as exc:
+                # Persistence is not part of the hardware recovery proof.
+                # Always close the SSE stream; never hide a teardown failure.
+                report_failure = f"Report persistence failed: {exc}"
+                self._emit("error", {"message": report_failure})
+                status = "ERROR"
 
-        self._emit("done", {
+        done = {
             "status": status,
             "passed": passed_count,
             "total": total,
             "message": f"{status}: {passed_count}/{total} checks passed",
-        })
+        }
+        if recovery_unverified:
+            done["recovery_unverified"] = True
+        if report_failure:
+            done["message"] += f"; {report_failure}"
+        self._emit("done", done)
 
 
 def format_sse(event_type: str, data: dict) -> str:
