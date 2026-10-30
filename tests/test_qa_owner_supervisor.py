@@ -4,10 +4,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import select
 import stat
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -155,42 +155,49 @@ def test_source_pin_rejects_invalid_sha(tmp_path):
 
 
 def test_real_os_sigkill_releases_owner_lock_for_restart(tmp_path):
-    """Independent Python processes reproduce daemon loss/restart; no board."""
+    """Real child SIGKILL must release the exclusive lock for restart."""
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     script = (
-        "import time;from pathlib import Path;"
-        "from scripts.qa_owner_supervisor import owner_lock;"
-        f"with owner_lock(Path({str(state)!r})): time.sleep(100)"
+        "import os, time\n"
+        "from pathlib import Path\n"
+        "from scripts.qa_owner_supervisor import owner_lock\n"
+        f"with owner_lock(Path({str(state)!r})):\n"
+        "    os.write(1, b'LOCKED\\n')\n"
+        "    time.sleep(100)\n"
     )
-    # One-line with statement cannot follow a semicolon; use a newline.
-    script = script.replace(";with owner_lock", "\nwith owner_lock")
-    child = subprocess.Popen([sys.executable, "-B", "-c", script],
-                             cwd=Path(__file__).resolve().parents[1],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    child = subprocess.Popen(
+        [sys.executable, "-B", "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
-        deadline = time.monotonic() + 5
-        locked = False
-        while time.monotonic() < deadline:
-            if child.poll() is not None:
-                raise AssertionError("child terminated before acquiring lock")
-            try:
-                with owner_lock(state):
-                    pass
-            except OwnerServiceError as exc:
-                if "already running" in str(exc):
-                    locked = True
-                    break
-            time.sleep(0.02)
-        assert locked
+        assert child.stdout is not None
+        ready, _, _ = select.select([child.stdout], [], [], 10)
+        assert ready, f"owner lock readiness timeout; child={child.poll()}"
+        response = child.stdout.readline()
+        if response != b"LOCKED\n":
+            details = (
+                child.stderr.read().decode(errors="replace")
+                if child.stderr and child.poll() is not None else ""
+            )
+            raise AssertionError(
+                f"child failed before owner lock; rc={child.poll()}: {details}"
+            )
+        with pytest.raises(OwnerServiceError, match="already running"):
+            with owner_lock(state):
+                pass
     finally:
-        child.kill()
+        if child.poll() is None:
+            child.kill()
         child.wait(timeout=5)
+        if child.stdout:
+            child.stdout.close()
         if child.stderr:
             child.stderr.close()
     with owner_lock(state):
         pass
-
 
 def test_systemd_unit_stays_passive():
     unit = (Path(__file__).resolve().parents[1] /
