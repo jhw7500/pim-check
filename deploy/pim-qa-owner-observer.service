@@ -1,0 +1,29 @@
+[Unit]
+Description=PIM QA owner recovery observer (board mutation DISABLED)
+Documentation=https://github.com/jhw7500/pim-check
+After=local-fs.target
+
+[Service]
+Type=notify
+User=jhw
+Group=jhw
+WorkingDirectory=/home/jhw/ai/opencode/projects/pim-check
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/pim-check/owner-observer.env
+StateDirectory=pim-qa-owner
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/python3 -m scripts.qa_owner_supervisor --state-dir /var/lib/pim-qa-owner --source-root /home/jhw/ai/opencode/projects/pim-check --source-sha ${PIM_QA_SOURCE_SHA} --interval 5
+WatchdogSec=30s
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateNetwork=yes
+ReadWritePaths=/var/lib/pim-qa-owner
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
