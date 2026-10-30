@@ -7,6 +7,7 @@ import math
 import re
 
 from checks.base_check import BaseCheck
+from checks.kernel_evidence import parse_kernel_evidence, format_kernel_evidence
 
 # 타겟에서 실행 금지 패턴 (root로 실행되므로 주의)
 _DANGEROUS_PATTERNS = ["rm -rf", "mkfs", "dd if=", "fdisk", "> /dev/sd", "> /dev/mmc"]
@@ -108,6 +109,10 @@ class CustomCommandCheck(BaseCheck):
                 "on_fail": cmd_spec.get("on_fail", f"{name} failed"),
             })
 
+        # Diagnostics are opt-in and cannot replace the expected-zero verdict.
+        for spec, result in zip(commands, results):
+            if spec.get("evidence_format") == "kernel_log_v1":
+                result["kernel_evidence"] = parse_kernel_evidence(result["output"])
         return {"results": results, "skipped": False}
 
     def validate(self, data: dict, config: dict) -> tuple[bool, str]:
@@ -121,7 +126,9 @@ class CustomCommandCheck(BaseCheck):
             # expected: 정확 일치
             if r["expected"] is not None:
                 if output is None or output.strip() != str(r["expected"]).strip():
-                    issues.append(f'{r["name"]}: {r["on_fail"]} (got: {output})')
+                    evidence = r.get("kernel_evidence")
+                    shown = format_kernel_evidence(evidence) if evidence and output is not None else output
+                    issues.append(f'{r["name"]}: {r["on_fail"]} (got: {shown})')
                 continue
 
             # Numeric upper/lower bounds must reject invalid observations.
@@ -221,4 +228,6 @@ def item_results(data: dict) -> list[dict]:
             "actual": actual,
             "passed": passed,
         })
+        if "kernel_evidence" in r:
+            out[-1]["kernel_evidence"] = r["kernel_evidence"]
     return out
