@@ -28,6 +28,8 @@ def verified():
         recording_writer_lifecycle_verified=True,
         fd_visibility_verified=True,
         automatic_rotation_and_prune_observed=True,
+        automatic_root_rotation_observed=True,
+        automatic_recycle_prune_observed=True,
         storage_mount_stable_verified=True,
         deletion_scope_authorized_for_this_campaign=True,
         full_campaign_restore_runner_verified=True,
@@ -161,3 +163,169 @@ def test_closed_file_evidence_cannot_be_segment_count_only():
     assert result["root_rotations_required"] == 394
     assert result["decision"] == "BLOCK"
     assert "ROOT_ROTATION_CAPACITY_INSUFFICIENT" in result["reason_codes"]
+
+
+# Evidence from the 2026-10-30 passive ORD run is a *fixture*, not permission
+# to rotate/delete a file or run an active 45-minute campaign.
+def actual_ord_samples():
+    from qa_managed_retention_policy import PassiveRetentionSample
+
+    return [
+        PassiveRetentionSample("2026-10-30T02:20:40Z", 1000, 500, 500, 282,
+                               204057820, 207878052, 24481972),
+        PassiveRetentionSample("2026-10-30T02:21:26Z", 1002, 501, 501, 282,
+                               204057820, 207885652, 24474372),
+        PassiveRetentionSample("2026-10-30T02:22:13Z", 884, 442, 442, 283,
+                               204508748, 207893252, 24466772),
+    ]
+
+
+def latest_actual_snapshot():
+    return replace(measured(), used_kib=207893252, avail_kib=24466772,
+                   root_files=884, recycle_kib=204508748)
+
+
+def test_actual_board_samples_corroborate_rotation_but_not_prune():
+    from qa_managed_retention_policy import assess_passive_retention
+
+    result = assess_passive_retention(actual_ord_samples(), file_limit=1000,
+                                      disk_limit_per=90)
+    assert result["root_rotation_corroborated"] is True
+    assert result["rotation_root_files"] == 118
+    assert result["rotation_mp4_files"] == 59
+    assert result["rotation_srt_files"] == 59
+    assert result["recycle_growth_kib"] == 450928
+    assert result["recycle_prune_corroborated"] is False
+    assert result["effective_used_percent"] == pytest.approx(89.47, abs=0.01)
+    assert result["execution_authorized"] is False
+    assert result["installed_source_attested"] is False
+    assert result["writer_lifecycle_attested"] is False
+
+
+def test_root_drop_without_recycle_gain_cannot_correlate_a_rotation():
+    from qa_managed_retention_policy import assess_passive_retention
+    sample = actual_ord_samples()
+    after = replace(sample[2], recycle_kib=sample[1].recycle_kib,
+                    recycle_dirs=sample[1].recycle_dirs)
+    result = assess_passive_retention([sample[1], after], file_limit=1000,
+                                      disk_limit_per=90)
+    assert result["root_rotation_corroborated"] is False
+
+
+def test_wide_gap_does_not_attribute_an_old_rotation():
+    from qa_managed_retention_policy import assess_passive_retention
+    sample = actual_ord_samples()
+    after = replace(sample[2], utc="2026-10-30T03:22:13Z")
+    result = assess_passive_retention([sample[1], after], file_limit=1000,
+                                      disk_limit_per=90)
+    assert result["root_rotation_corroborated"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("utc", "not-a-timestamp"), ("root_files", -1),
+    ("mp4_files", True), ("used_kib", -100), ("recycle_dirs", 1.5),
+])
+def test_bad_passive_observation_fails_closed(field, value):
+    from qa_managed_retention_policy import assess_passive_retention
+    sample = actual_ord_samples()
+    with pytest.raises(ValueError):
+        assess_passive_retention([sample[0], replace(sample[1], **{field: value})],
+                                 file_limit=1000, disk_limit_per=90)
+
+
+def test_reversed_timestamps_fail_closed_not_corroborated():
+    from qa_managed_retention_policy import assess_passive_retention
+    sample = actual_ord_samples()
+    with pytest.raises(ValueError):
+        assess_passive_retention([sample[2], sample[1]], file_limit=1000,
+                                 disk_limit_per=90)
+
+
+def test_reclaim_signal_is_not_authenticated_prune_or_delete_authority():
+    from qa_managed_retention_policy import assess_passive_retention
+    sample = actual_ord_samples()
+    later = replace(sample[2], utc="2026-10-30T02:22:55Z",
+                    recycle_kib=sample[2].recycle_kib - 1000,
+                    used_kib=sample[2].used_kib - 1000,
+                    avail_kib=sample[2].avail_kib + 1000)
+    result = assess_passive_retention([sample[2], later], file_limit=1000,
+                                      disk_limit_per=90)
+    assert result["recycle_prune_corroborated"] is True
+    assert result["prune_causality_verified"] is False
+    assert result["execution_authorized"] is False
+
+
+def test_real_board_rotation_proof_alone_does_not_authorize_reclaim():
+    from qa_managed_retention_policy import assess_managed_retention
+    proof = replace(verified(), automatic_root_rotation_observed=True,
+                    automatic_recycle_prune_observed=None)
+    result = assess_managed_retention(latest_actual_snapshot(), proof)
+    assert result["current_used_percent"] == pytest.approx(89.47, abs=0.01)
+    assert result["root_rotations_required"] == 344
+    assert result["recycle_reclaim_kib_required"] > 0
+    assert result["root_rotation_required"] is True
+    assert result["recycle_prune_required"] is True
+    assert "ORD_PRUNE_UNVERIFIED" in result["reason_codes"]
+    assert "ORD_ROTATION_UNVERIFIED" not in result["reason_codes"]
+    assert result["decision"] == "BLOCK"
+    assert result["execution_authorized"] is False
+
+
+def test_legacy_combined_cleanup_flag_cannot_verify_both_stages():
+    from qa_managed_retention_policy import assess_managed_retention
+    proof = replace(verified(), automatic_root_rotation_observed=None,
+                    automatic_recycle_prune_observed=None,
+                    automatic_rotation_and_prune_observed=True)
+    result = assess_managed_retention(measured(), proof)
+    assert "ORD_ROTATION_UNVERIFIED" in result["reason_codes"]
+    assert "ORD_PRUNE_UNVERIFIED" in result["reason_codes"]
+    assert result["decision"] == "BLOCK"
+
+
+def test_no_cleanup_needed_does_not_require_unrelated_prune_proof():
+    from qa_managed_retention_policy import assess_managed_retention
+    low_usage = replace(measured(), used_kib=150_000_000,
+                        avail_kib=80_000_000, root_files=200)
+    proof = replace(verified(), automatic_root_rotation_observed=None,
+                    automatic_recycle_prune_observed=None,
+                    eligible_closed_root_files=0,
+                    eligible_recycle_reclaim_kib=0)
+    result = assess_managed_retention(low_usage, proof)
+    assert result["root_rotations_required"] == 0
+    assert result["recycle_reclaim_kib_required"] == 0
+    assert result["root_rotation_required"] is False
+    assert result["recycle_prune_required"] is False
+    assert "ORD_ROTATION_UNVERIFIED" not in result["reason_codes"]
+    assert "ORD_PRUNE_UNVERIFIED" not in result["reason_codes"]
+    assert result["decision"] == "REVIEW_REQUIRED"
+    assert result["execution_authorized"] is False
+
+
+def test_passive_inference_rejects_mount_capacity_change():
+    from qa_managed_retention_policy import assess_passive_retention
+    rows = actual_ord_samples()
+    # Different total capacity implies a changed filesystem/mount or source.
+    changed = replace(rows[-1], avail_kib=rows[-1].avail_kib + 800_000)
+    with pytest.raises(ValueError, match="capacity"):
+        assess_passive_retention(rows[:-1] + [changed],
+                                 file_limit=1000, disk_limit_per=90)
+
+
+def test_passive_rotation_counts_are_net_changes_not_exact_move_counts():
+    from qa_managed_retention_policy import assess_passive_retention
+    result = assess_passive_retention(actual_ord_samples(),
+                                      file_limit=1000, disk_limit_per=90)
+    assert result["net_root_file_drop"] == 118
+    assert result["net_mp4_file_drop"] == 59
+    assert result["net_srt_file_drop"] == 59
+    assert result["exact_move_count_verified"] is False
+    assert result["four_channel_throughput_attested"] is False
+
+
+def test_unmatched_other_file_decreases_cannot_prove_mp4_srt_rotation():
+    from qa_managed_retention_policy import assess_passive_retention
+    rows = actual_ord_samples()
+    changed = replace(rows[-1], root_files=rows[-1].root_files + 1)
+    result = assess_passive_retention(rows[:-1] + [changed],
+                                      file_limit=1000, disk_limit_per=90)
+    assert result["root_rotation_corroborated"] is False

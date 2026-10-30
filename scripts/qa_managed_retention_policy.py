@@ -23,7 +23,10 @@ class ManagedRetentionEvidence:
     retention_cleanup_scope_verified: bool | None = None
     recording_writer_lifecycle_verified: bool | None = None
     fd_visibility_verified: bool | None = None
+    # Legacy combined statement cannot attest independent rotation and prune.
     automatic_rotation_and_prune_observed: bool | None = None
+    automatic_root_rotation_observed: bool | None = None
+    automatic_recycle_prune_observed: bool | None = None
     storage_mount_stable_verified: bool | None = None
     deletion_scope_authorized_for_this_campaign: bool | None = None
     full_campaign_restore_runner_verified: bool | None = None
@@ -85,7 +88,6 @@ def assess_managed_retention(
         ("retention_cleanup_scope_verified", "CLEANUP_SCOPE_UNVERIFIED"),
         ("recording_writer_lifecycle_verified", "WRITER_LIFECYCLE_UNVERIFIED"),
         ("fd_visibility_verified", "FD_VISIBILITY_UNVERIFIED"),
-        ("automatic_rotation_and_prune_observed", "ORD_CLEANUP_BEHAVIOR_UNVERIFIED"),
         ("storage_mount_stable_verified", "SD_MOUNT_UNVERIFIED"),
         ("deletion_scope_authorized_for_this_campaign", "CLEANUP_NOT_AUTHORIZED"),
         ("full_campaign_restore_runner_verified", "DURABLE_RESTORE_RUNNER_UNVERIFIED"),
@@ -114,6 +116,13 @@ def assess_managed_retention(
         0, snapshot.used_kib + projected + minimum_reserve_kib
         - (capacity * snapshot.disk_limit_per // 100)
     )
+
+    # ORD's file-count threshold and its disk-use prune threshold are
+    # independent. Check each stage only when the projected campaign needs it.
+    if required_rotations and proof.automatic_root_rotation_observed is not True:
+        blockers.append("ORD_ROTATION_UNVERIFIED")
+    if required_recycle_kib and proof.automatic_recycle_prune_observed is not True:
+        blockers.append("ORD_PRUNE_UNVERIFIED")
 
     eligible_root = proof.eligible_closed_root_files
     if not _int(eligible_root) or eligible_root > snapshot.root_files:
@@ -151,6 +160,120 @@ def assess_managed_retention(
         "projected_file_count": projected_files,
         "root_rotations_required": required_rotations,
         "recycle_reclaim_kib_required": required_recycle_kib,
+        "root_rotation_required": required_rotations > 0,
+        "recycle_prune_required": required_recycle_kib > 0,
         "root_rotations_possible_by_period": possible_rotations,
+        "evidence_only": True,
+    }
+
+
+@dataclass(frozen=True)
+class PassiveRetentionSample:
+    """One passive counter observation; not a verified ORD cleanup transaction."""
+
+    utc: str
+    root_files: int
+    mp4_files: int
+    srt_files: int
+    recycle_dirs: int
+    recycle_kib: int
+    used_kib: int
+    avail_kib: int
+
+
+def assess_passive_retention(
+    samples: list[PassiveRetentionSample] | tuple[PassiveRetentionSample, ...],
+    *,
+    file_limit: int,
+    disk_limit_per: int,
+) -> dict[str, object]:
+    """Correlate bounded read-only SD counters; never approve a destructive act.
+
+    A decrease of MP4/SRT counts paired with growing recycle usage corroborates
+    rotation, not the safety of an individual move. A recycle shrink paired
+    with increasing free space suggests reclaim, not verified prune causality.
+    Only trusted, independent source/writer/lease evidence can authorize QA.
+    """
+    from datetime import datetime, timezone
+
+    if not isinstance(samples, (list, tuple)) or not 2 <= len(samples) <= 120:
+        raise ValueError("invalid passive observation count")
+    if not _int(file_limit, 1) or not _int(disk_limit_per, 1) or disk_limit_per > 100:
+        raise ValueError("invalid installed retention policy")
+
+    timestamps = []
+    for row in samples:
+        if type(row) is not PassiveRetentionSample or not isinstance(row.utc, str):
+            raise ValueError("invalid passive observation type")
+        try:
+            ts = datetime.fromisoformat(row.utc.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("invalid passive timestamp") from None
+        if ts.tzinfo is None:
+            raise ValueError("timezone missing from passive timestamp")
+        timestamps.append(ts.astimezone(timezone.utc))
+        for name in ("root_files", "mp4_files", "srt_files", "recycle_dirs",
+                     "recycle_kib", "used_kib", "avail_kib"):
+            if not _int(getattr(row, name)):
+                raise ValueError("invalid passive count: " + name)
+        if row.root_files < row.mp4_files + row.srt_files or row.used_kib + row.avail_kib <= 0:
+            raise ValueError("inconsistent passive observation")
+
+    # df used+avail is the effective ORD denominator on the same SD mount.
+    # A changed denominator may be a remount/other source; no inference is safe.
+    totals = [row.used_kib + row.avail_kib for row in samples]
+    if any(total != totals[0] for total in totals[1:]):
+        raise ValueError("passive filesystem capacity changed")
+
+    if any(a >= b for a, b in zip(timestamps, timestamps[1:])):
+        raise ValueError("out-of-order passive observation")
+
+    rotation = None
+    prune_signal = False
+    for i in range(len(samples) - 1):
+        before, after = samples[i], samples[i + 1]
+        elapsed = (timestamps[i + 1] - timestamps[i]).total_seconds()
+        # Large sampling gaps cannot attribute the observed counter change to
+        # one automatic cleanup pass.
+        if elapsed > 120:
+            continue
+        moved_mp4 = before.mp4_files - after.mp4_files
+        moved_srt = before.srt_files - after.srt_files
+        moved_root = before.root_files - after.root_files
+        if (before.root_files > file_limit and moved_mp4 > 0
+                and moved_mp4 == moved_srt
+                and moved_root == moved_mp4 + moved_srt
+                and after.recycle_kib > before.recycle_kib
+                and after.recycle_dirs > before.recycle_dirs):
+            candidate = (moved_root, moved_mp4, moved_srt,
+                         after.recycle_kib - before.recycle_kib)
+            if rotation is None or candidate[0] > rotation[0]:
+                rotation = candidate
+        if (before.recycle_kib > after.recycle_kib
+                and after.avail_kib > before.avail_kib
+                and after.used_kib < before.used_kib):
+            prune_signal = True
+
+    current = samples[-1]
+    return {
+        "root_rotation_corroborated": rotation is not None,
+        "rotation_root_files": rotation[0] if rotation else 0,
+        "rotation_mp4_files": rotation[1] if rotation else 0,
+        "rotation_srt_files": rotation[2] if rotation else 0,
+        "recycle_growth_kib": rotation[3] if rotation else 0,
+        # Net count changes are NOT the exact number of move(2) operations;
+        # new recordings may have been created during the sample interval.
+        "net_root_file_drop": rotation[0] if rotation else 0,
+        "net_mp4_file_drop": rotation[1] if rotation else 0,
+        "net_srt_file_drop": rotation[2] if rotation else 0,
+        "exact_move_count_verified": False,
+        "four_channel_throughput_attested": False,
+        "recycle_prune_corroborated": prune_signal,
+        "prune_causality_verified": False,
+        "effective_used_percent": round(
+            100 * current.used_kib / (current.used_kib + current.avail_kib), 2),
+        "installed_source_attested": False,
+        "writer_lifecycle_attested": False,
+        "execution_authorized": False,
         "evidence_only": True,
     }
