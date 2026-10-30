@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import signal
 import subprocess
 import sys
@@ -264,7 +265,7 @@ def test_restore_refuses_tampered_simulated_current_without_claiming_success(
         current.symlink_to(external)
     elif tamper == "hardlink":
         current.unlink()
-        current.hardlink_to(external)
+        os.link(external, current)
     elif tamper == "missing":
         current.unlink()
     else:
