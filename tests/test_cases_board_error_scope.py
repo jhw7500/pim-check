@@ -68,7 +68,7 @@ def test_boot_fallback_annotates_real_failure_and_does_not_suppress_it():
     assert output.startswith("COUNT=4 SCOPE=BOOT_FALLBACK START=" + BOOT_TIME)
     assert "FIRST=" + ERRORS[0][:180] in output
     assert "LAST=" + ERRORS[-1][:180] in output
-    assert len(output) < 600
+    assert len(output) < 2000
 
 
 def test_current_boot_session_anchor_scopes_only_after_anchor():
@@ -111,7 +111,8 @@ def test_all_errors_counted_but_sample_is_bounded():
     r = _run("\n".join([huge] * 100) + "\n")
     assert r.returncode == 0
     assert r.stdout.startswith("COUNT=100 SCOPE=BOOT_FALLBACK")
-    assert len(r.stdout) < 600
+    assert len(r.stdout) < 32 * (512 + 8) + 1024
+    assert "SAMPLES=32 OMITTED=68 CLIPPED=32" in r.stdout
 
 
 def test_invalid_source_and_real_errors_cannot_pass_expected_zero():

@@ -22,7 +22,7 @@
 `profiles/cases/board_error_detect.yaml`의 원본 대상 및 제외 필터는 보존하며 판단을 유지한다:
 
 - 현재 boot_id에 맞는 세션 앵커만 `SCOPE=SESSION`; 없거나 다른 boot_id이면 `SCOPE=BOOT_FALLBACK`, 시작은 `uptime -s`.
-- 결과가 정상 0줄일 때만 정확히 `0`을 반환. 1줄 이상이면 `COUNT=N SCOPE=... START=... FIRST=... LAST=...`을 반환해 **기존 expected: "0"**으로 FAIL 처리한다. FIRST/LAST 원문은 각각 최대 180자; 전체 커널 로그는 출력하지 않는다.
+- 결과가 정상 0줄일 때만 정확히 `0`을 반환. 1줄 이상이면 `COUNT=N SCOPE=... START=... BOOT_ID=... FIRST=... LAST=...`과 제한된 RECORD 샘플을 반환해 **기존 expected: "0"**으로 FAIL 처리한다. FIRST/LAST는 각각 최대 180바이트, RECORD는 최대 32줄·줄당 512바이트이다. 전체 커널 로그는 출력하지 않는다.
 - 로그 원본이 없거나 비어 있으면 `NO_SOURCE`, 시작 시간이 고정 `YYYY-MM-DD HH:MM:SS` 형식과 맞지 않으면 `INVALID_START_TIME`: 모두 FAIL, 조용한 PASS 불가.
 - BSP 노이즈 예외 목록은 기존 그대로. 진짜 MCP4018 오류를 새로 제외하지 않는다.
 - 무오류 `0`은 지정 구간에서 일치하는 *로그 줄이 없음*만 의미한다. 독립적인 MAX9296/MCP4018 I²C 건강도나 소스의 지속적 수집 보증은 아니다.
@@ -45,3 +45,41 @@
 5. 비슷한 write fail은 이전 다른 부팅·채널에서도 보여 전원 준비 지연·MAX9295 MFP4 전원 제어·serializer translator 매핑·MCP4018 부품 실장/배선/I²C NACK 중 **무엇이 실제 원인인지는 확정되지 않았다**. 소스와 현재 설치 모듈의 정확한 빌드 일치도 별도 검증 사항이다.
 
 실보드에는 I²C write/readback, 플래시 점등, 전원 토글, 카메라 재시작·부팅 반복을 수행하지 않았다.
+
+
+## 구조화된 증거 및 연관 후보 묶음 (2026-10-30 후속)
+
+`evidence_format: kernel_log_v1`인 커스텀 검사만 증거를 파싱한다. 원래 출력과
+`expected: "0"` 비교가 최종 판정이며, 파서는 실패를 PASS/WARN으로 바꾸지 않는다.
+다른 커스텀 검사 및 전체 체크 개수는 바뀌지 않는다.
+
+- `BOOT_ID`는 수집 시작·종료에 일치하는 현재 부팅 ID다. 각 과거 로그 줄의 부팅을
+  독립적으로 증명하는 필드가 아니므로 `per_line_boot_identity_verified=false`를 기록한다.
+- `RECORD`는 디코딩된 원문 접두 샘플이다. 바이트 동일성을 검증한 원본 아카이브가 아니다.
+  `SAMPLES`, `OMITTED`, `CLIPPED`로 누락·줄 잘림을 구분하며, 둘 중 하나라도 있으면
+  `status=partial`, `grouping_complete=false`다. 오류 총 줄 수는 샘플 개수로 줄이지 않는다.
+- 같은 I²C adapter와 채널이며 첫 줄부터 2초 이내인 샘플만 후보로 묶는다. 서로 다른
+  장치, 장치 식별 불가, 시간 역전은 별도 묶음이다. 연속 2초 간격의 무한 연결은 하지 않는다.
+  후보 묶음 수는 독립 장애 건수나 확정 원인이 아니다. `grouping_is_causal=false`와
+  `root_cause=UNKNOWN`을 유지한다. 정확히 같은 샘플 접두의 반복 수는 별도 기록한다.
+- 소스가 오류 줄만 수집하므로 복구 상태는 `UNVERIFIED`다. 프로세스 healthy, 이후 오류
+  부재, 그룹화만으로 복구를 단정하지 않는다. 깨끗한 `0`도 복구는 `NOT_ASSESSED`다.
+- stdout가 0이더라도 awk 읽기 실패가 있으면 `READ_ERROR`; 수집 도중 부팅 ID가 바뀌면
+  `BOOT_CHANGED`; 없는/잘못된 ID는 `INVALID_BOOT_ID`다. 달력상 불가능한 시작 시각과
+  오류 줄의 잘못된 시각 형식도 FAIL로 남긴다. 임시 보드 파일은 만들지 않는다.
+- 기존 초 단위 `substr($0,1,19) > bt` 범위와 BSP 제외 목록은 그대로다. 시계 변경이나
+  세션 앵커 의미 자체를 재설계한 것이 아니므로 무오류 결과를 완전한 로그 수집 보증으로
+  확대하지 않는다. 새 date/awk 조합의 실제 타깃 검증은 별도다.
+
+텍스트 보고서는 COUNT/SCOPE/BOOT_ID/후보 묶음/샘플 범위/복구 미확인을 표시하고
+커널 제어문자는 이스케이프한다. JSON의 `checks[].evidence[].kernel_log`에는
+허용된 진단 필드와 원문 샘플만 보존한다. 일반 custom command 문자열, 설정, 자격증명을
+통째로 복사하지 않는다. 기존 evidence 없는 체크의 JSON 형식은 보존한다.
+
+검증은 `tests/test_checks_kernel_evidence.py`의 모의 SSH·원문 리플레이와 실제 로컬 셸
+검사로 수행한다. 이번 후속에서는 실제 SSH·보드 lease·재부팅·하드웨어 조작을 수행하지
+않으며, 앞선 실보드 수집 차단을 다른 도구나 명령으로 우회하지 않는다.
+
+SSH `None`의 기존 `(got: None)` 표식을 유지하여 인프라 실패를 지속 하드웨어 장애로
+고정하지 않는다. 읽기 직전 로테이션/비움으로 입력이 0줄이 된 경우에도 `NO_SOURCE`로
+실패하며, 잘못된 문자 인코딩은 예외로 전체 QA를 중단하지 않고 invalid evidence로 남긴다.

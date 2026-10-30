@@ -8,6 +8,37 @@ import os
 from datetime import datetime
 
 
+def _kernel_evidence_projection(result: dict) -> dict:
+    """Format only versioned kernel evidence; do not serialize generic data."""
+    if result.get("name") != "custom_commands" or not isinstance(result.get("data"), dict):
+        return {}
+    items = result["data"].get("results")
+    if not isinstance(items, list):
+        return {}
+    keys = {
+        "schema", "source", "status", "count", "scope", "start", "boot_id",
+        "boot_id_provenance", "per_line_boot_identity_verified",
+        "grouping_is_causal", "grouping_complete", "sample_duplicate_count",
+        "omitted_count", "clipped_count", "recovery_status", "root_cause", "error",
+    }
+    record_keys = {"raw", "timestamp", "adapter", "channel", "kind"}
+    group_keys = {"adapter", "channel", "first_timestamp", "last_timestamp",
+                  "record_indexes", "kinds", "basis", "recovery_status"}
+    evidence = []
+    for item in items:
+        value = item.get("kernel_evidence") if isinstance(item, dict) else None
+        if (not isinstance(value, dict) or type(value.get("schema")) is not int
+                or value["schema"] != 1 or value.get("source") != "/var/log/cantops/kern.log"):
+            continue
+        projected = {key: val for key, val in value.items() if key in keys}
+        for name, allowed in (("records", record_keys), ("candidate_groups", group_keys)):
+            rows = value.get(name)
+            projected[name] = [{key: val for key, val in row.items() if key in allowed}
+                               for row in rows[:32] if isinstance(row, dict)] if isinstance(rows, list) else []
+        evidence.append({"name": item.get("name", "kernel"), "kernel_log": projected})
+    return {"evidence": evidence} if evidence else {}
+
+
 class Reporter:
     def format(
         self,
@@ -97,6 +128,7 @@ class Reporter:
                     "name": r["name"],
                     "passed": r["passed"],
                     "reason": r.get("reason", ""),
+                    **_kernel_evidence_projection(r),
                 }
                 for r in results
             ],

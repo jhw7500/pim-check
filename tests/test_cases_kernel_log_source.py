@@ -133,7 +133,9 @@ class TestExitConvention:
                 and "INVALID_START_TIME" in cmd
                 and "COUNT=%d SCOPE=%s" in cmd
                 and "if(!n) print 0" in cmd
-                and "| awk -v scope=" in cmd
+                and "OUT=$(LC_ALL=C awk -v scope=" in cmd
+                and "READ_ERROR" in cmd and "BOOT_CHANGED" in cmd
+                and "RC=$?" in cmd
                 and cmd.rstrip().endswith("fi")
             )
             if not (ends_wc or awk_reaches_end or ends_echo_branches
@@ -160,7 +162,12 @@ class TestExitConvention:
             # 그건 `$( )` 안이라 실패해도 흡수되고 최종 출력을 내는 것은 마지막 awk 다.
             # (첫 awk 기준으로 잡으면 그 앵커 리더 때문에 전부 오탐한다 — 실제로 그랬다.)
             idx = cmd.rfind("awk")
-            if idx >= 0 and KERN_LOG in cmd[idx:]:
+            # Only this bounded collector explicitly checks awk's read status;
+            # its local shell failure replay is covered separately.
+            guarded_read = (fname == "board_error_detect.yaml"
+                            and "OUT=$(LC_ALL=C awk" in cmd
+                            and "RC=$?" in cmd and "echo READ_ERROR" in cmd)
+            if idx >= 0 and KERN_LOG in cmd[idx:] and not guarded_read:
                 offenders.append(f"{fname}: {name}")
         assert not offenders, (
             "awk 가 파일을 직접 읽는다(파이프로 바꿀 것):\n" + "\n".join(offenders))
@@ -399,7 +406,7 @@ class TestBspExclusionDoesNotSwallowRealErrors:
         prof = yaml.safe_load((CASES_DIR / "board_error_detect.yaml").read_text())
         cmd = next(c["command"] for c in prof["checks"]["custom_commands"]
                    if KERN_LOG in c.get("command", ""))
-        m = re.search(r"grep -avE '([^']+)'", cmd)
+        m = re.search(r"-v exclude='([^']+)'", cmd) or re.search(r"grep -avE '([^']+)'", cmd)
         assert m, "제외 필터를 찾을 수 없다"
         return m.group(1)
 

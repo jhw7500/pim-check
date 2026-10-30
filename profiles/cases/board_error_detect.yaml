@@ -45,16 +45,27 @@ checks:
     #   있다(#73 후속). 앵커가 없으면 부팅 시각 폴백이라 잡힌다.
 
     - name: "커널 하드웨어 오류 (세션 앵커 또는 현재 부팅)"
+      evidence_format: kernel_log_v1
       command: >-
         I=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null);
+        if ! printf '%s\n' "$I" | grep -aEq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then echo INVALID_BOOT_ID; exit 0; fi;
         SCOPE=SESSION;
         BOOT=$(awk -v i="$I" 'NR==1{a=$0} NR==2 && $0==i{print a}' /tmp/pim_check_anchor 2>/dev/null); [ -z "$BOOT" ] && BOOT=$(uptime -s) && SCOPE=BOOT_FALLBACK;
-        if [ ! -s /var/log/cantops/kern.log ]; then echo NO_SOURCE;
-        elif ! printf '%s\n' "$BOOT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'; then echo INVALID_START_TIME;
-        else grep -aiE 'error|fail|fault' /var/log/cantops/kern.log 2>/dev/null |
-        awk -v bt="$BOOT" 'substr($0,1,19) > bt' |
-        grep -avE 'samsung-hdmi-phy|imx8-pcie-phy|i\.MX clk|imx-sdma|spi-nor|fsl-asoc-card|fsl-easrc|audio-xcvr|fsl-aud2htx|imx-xcvr|imx-micfil|imx-cdnhdmi|wm8960|imx_sec_dsim_drv|lrdmwl_pcie' |
-        awk -v scope="$SCOPE" -v bt="$BOOT" '{n++; if(n==1) first=substr($0,1,180); last=substr($0,1,180)} END {if(!n) print 0; else printf "COUNT=%d SCOPE=%s START=%s FIRST=%s LAST=%s\n",n,scope,bt,first,last}';
+        if [ ! -f /var/log/cantops/kern.log ] || [ ! -r /var/log/cantops/kern.log ] || [ ! -s /var/log/cantops/kern.log ]; then echo NO_SOURCE;
+        elif ! printf '%s\n' "$BOOT" | grep -aEq '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'; then echo INVALID_START_TIME;
+        elif [ "$(date -d "$BOOT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" != "$BOOT" ]; then echo INVALID_START_TIME;
+        else OUT=$(LC_ALL=C awk -v scope="$SCOPE" -v bt="$BOOT" -v id="$I" -v exclude='samsung-hdmi-phy|imx8-pcie-phy|i\.MX clk|imx-sdma|spi-nor|fsl-asoc-card|fsl-easrc|audio-xcvr|fsl-aud2htx|imx-xcvr|imx-micfil|imx-cdnhdmi|wm8960|imx_sec_dsim_drv|lrdmwl_pcie'
+        ' tolower($0) ~ /error|fail|fault/ && $0 !~ exclude {
+        if (substr($0,1,19) !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/) {bad++; next;}
+        if (substr($0,1,19) > bt) {n++; if(n==1) first=substr($0,1,180); last=substr($0,1,180); if(n<=32) {samples[n]=substr($0,1,512); if(length($0)>512) clipped++;}}
+        }
+        END {if(NR==0) print "NO_SOURCE"; else if(bad) print "INVALID_LOG_TIME"; else if(!n) print 0;
+        else {printf "COUNT=%d SCOPE=%s START=%s BOOT_ID=%s FIRST=%s LAST=%s\n",n,scope,bt,id,first,last;
+        k=(n<32?n:32); for(i=1;i<=k;i++) printf "RECORD=%s\n",samples[i];
+        printf "SAMPLES=%d OMITTED=%d CLIPPED=%d\n",k,n-k,clipped;}}'
+        /var/log/cantops/kern.log 2>/dev/null); RC=$?;
+        J=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null);
+        if [ "$RC" -ne 0 ]; then echo READ_ERROR; elif [ "$J" != "$I" ]; then echo BOOT_CHANGED; else printf '%s\n' "$OUT"; fi;
         fi
       expected: "0"
       on_fail: "실제 커널 오류 또는 로그 원본/시간범위 미검증 (COUNT/SCOPE/START/FIRST/LAST 확인, 부팅 오류를 세션 중 오류로 오인하지 말 것)"
