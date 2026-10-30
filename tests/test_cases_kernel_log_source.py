@@ -123,7 +123,21 @@ class TestExitConvention:
                                and re.search(r"\|\s*awk\b", cmd) is not None)
             ends_echo_branches = re.search(
                 r"&&\s*echo\s+\S+\s*\|\|\s*echo\s+\S+$", cmd.strip()) is not None
-            if not (ends_wc or awk_reaches_end or ends_echo_branches):
+            # board_error_detect emits '0' on clean evidence and bounded
+            # COUNT/SCOPE/FIRST/LAST on failure. Both explicit missing-source
+            # branches must fail-closed; executable scenarios are covered by
+            # test_cases_board_error_scope (not just this shape check).
+            board_error_summary = (
+                fname == "board_error_detect.yaml"
+                and "NO_SOURCE" in cmd
+                and "INVALID_START_TIME" in cmd
+                and "COUNT=%d SCOPE=%s" in cmd
+                and "if(!n) print 0" in cmd
+                and "| awk -v scope=" in cmd
+                and cmd.rstrip().endswith("fi")
+            )
+            if not (ends_wc or awk_reaches_end or ends_echo_branches
+                    or board_error_summary):
                 bad.append(f"{fname}: {name}")
         assert not bad, "exit 규약을 충족하지 않는 명령:\n" + "\n".join(bad)
 
