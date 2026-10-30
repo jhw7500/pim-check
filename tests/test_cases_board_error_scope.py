@@ -55,7 +55,7 @@ def _run(source: str | None, *, anchor: str | None = None,
                    .replace(LOG_PATH, str(log))
                    .replace(ANCHOR_PATH, str(aid))
                    .replace(BOOT_ID_PATH, str(bid))
-                   .replace("uptime -s 2>/dev/null",
+                   .replace("uptime -s",
                             "printf '%s\\n' '" + uptime + "'"))
         return subprocess.run(["sh", "-c", command],
                               capture_output=True, text=True, timeout=8)

@@ -33,3 +33,15 @@
 - `tests/test_cases_kernel_log_source.py`: 새 `awk END` 형태의 exit 0+출력 규약을 기존 커널 로그 소스/시간범위/BSP 보호와 함께 검사.
 - 변경 소스 Git 커밋, CI 상태, 실보드 재검증은 해당 실행 시점의 증거로 별도 기록해야 한다.
 - ch0 MCP4018 -ENXIO의 전원·물리 링크·장치 준비 시퀀스와 저항/펌웨어 재시도 간격은 현재 **확실하지 않음**. 드라이버 분석과 실제 Wiper readback/안전한 통제 환경에서의 재현 검증이 후속이다.
+
+## 드라이버 소스 조사: MCP4018이 왜 실패할 수 있는가
+
+읽기 전용으로 확인한 별도 `max9296` 저장소의 `max9296.c` (관측 SHA256 `c0c31169...`)는 다음 동작을 구현한다.
+
+1. `max9296_apply_channel_controls()`의 `mcp_active`는 `ch_ctrl->led_flash & (1 << 8)`로 결정된다. 실제 로그에도 `mcp:on wiper:0x10`이 출력됐다.
+2. `max9295_mfp4_set(..., true)`로 MAX9295 MFP4를 제어해 MCP4018 VCC를 켠 다음, `mcp4018_write_wiper()`가 serializer I²C translator를 거치는 host address `0x2f`에 **1바이트 write**를 시도한다.
+3. `i2c_transfer()`가 실패하면 최대 5번 반복(간격 1ms)하고 최종 음수 코드(`-6` 관측)를 로그에 남긴다. 즉 실제 `0x2f` 접근 실패이지 kernel 로그 문자열 분류 오탐이 아니다.
+4. 에러가 `first_err`에 누적되어 `single applied fail`이 기록되지만, 함수 최종 반환은 `exposure_err`다. 따라서 MCP4018 실패만 있었다면 호출 측은 오류 반환 없이 진행할 수 있으며, `prepare errno=0`/gstApp health OK만으로 Wiper 쓰기 성공을 증명할 수 없다.
+5. 비슷한 write fail은 이전 다른 부팅·채널에서도 보여 전원 준비 지연·MAX9295 MFP4 전원 제어·serializer translator 매핑·MCP4018 부품 실장/배선/I²C NACK 중 **무엇이 실제 원인인지는 확정되지 않았다**. 소스와 현재 설치 모듈의 정확한 빌드 일치도 별도 검증 사항이다.
+
+실보드에는 I²C write/readback, 플래시 점등, 전원 토글, 카메라 재시작·부팅 반복을 수행하지 않았다.
