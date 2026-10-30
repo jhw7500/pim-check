@@ -161,4 +161,19 @@ must explicitly install/test a persistent recovery journal, unique
 lease ownership, heartbeat and expiration, signal forwarding and
 bounded TERM/KILL, restore-on-owner-loss, source attestation and
 independent final-state verification. This PR installs no service and
-starts no long-running test.
+starts no long-running test.\n\n## 2026-10-30 durable owner-runner admission contract (offline)
+
+The new scripts/qa_durable_runner_contract.py is pure and evidence-only.
+It installs or starts no service, never accesses a board or deletes files,
+and cannot override the static source-pinned safety gate.
+
+A real owner service must prove an fsynced recovery journal, recovery on
+controller loss, unique PIM lease fencing, source pinning, actual recorder
+EOS/closed FD, idempotent restore and independent final-state checking.
+Evidence must cover 2700 seconds recording, 1860 seconds restoration and
+60 seconds additional lease release time. The ChatGPT single call limit is
+1800 seconds; detached processes and lease extension do not solve this.
+
+Even fully synthetic evidence returns REVIEW_REQUIRED and
+execution_authorized=false. A fixed owner-controlled task profile,
+independent failover tests and explicit release approval are prerequisites.
