@@ -123,3 +123,42 @@ The canonical pinned no-delete safety gate is untouched and remains valid
 for its static scenario. This proposal never contacts the board, deletes
 recordings, modifies ORD settings, merges PR181/PR228, triggers OHT packets,
 or starts the long campaign.
+
+
+## 2026-10-30 ch0 RAM .part to SD MP4/SRT passive tracking
+
+The official read-only PIM board observation inspected process FD symlinks,
+RAM /dev/shm files, and SD root filenames at three timestamps, without
+transferring or changing file contents.
+
+| UTC | Active writer RAM FD | Matching SD final |
+| --- | --- | --- |
+| 03:15:51 | VD3001_20261030_031500-ch0.mp4.part | previous 03:14 MP4/SRT |
+| 03:16:27 | VD3001_20261030_031600-ch0.mp4.part | 03:15 MP4/SRT |
+| 03:17:04 | VD3001_20261030_031700-ch0.mp4.part | 03:16 MP4/SRT |
+
+The RAM files also included matching data.srt.part filenames. The pure
+assess_passive_writer_lifecycle function corroborates TWO MP4/SRT filename
+transitions and one observed video channel, ch0. It cannot prove EOS,
+fsync, byte integrity, all open FDs, or four-channel throughput; all
+those attestation outputs remain FALSE, and execution_authorized remains
+FALSE. The original source-pinned no-delete board safety gate is unchanged.
+
+The earlier FD snapshot missed the active /dev/shm/VD3001_...ch0.mp4.part
+path because it searched /mnt/sd_cam and /dev/shm/recordings. A previous
+empty FD result was thus NOT evidence of completed writer closure. The
+observed transition alone still does not justify setting the managed
+retention writer lifecycle attestation to true.
+
+Durable owner-side supervision is independently required. Existing
+scripts/with_pim_board.sh --long-lease true and scripts/run_with_deadline.py
+supervise and reserve termination time only while their host process
+survives. The host tool has a 1,800-second execution limit, shorter
+than the 2,700-second recording campaign and 1,860-second restore
+reserve. Lease extension or untracked detached processes do not meet
+this recovery guarantee. Before executing a long campaign, the owner
+must explicitly install/test a persistent recovery journal, unique
+lease ownership, heartbeat and expiration, signal forwarding and
+bounded TERM/KILL, restore-on-owner-loss, source attestation and
+independent final-state verification. This PR installs no service and
+starts no long-running test.

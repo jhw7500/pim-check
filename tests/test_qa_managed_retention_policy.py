@@ -329,3 +329,136 @@ def test_unmatched_other_file_decreases_cannot_prove_mp4_srt_rotation():
     result = assess_passive_retention(rows[:-1] + [changed],
                                       file_limit=1000, disk_limit_per=90)
     assert result["root_rotation_corroborated"] is False
+
+
+# Actual metadata from the separately owner-leased 2026-10-30 ch0
+# RAM .part and SD final file observations (no new board access here).
+def observed_ch0_writer_samples():
+    from qa_managed_retention_policy import PassiveWriterSample
+
+    return [
+        PassiveWriterSample(
+            utc="2026-10-30T03:15:51Z",
+            fd_video_parts=("VD3001_20261030_031500-ch0.mp4.part",),
+            ram_video_parts=("VD3001_20261030_031500-ch0.mp4.part",),
+            ram_srt_parts=("VD3001_20261030_031500-data.srt.part",),
+            sd_video_finals=("VD3001_20261030_031400-ch0.mp4",),
+            sd_srt_finals=("VD3001_20261030_031400-data.srt",)),
+        PassiveWriterSample(
+            utc="2026-10-30T03:16:27Z",
+            fd_video_parts=("VD3001_20261030_031600-ch0.mp4.part",),
+            ram_video_parts=("VD3001_20261030_031600-ch0.mp4.part",),
+            ram_srt_parts=("VD3001_20261030_031600-data.srt.part",),
+            sd_video_finals=("VD3001_20261030_031400-ch0.mp4",
+                             "VD3001_20261030_031500-ch0.mp4"),
+            sd_srt_finals=("VD3001_20261030_031400-data.srt",
+                           "VD3001_20261030_031500-data.srt")),
+        PassiveWriterSample(
+            utc="2026-10-30T03:17:04Z",
+            fd_video_parts=("VD3001_20261030_031700-ch0.mp4.part",),
+            ram_video_parts=("VD3001_20261030_031700-ch0.mp4.part",),
+            ram_srt_parts=("VD3001_20261030_031700-data.srt.part",),
+            sd_video_finals=("VD3001_20261030_031500-ch0.mp4",
+                             "VD3001_20261030_031600-ch0.mp4"),
+            sd_srt_finals=("VD3001_20261030_031500-data.srt",
+                           "VD3001_20261030_031600-data.srt")),
+    ]
+
+
+def test_real_ch0_ram_part_to_sd_final_is_correlated_not_writer_attestation():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    result = assess_passive_writer_lifecycle(observed_ch0_writer_samples())
+    assert result["correlated_mp4_srt_pairs"] == 2
+    assert result["correlated_session_ids"] == [
+        "VD3001_20261030_031500", "VD3001_20261030_031600"]
+    assert result["observed_channels"] == ["ch0"]
+    assert result["writer_eos_attested"] is False
+    assert result["fsync_attested"] is False
+    assert result["four_channel_throughput_attested"] is False
+    assert result["execution_authorized"] is False
+
+
+def test_missing_matching_sd_srt_never_proves_completed_pair():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    changed = replace(rows[1], sd_srt_finals=(
+        "VD3001_20261030_031400-data.srt",))
+    result = assess_passive_writer_lifecycle([rows[0], changed])
+    assert result["correlated_mp4_srt_pairs"] == 0
+
+
+def test_fd_still_referencing_part_blocks_that_transition():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    changed = replace(rows[1], fd_video_parts=(
+        "VD3001_20261030_031500-ch0.mp4.part",
+        "VD3001_20261030_031600-ch0.mp4.part"))
+    result = assess_passive_writer_lifecycle([rows[0], changed])
+    assert result["correlated_mp4_srt_pairs"] == 0
+
+
+def test_missing_ram_srt_part_blocks_pair_correlation():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    changed = replace(rows[0], ram_srt_parts=())
+    result = assess_passive_writer_lifecycle([changed, rows[1]])
+    assert result["correlated_mp4_srt_pairs"] == 0
+
+
+def test_final_file_for_a_different_session_cannot_match():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    changed = replace(rows[1], sd_video_finals=(
+        "VD3001_20261030_031400-ch0.mp4",
+        "VD3001_20261030_031600-ch0.mp4"))
+    result = assess_passive_writer_lifecycle([rows[0], changed])
+    assert result["correlated_mp4_srt_pairs"] == 0
+
+
+def test_long_gap_is_not_a_correlated_completion():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    changed = replace(rows[1], utc="2026-10-30T03:31:27Z")
+    result = assess_passive_writer_lifecycle([rows[0], changed])
+    assert result["correlated_mp4_srt_pairs"] == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("utc", "not-a-time"),
+    ("fd_video_parts", ("../../secrets.mp4.part",)),
+    ("ram_video_parts", ("arbitrary.part",)),
+    ("sd_video_finals", ("VD3001_20261030_031500-ch9.mp4",)),
+    ("ram_srt_parts", "not-a-tuple"),
+])
+def test_writer_metadata_rejects_invalid_sample(field, value):
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    with pytest.raises(ValueError):
+        assess_passive_writer_lifecycle(
+            [rows[0], replace(rows[1], **{field: value})])
+
+
+def test_writer_reversed_or_duplicate_time_is_invalid():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    rows = observed_ch0_writer_samples()
+    with pytest.raises(ValueError):
+        assess_passive_writer_lifecycle([rows[1], rows[0]])
+    with pytest.raises(ValueError):
+        assess_passive_writer_lifecycle([rows[1], rows[1]])
+
+
+def test_observed_one_channel_never_implicitly_attests_four():
+    from qa_managed_retention_policy import assess_passive_writer_lifecycle
+
+    result = assess_passive_writer_lifecycle(observed_ch0_writer_samples())
+    assert result["observed_channels"] == ["ch0"]
+    assert result["four_channel_throughput_attested"] is False
+    assert result["writer_eos_attested"] is False

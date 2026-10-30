@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from qa_acceptance_safety import (
@@ -274,6 +275,106 @@ def assess_passive_retention(
             100 * current.used_kib / (current.used_kib + current.avail_kib), 2),
         "installed_source_attested": False,
         "writer_lifecycle_attested": False,
+        "execution_authorized": False,
+        "evidence_only": True,
+    }
+
+
+@dataclass(frozen=True)
+class PassiveWriterSample:
+    """RAM .part, process FD and SD final filename snapshots; metadata only."""
+
+    utc: str
+    fd_video_parts: tuple[str, ...]
+    ram_video_parts: tuple[str, ...]
+    ram_srt_parts: tuple[str, ...]
+    sd_video_finals: tuple[str, ...]
+    sd_srt_finals: tuple[str, ...]
+
+
+def assess_passive_writer_lifecycle(
+    samples: list[PassiveWriterSample] | tuple[PassiveWriterSample, ...],
+) -> dict[str, object]:
+    """Correlate observed RAM-to-SD names; never attest EOS, fsync or 4ch.
+
+    A vanished FD from only the scanned processes cannot independently
+    establish writer closure. Neither a matching file name nor nonzero file
+    size can establish bytes copied, fsync, or container finalization.
+    """
+    from datetime import datetime, timezone
+
+    if (not isinstance(samples, (list, tuple)) or not 2 <= len(samples) <= 120):
+        raise ValueError("invalid passive writer observation count")
+
+    prefix = r"[A-Za-z0-9]{1,20}_[0-9]{8}_[0-9]{6}"
+    video_part = re.compile(rf"({prefix})-ch([0-3])\.mp4\.part\Z")
+    srt_part = re.compile(rf"{prefix}-data\.srt\.part\Z")
+    video_final = re.compile(rf"{prefix}-ch[0-3]\.mp4\Z")
+    srt_final = re.compile(rf"{prefix}-data\.srt\Z")
+    types = {
+        "fd_video_parts": video_part,
+        "ram_video_parts": video_part,
+        "ram_srt_parts": srt_part,
+        "sd_video_finals": video_final,
+        "sd_srt_finals": srt_final,
+    }
+    stamps = []
+    for sample in samples:
+        if type(sample) is not PassiveWriterSample or not isinstance(sample.utc, str):
+            raise ValueError("invalid writer observation type")
+        try:
+            stamp = datetime.fromisoformat(sample.utc.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("invalid writer timestamp") from None
+        if stamp.tzinfo is None:
+            raise ValueError("writer timestamp requires timezone")
+        stamps.append(stamp.astimezone(timezone.utc))
+        for key, validator in types.items():
+            entries = getattr(sample, key)
+            if (type(entries) is not tuple or len(entries) > 64
+                    or len(set(entries)) != len(entries)):
+                raise ValueError("invalid writer filename inventory")
+            if any(not isinstance(name, str) or validator.fullmatch(name) is None
+                   for name in entries):
+                raise ValueError("untrusted writer filename")
+
+    if any(a >= b for a, b in zip(stamps, stamps[1:])):
+        raise ValueError("out of order writer observations")
+
+    seen: set[tuple[str, str]] = set()
+    sessions: list[str] = []
+    channels: set[str] = set()
+    for i, (before, after) in enumerate(zip(samples, samples[1:])):
+        if (stamps[i + 1] - stamps[i]).total_seconds() > 120:
+            continue
+        for name in before.fd_video_parts:
+            assert (match := video_part.fullmatch(name)) is not None
+            session, chan = match.groups()
+            if name not in before.ram_video_parts:
+                continue
+            if session + "-data.srt.part" not in before.ram_srt_parts:
+                continue
+            if (name in after.fd_video_parts or name in after.ram_video_parts
+                    or session + "-data.srt.part" in after.ram_srt_parts):
+                continue
+            if (session + f"-ch{chan}.mp4" not in after.sd_video_finals
+                    or session + "-data.srt" not in after.sd_srt_finals):
+                continue
+            key = session, chan
+            if key in seen:
+                continue
+            seen.add(key)
+            sessions.append(session)
+            channels.add("ch" + chan)
+
+    return {
+        "correlated_mp4_srt_pairs": len(seen),
+        "correlated_session_ids": sessions,
+        "observed_channels": sorted(channels),
+        "writer_eos_attested": False,
+        "fsync_attested": False,
+        "file_bytes_integrity_attested": False,
+        "four_channel_throughput_attested": False,
         "execution_authorized": False,
         "evidence_only": True,
     }
