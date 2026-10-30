@@ -540,11 +540,20 @@ time.sleep(60)
     )
     process_group: Optional[int] = None
     try:
+        # File creation can precede write_text populating the PID. Wait for
+        # valid contents, not merely pathname existence (parallel-CI race).
         limit = time.time() + 2
-        while time.time() < limit and not child_pid.exists():
+        while time.time() < limit:
+            try:
+                candidate = int(child_pid.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                time.sleep(0.01)
+                continue
+            if candidate > 0:
+                process_group = candidate
+                break
             time.sleep(0.01)
-        assert child_pid.exists()
-        process_group = int(child_pid.read_text(encoding="utf-8"))
+        assert process_group is not None
 
         supervisor.send_signal(supervisor_signal)
         try:
