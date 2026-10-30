@@ -9,6 +9,8 @@ system service, camera recorder, or execution authorization exists here.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -93,6 +95,11 @@ class SimulatedDevice:
             raise ValueError("unexpected simulated fixture name")
         if type(data) is not bytes or not 0 < len(data) <= MAX_FIXTURE_BYTES:
             raise ValueError("invalid simulation content")
+        if not create_only:
+            # A missing, symlinked, hardlinked or world-readable current file
+            # indicates an untrusted local fixture. Do not quietly replace it
+            # and misreport a verified recovery.
+            self._read(name)
         dfd = self._open_directory()
         temp_name = name if create_only else (".simulation-" + secrets.token_hex(12) + ".tmp")
         fd = None
@@ -157,6 +164,45 @@ class OfflineCoordinator:
         self.device = SimulatedDevice(Path(device_dir))
         self.source_sha = source_sha
 
+    @contextmanager
+    def _owner_guard(self):
+        """Serialize cooperating local owners across durable intent and its effect.
+
+        The lock is held through simulated mutation or restore. SIGKILL
+        releases the OS lock so the next process can inspect the journal.
+        This is not real PIM board lease fencing.
+        """
+        dfd = self.device._open_directory()
+        fd = None
+        lock_ready = False
+        try:
+            fd = os.open(
+                ".offline-owner.lock",
+                os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600, dir_fd=dfd,
+            )
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            locked = os.fstat(fd)
+            named = os.stat(".offline-owner.lock", dir_fd=dfd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(locked.st_mode)
+                or locked.st_nlink != 1
+                or stat.S_IMODE(locked.st_mode) != 0o600
+                or (locked.st_dev, locked.st_ino) != (named.st_dev, named.st_ino)
+            ):
+                raise SimulationError("unsafe offline owner lock")
+            os.fsync(dfd)
+            lock_ready = True
+            yield
+        except OSError as exc:
+            if lock_ready:
+                raise
+            raise SimulationError("offline owner lock unavailable") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+            os.close(dfd)
+
     def _checked_record(self) -> dict:
         record = self.journal.read(expected_source_sha=self.source_sha)
         if self.device.baseline_sha256() != record["baseline_sha256"]:
@@ -164,6 +210,10 @@ class OfflineCoordinator:
         return record
 
     def prepare(self, *, run_id: str) -> dict:
+        with self._owner_guard():
+            return self._prepare_guarded(run_id=run_id)
+
+    def _prepare_guarded(self, *, run_id: str) -> dict:
         if not self.device.matches_baseline():
             raise SimulationError("simulated device not at original baseline")
         return self.journal.begin(
@@ -171,6 +221,10 @@ class OfflineCoordinator:
             baseline_sha256=self.device.baseline_sha256())
 
     def simulate_mutation(self) -> dict:
+        with self._owner_guard():
+            return self._simulate_mutation_guarded()
+
+    def _simulate_mutation_guarded(self) -> dict:
         record = self._checked_record()
         if record["state"] == "PREPARED":
             if not self.device.matches_baseline():
@@ -188,6 +242,10 @@ class OfflineCoordinator:
         return record
 
     def recover(self) -> dict:
+        with self._owner_guard():
+            return self._recover_guarded()
+
+    def _recover_guarded(self) -> dict:
         record = self._checked_record()
         state = record["state"]
         if state in ("PREPARED", "BASELINE_SAVED"):

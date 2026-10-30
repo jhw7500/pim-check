@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import signal
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -248,3 +250,129 @@ def test_symlinked_fake_baseline_cannot_escape_the_temporary_fixture(tmp_path):
     assert outside.read_bytes() == b"protected external file"
     assert target.read_current() == BASELINE
     assert JournalStore(journal_dir).read()["state"] == "PREPARED"
+
+
+@pytest.mark.parametrize("tamper", ["symlink", "hardlink", "missing", "world_readable"])
+def test_restore_refuses_tampered_simulated_current_without_claiming_success(
+    tmp_path, tamper,
+):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    coordinator.simulate_mutation()
+    current = device_dir / "current.bin"
+    external = tmp_path / "external-not-to-overwrite"
+    external.write_bytes(MUTATED)
+    if tamper == "symlink":
+        current.unlink()
+        current.symlink_to(external)
+    elif tamper == "hardlink":
+        current.unlink()
+        os.link(external, current)
+    elif tamper == "missing":
+        current.unlink()
+    else:
+        current.chmod(0o644)
+
+    with pytest.raises(SimulationError, match="simulation|fixture|restore"):
+        coordinator.recover()
+
+    assert JournalStore(journal_dir).read()["state"] == "RESTORE_PENDING"
+    assert external.read_bytes() == MUTATED
+    assert (device_dir / "baseline.bin").read_bytes() == BASELINE
+
+
+def test_crash_after_intent_before_target_effect_is_safely_recovered(tmp_path):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    journal = JournalStore(journal_dir)
+    journal.transition("BASELINE_SAVED", expected_revision=0)
+    journal.transition("MUTATION_PENDING", expected_revision=1)
+    # Simulates SIGKILL between a durable intent and the first external write.
+    assert target.read_current() == BASELINE
+    result = OfflineCoordinator(journal_dir, device_dir, SOURCE_SHA).recover()
+    assert target.read_current() == BASELINE
+    assert result["state"] == "FINAL_ATTESTATION_PENDING"
+    assert_unapproved(result)
+
+
+def test_second_owner_cannot_inject_another_fault_during_pending_restore(tmp_path):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    coordinator.simulate_mutation()
+    second = OfflineCoordinator(journal_dir, device_dir, SOURCE_SHA)
+    with pytest.raises(SimulationError, match="unresolved"):
+        second.simulate_mutation()
+    assert JournalStore(journal_dir).read()["state"] == "MUTATION_PENDING"
+    assert target.read_current() == MUTATED
+
+
+def test_inflight_fault_cannot_run_after_concurrent_recovery(tmp_path, monkeypatch):
+    """A new owner must not restore ahead of the old owner's pending side effect."""
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    mutation_reached = threading.Event()
+    release_mutation = threading.Event()
+    restore_started = threading.Event()
+    failures = []
+    original_fault = coordinator.device.simulate_fault
+    original_restore = SimulatedDevice.restore
+
+    def paused_fault():
+        mutation_reached.set()
+        if not release_mutation.wait(timeout=8):
+            raise AssertionError("simulated mutation was never released")
+        original_fault()
+
+    def observed_restore(self):
+        restore_started.set()
+        return original_restore(self)
+
+    monkeypatch.setattr(coordinator.device, "simulate_fault", paused_fault)
+    monkeypatch.setattr(SimulatedDevice, "restore", observed_restore)
+
+    def run(action):
+        try:
+            action()
+        except Exception as exc:
+            failures.append(str(exc))
+
+    mutator = threading.Thread(target=run, args=(coordinator.simulate_mutation,))
+    restorer = threading.Thread(
+        target=run,
+        args=(OfflineCoordinator(journal_dir, device_dir, SOURCE_SHA).recover,),
+    )
+    mutator.start()
+    try:
+        assert mutation_reached.wait(timeout=5), "fault injection never reached its side effect"
+        restorer.start()
+        assert not restore_started.wait(timeout=0.8), "restoration raced with active mutation"
+    finally:
+        release_mutation.set()
+        mutator.join(timeout=8)
+        if restorer.ident is not None:
+            restorer.join(timeout=8)
+    assert not mutator.is_alive()
+    assert not restorer.is_alive()
+    assert failures == []
+    assert restore_started.is_set()
+    assert target.read_current() == BASELINE
+    assert JournalStore(journal_dir).read()["state"] == "FINAL_ATTESTATION_PENDING"
+
+
+@pytest.mark.parametrize("tamper", ("symlink", "hardlink", "world_readable"))
+def test_offline_owner_lock_tamper_blocks_fault(tmp_path, tamper):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    lock = device_dir / ".offline-owner.lock"
+    assert lock.is_file()
+    outside = tmp_path / "protected-outside"
+    outside.write_bytes(b"untouched")
+    if tamper == "symlink":
+        lock.unlink()
+        lock.symlink_to(outside)
+    elif tamper == "hardlink":
+        os.link(lock, tmp_path / "extra-lock-link")
+    else:
+        lock.chmod(0o644)
+
+    with pytest.raises(SimulationError, match="owner lock"):
+        coordinator.simulate_mutation()
+
+    assert JournalStore(journal_dir).read()["state"] == "PREPARED"
+    assert target.read_current() == BASELINE
+    assert outside.read_bytes() == b"untouched"
