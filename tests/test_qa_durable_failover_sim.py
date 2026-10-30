@@ -248,3 +248,54 @@ def test_symlinked_fake_baseline_cannot_escape_the_temporary_fixture(tmp_path):
     assert outside.read_bytes() == b"protected external file"
     assert target.read_current() == BASELINE
     assert JournalStore(journal_dir).read()["state"] == "PREPARED"
+
+
+@pytest.mark.parametrize("tamper", ["symlink", "hardlink", "missing", "world_readable"])
+def test_restore_refuses_tampered_simulated_current_without_claiming_success(
+    tmp_path, tamper,
+):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    coordinator.simulate_mutation()
+    current = device_dir / "current.bin"
+    external = tmp_path / "external-not-to-overwrite"
+    external.write_bytes(MUTATED)
+    if tamper == "symlink":
+        current.unlink()
+        current.symlink_to(external)
+    elif tamper == "hardlink":
+        current.unlink()
+        current.hardlink_to(external)
+    elif tamper == "missing":
+        current.unlink()
+    else:
+        current.chmod(0o644)
+
+    with pytest.raises(SimulationError, match="simulation|fixture|restore"):
+        coordinator.recover()
+
+    assert JournalStore(journal_dir).read()["state"] == "RESTORE_PENDING"
+    assert external.read_bytes() == MUTATED
+    assert (device_dir / "baseline.bin").read_bytes() == BASELINE
+
+
+def test_crash_after_intent_before_target_effect_is_safely_recovered(tmp_path):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    journal = JournalStore(journal_dir)
+    journal.transition("BASELINE_SAVED", expected_revision=0)
+    journal.transition("MUTATION_PENDING", expected_revision=1)
+    # Simulates SIGKILL between a durable intent and the first external write.
+    assert target.read_current() == BASELINE
+    result = OfflineCoordinator(journal_dir, device_dir, SOURCE_SHA).recover()
+    assert target.read_current() == BASELINE
+    assert result["state"] == "FINAL_ATTESTATION_PENDING"
+    assert_unapproved(result)
+
+
+def test_second_owner_cannot_inject_another_fault_during_pending_restore(tmp_path):
+    coordinator, target, journal_dir, device_dir = prepared(tmp_path)
+    coordinator.simulate_mutation()
+    second = OfflineCoordinator(journal_dir, device_dir, SOURCE_SHA)
+    with pytest.raises(SimulationError, match="unresolved"):
+        second.simulate_mutation()
+    assert JournalStore(journal_dir).read()["state"] == "MUTATION_PENDING"
+    assert target.read_current() == MUTATED

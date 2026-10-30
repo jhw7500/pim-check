@@ -93,6 +93,11 @@ class SimulatedDevice:
             raise ValueError("unexpected simulated fixture name")
         if type(data) is not bytes or not 0 < len(data) <= MAX_FIXTURE_BYTES:
             raise ValueError("invalid simulation content")
+        if not create_only:
+            # A missing, symlinked, hardlinked or world-readable current file
+            # indicates an untrusted local fixture. Do not quietly replace it
+            # and misreport a verified recovery.
+            self._read(name)
         dfd = self._open_directory()
         temp_name = name if create_only else (".simulation-" + secrets.token_hex(12) + ".tmp")
         fd = None
