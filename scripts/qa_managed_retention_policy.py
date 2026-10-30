@@ -348,7 +348,9 @@ def assess_passive_writer_lifecycle(
         if (stamps[i + 1] - stamps[i]).total_seconds() > 120:
             continue
         for name in before.fd_video_parts:
-            assert (match := video_part.fullmatch(name)) is not None
+            match = video_part.fullmatch(name)
+            if match is None:
+                raise ValueError("invalid writer filename after validation")
             session, chan = match.groups()
             if name not in before.ram_video_parts:
                 continue

@@ -462,3 +462,23 @@ def test_observed_one_channel_never_implicitly_attests_four():
     assert result["observed_channels"] == ["ch0"]
     assert result["four_channel_throughput_attested"] is False
     assert result["writer_eos_attested"] is False
+
+
+def test_writer_correlation_does_not_depend_on_assert_under_python_optimized():
+    import subprocess
+    import sys
+
+    script = (
+        "import sys;sys.path.insert(0,'scripts');"
+        "from qa_managed_retention_policy import assess_passive_writer_lifecycle;"
+        "from tests.test_qa_managed_retention_policy import observed_ch0_writer_samples;"
+        "print(assess_passive_writer_lifecycle(observed_ch0_writer_samples())"
+        "['correlated_mp4_srt_pairs'])"
+    )
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", script],
+        cwd=ROOT, text=True, capture_output=True, timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "2"
