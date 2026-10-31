@@ -232,6 +232,8 @@ print(json.dumps({
     "binary_hashes": binaries,
     "consumers_ready": healthy_consumer(owner, procs, snap, boot),
     "writer_closed": no_writer_handles(all_pids),
+    # A read-only probe cannot establish a persistent writer fence.
+    "writer_fence_session": None,
     "owner_idle": idle,
 }, sort_keys=True, separators=(",", ":")))
 '''
@@ -263,6 +265,7 @@ class PimReadOnlyInspector:
                 "journal_run_id", "journal_original_sha", "edgeconf_sha",
                 "ord_conf_sha", "runtime_sha", "led_flags", "binary_hashes",
                 "consumers_ready", "writer_closed", "owner_idle",
+                "writer_fence_session",
             }
             if not isinstance(document, dict) or set(document) != expected:
                 raise AdapterBlocked("unexpected read-only board snapshot schema")
@@ -276,6 +279,8 @@ class PimReadOnlyInspector:
             for field in ("consumers_ready", "writer_closed", "owner_idle"):
                 if type(document[field]) is not bool:
                     raise AdapterBlocked("invalid board boolean proof")
+            if document["writer_fence_session"] is not None:
+                raise AdapterBlocked("untrusted writer fence claim from read-only probe")
             for field in ("edgeconf_sha", "ord_conf_sha", "runtime_sha"):
                 val = document[field]
                 if (type(val) is not str or len(val) != 64
@@ -319,7 +324,8 @@ class PimReadOnlyInspector:
                 binary_hashes=document["binary_hashes"],
                 consumers_ready=document["consumers_ready"],
                 writer_closed=document["writer_closed"],
-                owner_idle=document["owner_idle"])
+                owner_idle=document["owner_idle"],
+                writer_fence_session=document["writer_fence_session"])
         except AdapterBlocked:
             raise
         except Exception as exc:

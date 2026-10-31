@@ -69,6 +69,8 @@ class BoardEvidence:
     consumers_ready: bool
     writer_closed: bool
     owner_idle: bool
+    # A momentary FD scan cannot prove persistent writer quiescence.
+    writer_fence_session: str | None = None
 
 
 class BoardRecoveryAdapter(Protocol):
@@ -97,6 +99,8 @@ def _check_common(row: BoardEvidence, base: Baseline) -> None:
         raise RecoveryBlocked("stale or untrusted board observation")
     if row.owner_idle is not True or row.writer_closed is not True:
         raise RecoveryBlocked("owner busy or writer not closed")
+    if row.writer_fence_session != row.lease_session:
+        raise RecoveryBlocked("writer not persistently fenced by owner lease")
     if row.all_led_off is not True:
         raise RecoveryBlocked("MCP4018-absent board would enable LED")
     if row.ord_conf_sha != base.ord_conf_sha:

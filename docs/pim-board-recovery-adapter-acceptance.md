@@ -16,6 +16,15 @@
 - Real OS SIGKILL is sent to a subprocess after it durably updates a **temporary fake-board file**. On a separate child process restart, the existing host journal advances to independent final attestation without running a second fake recovery. This is NOT a systemd cgroup test and NOT physical board recovery.
 - Remote collector Python source is syntax-checked and its typed results and fail-closed behavior are tested with fake SSH. There has not yet been a physical-board run of this new collector.
 
+## Persistent Writer Fencing (new fail-closed requirement)
+
+A momentary writable FD scan does not prove a running gstApp cannot
+reopen files during restoration. The adapter now requires an independent
+writer_fence_session matching the official long-lease owner session.
+The fixed read-only Inspector always returns null; no real writer fence
+protocol has been installed, so real restoration remains BLOCK.
+Fake-board tests simulate the same owner-held fence solely offline.
+
 ## Missing acceptance gates (do not reinterpret as grants)
 
 1. Owner must review and install a source-pinned long-lived systemd service and exact host-owned executable, then register an honest external_call profile in private mode0600 `host-commands.json`. A general host grant or a nonexistent profile ID cannot substitute for the exact one-use approval card.

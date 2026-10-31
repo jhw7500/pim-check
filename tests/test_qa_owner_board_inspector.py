@@ -47,6 +47,7 @@ def valid_sample():
             "/opt/pim/bin/chk_cam_operate.sh": DIGEST},
         "consumers_ready": True,
         "writer_closed": False,
+        "writer_fence_session": None,
         "owner_idle": True,
     }
 
@@ -62,6 +63,7 @@ def test_fixed_probe_returns_typed_board_sample():
     assert data.target == "192.168.214.4"
     assert data.led_flags == (False,) * 4
     assert data.writer_closed is False
+    assert data.writer_fence_session is None
     assert len(f.commands) == 1
     command, retries = f.commands[0]
     assert command.startswith("python3 -B -c ")
@@ -76,6 +78,7 @@ def test_fixed_probe_returns_typed_board_sample():
     lambda v: v.update({"led_flags": [False, True, False]}),
     lambda v: v.update({"led_flags": ["false"] * 4}),
     lambda v: v.update({"writer_closed": "yes"}),
+    lambda v: v.update({"writer_fence_session": "fake-authority"}),
     lambda v: v.update({"observed_at_epoch": True}),
     lambda v: v.update({"runtime_sha": None}),
     lambda v: v.update({"unknown": "unsafe"}),

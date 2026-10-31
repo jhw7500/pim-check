@@ -142,6 +142,7 @@ class BoardSample:
     consumers_ready: bool
     writer_closed: bool
     owner_idle: bool
+    writer_fence_session: str | None = None
 
 
 class BoardInspector(Protocol):
@@ -213,6 +214,8 @@ class PinnedBoardRecoveryAdapter:
                 raise AdapterBlocked("invalid verified status flag")
         if sample.writer_closed is not True or sample.owner_idle is not True:
             raise AdapterBlocked("writer not quiesced or camera owner busy")
+        if sample.writer_fence_session != proof.session:
+            raise AdapterBlocked("no persistent writer fence proof bound to owner")
         if sample.journal_state == "ABSENT":
             if (sample.journal_phase is not None
                     or sample.journal_run_id is not None
@@ -246,7 +249,8 @@ class PinnedBoardRecoveryAdapter:
             runtime_sha=sample.runtime_sha,
             all_led_off=True, consumers_ready=sample.consumers_ready,
             writer_closed=sample.writer_closed,
-            owner_idle=sample.owner_idle), sample
+            owner_idle=sample.owner_idle,
+            writer_fence_session=sample.writer_fence_session), sample
 
     def observe(self) -> BoardEvidence:
         return self._verified_observation()[0]

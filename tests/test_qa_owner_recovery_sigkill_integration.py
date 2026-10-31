@@ -20,7 +20,7 @@ RUNTIME = "d" * 64
 RUN = "sigkill-owner-test-001"
 
 CHILD = r'''
-import json, os, signal, sys
+import json, os, signal, sys, time
 from pathlib import Path
 
 from scripts.qa_owner_recovery_controller import Baseline, BoardEvidence, reconcile
@@ -33,6 +33,9 @@ src, edge, ord_hash, runtime_hash = "a"*40, "b"*64, "c"*64, "d"*64
 
 class FakeBoard:
     def observe(self):
+        if mode == "hold_owner_lock":
+            print("LOCK_HELD", flush=True)
+            time.sleep(30)
         data = json.loads(board.read_text())
         clean = data["clean"] is True
         return BoardEvidence(
@@ -47,12 +50,16 @@ class FakeBoard:
             ord_conf_sha=ord_hash,
             runtime_sha=runtime_hash if clean else "e"*64,
             all_led_off=True, consumers_ready=clean,
-            writer_closed=True, owner_idle=True)
+            writer_closed=True, owner_idle=True,
+            writer_fence_session="fake-owner-lease-1")
 
     def recover_validated_board_journal(self, *, run_id, original_sha256):
         data = json.loads(board.read_text())
         assert run_id == "sigkill-owner-test-001" and original_sha256 == edge
         assert not data["clean"]
+        if mode == "kill_before_external_effect":
+            print("BEFORE_FAKE_EFFECT", flush=True)
+            os.kill(os.getpid(), signal.SIGKILL)
         data = {"clean": True, "restore_calls": data["restore_calls"] + 1}
         temporary = board.with_suffix(".pending")
         with temporary.open("w") as file:
@@ -66,6 +73,8 @@ class FakeBoard:
         print("FAKE_RESTORATION_DURABLE", flush=True)
         if mode == "kill_after_external_effect":
             os.kill(os.getpid(), signal.SIGKILL)
+        if mode == "perform_restore":
+            return
         raise AssertionError("second external restoration must not occur")
 
 result = reconcile(
@@ -120,3 +129,51 @@ def test_sigkill_post_remote_effect_recovery_state_is_reconciled_once(tmp_path):
     assert final2["reason"] == "FINAL_ATTESTATION_REQUIRED"
     assert final2["recovery_callback_called"] is False
     assert json.loads(board.read_text())["restore_calls"] == 1
+
+
+
+def test_sigkill_before_external_effect_restarts_restore_exactly_once(tmp_path):
+    store, board = prepare(tmp_path)
+    first = child(store.directory, board, "kill_before_external_effect")
+    assert first.returncode == -signal.SIGKILL
+    assert "BEFORE_FAKE_EFFECT" in first.stdout
+    assert store.read()["state"] == "RESTORE_PENDING"
+    assert json.loads(board.read_text()) == {"clean": False, "restore_calls": 0}
+    second = child(store.directory, board, "perform_restore")
+    assert second.returncode == 0, second.stderr
+    result = json.loads(second.stdout.strip().splitlines()[-1])
+    assert result["state"] == "FINAL_ATTESTATION_PENDING"
+    assert result["recovery_callback_called"] is True
+    assert json.loads(board.read_text()) == {"clean": True, "restore_calls": 1}
+    third = child(store.directory, board, "must_not_recover_again")
+    assert third.returncode == 0, third.stderr
+    assert json.loads(board.read_text())["restore_calls"] == 1
+
+
+def test_real_concurrent_owner_process_cannot_restore(tmp_path):
+    import select
+    store, board = prepare(tmp_path)
+    blocking = subprocess.Popen(
+        [sys.executable, "-B", "-c", CHILD, str(store.directory),
+         str(board), "hold_owner_lock"],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+    try:
+        assert blocking.stdout is not None
+        ready, _, _ = select.select([blocking.stdout], [], [], 10)
+        assert ready, "fake owner did not acquire lock"
+        assert blocking.stdout.readline().strip() == "LOCK_HELD"
+        assert store.read()["state"] == "RESTORE_PENDING"
+        competing = child(store.directory, board, "perform_restore")
+        assert competing.returncode != 0
+        assert "exclusive owner lock unavailable" in competing.stderr
+        assert json.loads(board.read_text())["restore_calls"] == 0
+    finally:
+        if blocking.poll() is None:
+            blocking.kill()
+        blocking.communicate(timeout=10)
+    restarted = child(store.directory, board, "perform_restore")
+    assert restarted.returncode == 0, restarted.stderr
+    assert json.loads(board.read_text())["restore_calls"] == 1
+    assert store.read()["state"] == "FINAL_ATTESTATION_PENDING"

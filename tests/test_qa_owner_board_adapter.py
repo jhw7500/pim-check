@@ -77,7 +77,8 @@ def sample(**changes):
         edgeconf_sha="e" * 64, ord_conf_sha=ORD,
         runtime_sha="f" * 64, led_flags=(False, False, False, False),
         binary_hashes=BINS.copy(), consumers_ready=False,
-        writer_closed=True, owner_idle=True)
+        writer_closed=True, owner_idle=True,
+        writer_fence_session=ENV["PIM_BOARD_LOCK_SESSION"])
     return replace(value, **changes)
 
 
@@ -164,6 +165,8 @@ def test_pinned_board_witness_fields_from_lease_and_probe(tmp_path, monkeypatch)
     {"ord_conf_sha": "f" * 64},
     {"owner_idle": False},
     {"writer_closed": False},
+    {"writer_fence_session": None},
+    {"writer_fence_session": "foreign-owner"},
 ])
 def test_untrusted_readiness_and_binary_inputs_block_without_restoring(tmp_path, monkeypatch, wrong):
     obj, probe = adapter(tmp_path, monkeypatch, current=sample(**wrong))

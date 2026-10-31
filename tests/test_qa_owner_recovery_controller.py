@@ -38,7 +38,7 @@ def evidence(**changes):
         on_board_original_sha=EDGE, edgeconf_sha="e" * 64,
         ord_conf_sha=ORD, runtime_sha="f" * 64,
         all_led_off=True, consumers_ready=False, writer_closed=True,
-        owner_idle=True)
+        owner_idle=True, writer_fence_session="owner-lease-001")
     return replace(data, **changes)
 
 
@@ -135,6 +135,8 @@ def test_existing_final_attestation_is_never_automatically_closed(tmp_path):
     {"installed_binaries_attested": False},
     {"owner_idle": False},
     {"writer_closed": False},
+    {"writer_fence_session": None},
+    {"writer_fence_session": "other-owner"},
     {"all_led_off": False},
     {"ord_conf_sha": "f" * 64},
     {"on_board_original_sha": "f" * 64},
