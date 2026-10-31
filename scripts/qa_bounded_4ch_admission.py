@@ -82,6 +82,7 @@ def assess_bounded_4ch(
     restore_window_seconds: int = DEFAULT_RESTORE_WINDOW_SECONDS,
     reserve_kib: int = DEFAULT_RESERVE_KIB,
     file_reserve: int = DEFAULT_FILE_RESERVE,
+    max_extra_segments_per_channel: int | None = None,
 ) -> dict[str, object]:
     """Calculate *upper-bound* space needs without claiming cleanup evidence.
 
@@ -89,10 +90,12 @@ def assess_bounded_4ch(
     MP4+SRT are budgeted as TWO root entries per channel/segment, which
     intentionally overestimates one shared SRT per four-channel session.
 
+    Each interruption/restart can create a partial additional MP4/SRT segment
+    per channel. A missing bound blocks even an offline capacity review.
+    Explicit bounds are planning assumptions, NOT evidence of restart control.
     The model does not see actual writer EOS, eligible recycle entries,
-    board lease fencing, or installed Finalizer. The result can NEVER authorize
-    a hardware mutation. Freshness is supplied and must be independently
-    attested by the calling owner.
+    board lease fencing, or installed Finalizer. It can NEVER authorize
+    hardware mutation. Freshness must be independently attested by the owner.
     """
     if type(snapshot) is not Snapshot:
         raise AdmissionError("unverified snapshot type")
@@ -102,6 +105,10 @@ def assess_bounded_4ch(
     restore = _integer(restore_window_seconds, "restore window", minimum=1)
     reserve = _integer(reserve_kib, "space reserve", minimum=1)
     keep_files = _integer(file_reserve, "file reserve", minimum=1)
+    additional_segments = None
+    if max_extra_segments_per_channel is not None:
+        additional_segments = _integer(
+            max_extra_segments_per_channel, "extra segment bound")
 
     rate, stabilize, monitor, record_min = _profile_contract(profile)
     numbers = ("used_kib", "avail_kib", "root_files", "event_files",
@@ -126,7 +133,10 @@ def assess_bounded_4ch(
     # This is deliberately conservative even if one SRT is shared.
     segment_seconds = record_min * 60
     session_count = ceil(active_seconds / segment_seconds)
-    projected_files = len(CHANNELS) * 2 * session_count
+    # Each interrupted session can finalize additional partial MP4/SRT pairs.
+    # An unbounded owner restart must never silently count as zero.
+    budgeted_sessions = session_count + (additional_segments or 0)
+    projected_files = len(CHANNELS) * 2 * budgeted_sessions
     limit_bytes = (capacity * snapshot.disk_limit_per) // 100
     slack = max(0, limit_bytes - snapshot.used_kib)
     projected_root = snapshot.root_files + projected_files
@@ -134,6 +144,8 @@ def assess_bounded_4ch(
     required_rotations = max(
         0, projected_root + keep_files - snapshot.disk_limit_file + 1)
     reasons: list[str] = []
+    if additional_segments is None:
+        reasons.append("EXTRA_SEGMENT_BOUND_MISSING")
     if not snapshot.disk_manage:
         reasons.append("DISK_MANAGEMENT_DISABLED")
     if snapshot.recovery_files:
@@ -165,6 +177,10 @@ def assess_bounded_4ch(
         "restore_window_seconds": restore,
         "writer_exposure_seconds": active_seconds,
         "recording_segment_seconds": segment_seconds,
+        "nominal_recording_segments_per_channel": session_count,
+        "max_extra_segments_per_channel": additional_segments,
+        "budgeted_segments_per_channel": budgeted_sessions,
+        "extra_segment_budget_is_planning_assumption": True,
         "projected_recording_kib": video_kib,
         "projected_file_count": projected_files,
         "root_files_after_projection": projected_root,
