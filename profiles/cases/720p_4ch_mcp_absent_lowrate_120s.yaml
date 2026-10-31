@@ -88,6 +88,10 @@ setup:
   stabilize_sec: 200
 
 checks:
+  # Pin the physically observed MAX9296 version for this no-MCP candidate.
+  # Keep inherited adapters 1/2 and prepare/health_raw ABI checks enabled.
+  max9296_abi:
+    expected_version: "2.12"
   frame_flow:
     enabled: true
     path: /run/pim-camera/gstApp.json

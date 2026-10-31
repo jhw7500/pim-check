@@ -46,6 +46,10 @@ def test_candidate_is_explicit_non_smoke_and_target_is_pinned():
     assert "camera" in tags and "mcp_absent" in tags
     assert "experimental_lowrate" in tags and "capacity_review_only" in tags
     assert "smoke" not in tags and "fault" not in tags
+    assert raw(CANDIDATE)["checks"]["max9296_abi"]["expected_version"] == "2.12"
+    assert row["checks"]["max9296_abi"] == {
+        "expected_version": "2.12", "adapters": [1, 2], "i2c_addr": "0048",
+    }
     assert row["target"]["host"] == "192.168.214.4"
     assert "미검증" in row["description"]
 
@@ -64,6 +68,8 @@ def test_only_intended_semantic_profile_fields_differ_from_original():
         standard["setup"]["edgeconf_changes"][key] = [512, 512]
     assert "monitor" not in standard
     standard["monitor"] = {"duration_sec": 120}
+    # A future base.yaml version change must not silently change this candidate.
+    standard["checks"]["max9296_abi"] = {"expected_version": "2.12"}
     assert standard == short
 
 
