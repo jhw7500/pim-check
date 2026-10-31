@@ -70,7 +70,8 @@ def test_spacious_offline_fixture_is_review_only_not_execution_permission():
         event_storage_size=src.event_storage_size,
         disk_manage=src.disk_manage, event_auto_remove=src.event_auto_remove,
         recovery_files=0, stale_restart_markers=False)
-    r = assess_bounded_4ch(generous, PROFILE, age_seconds=0)
+    r = assess_bounded_4ch(generous, PROFILE, age_seconds=0,
+                          max_extra_segments_per_channel=0)
     assert r["decision"] == "CAPACITY_REVIEW_ONLY"
     assert not r["reason_codes"]
     assert r["execution_authorized"] is False
@@ -126,7 +127,8 @@ def test_shorter_bound_may_fit_in_storage_but_still_requires_owner_review():
     profile["setup"]["stabilize_sec"] = 1
     profile["monitor"]["duration_sec"] = 100
     r = assess_bounded_4ch(
-        observed(), profile, age_seconds=0, restore_window_seconds=20)
+        observed(), profile, age_seconds=0, restore_window_seconds=20,
+        max_extra_segments_per_channel=0)
     assert r["decision"] == "CAPACITY_REVIEW_ONLY"
     assert r["projected_file_count"] == 4 * 2 * 3
     assert r["execution_authorized"] is False

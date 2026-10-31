@@ -111,8 +111,10 @@ def test_existing_equipped_board_profile_remains_unchanged():
     assert new["setup"]["edgeconf_changes"][".VHL_CAM.i2c2.ch0.led_flash.enable"] is False
 
 
-def test_historical_capacity_review_pass_is_not_mutation_authorization():
-    report = assess_bounded_4ch(historical_snapshot(), profile(), age_seconds=0)
+def test_historical_zero_extra_segment_assumption_is_not_mutation_authorization():
+    # Zero extra segments is an explicit synthetic assumption, not a live proof.
+    report = assess_bounded_4ch(historical_snapshot(), profile(),
+                               age_seconds=0, max_extra_segments_per_channel=0)
     assert report["writer_exposure_seconds"] == 620
     assert report["recording_kbps"] == 2048
     assert report["projected_recording_kib"] == 155000
@@ -150,3 +152,43 @@ def test_no_stale_historical_sample_can_claim_review(unknown_age):
     with pytest.raises(AdmissionError):
         assess_bounded_4ch(historical_snapshot(), profile(),
                            age_seconds=unknown_age)
+
+
+def test_missing_restart_bound_blocks_review_at_historical_root():
+    """Do not treat nominal 11 segments as a true upper bound without a restart cap."""
+    report = assess_bounded_4ch(historical_snapshot(), profile(), age_seconds=0)
+    assert report["projected_file_count"] == 88
+    assert report["decision"] == "BLOCK"
+    assert "EXTRA_SEGMENT_BOUND_MISSING" in report["reason_codes"]
+    assert report["execution_authorized"] is False
+
+
+def test_one_bounded_extra_segment_per_channel_is_only_reviewable():
+    """One interruption can cost 8 MP4/SRT root entries; still no run authorization."""
+    report = assess_bounded_4ch(historical_snapshot(), profile(),
+                               age_seconds=0, max_extra_segments_per_channel=1)
+    assert report["nominal_recording_segments_per_channel"] == 11
+    assert report["max_extra_segments_per_channel"] == 1
+    assert report["projected_file_count"] == 96
+    assert report["root_files_after_projection"] == 982
+    assert report["decision"] == "CAPACITY_REVIEW_ONLY"
+    assert report["execution_authorized"] is False
+
+
+def test_two_extra_recording_segments_exceed_sixteen_file_reserve():
+    """Two interrupted recording sessions add 16 entries, breaking historical cap."""
+    report = assess_bounded_4ch(historical_snapshot(), profile(),
+                               age_seconds=0, max_extra_segments_per_channel=2)
+    assert report["projected_file_count"] == 104
+    assert report["root_files_after_projection"] == 990
+    assert report["required_root_rotations"] == 7
+    assert report["decision"] == "BLOCK"
+    assert "ROOT_FILE_CAPACITY_WITH_RESERVE" in report["reason_codes"]
+    assert report["execution_authorized"] is False
+
+
+@pytest.mark.parametrize("invalid", [True, False, -1, 0.5, "2"])
+def test_noninteger_or_negative_restart_segment_bounds_fail_closed(invalid):
+    with pytest.raises(AdmissionError):
+        assess_bounded_4ch(historical_snapshot(), profile(),
+                          age_seconds=0, max_extra_segments_per_channel=invalid)
