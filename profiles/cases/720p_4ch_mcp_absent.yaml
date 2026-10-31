@@ -88,13 +88,11 @@ checks:
     enabled: true
     path: /run/pim-camera/gstApp.json
     sample_sec: 3
-  recording:
-    expected_channels: 4
-    session_progress: 'required'
   cpu:
     gst_range: [0, 320]
   recording:
     expected_channels: 4
+    session_progress: 'required'
   custom_commands:
     - name: ch0 BPS QP auto precondition
       command: >-
