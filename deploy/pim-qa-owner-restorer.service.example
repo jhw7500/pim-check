@@ -1,0 +1,37 @@
+# DESIGN TEMPLATE ONLY. Intentionally *.example: not an installable unit.
+# Requires a separately audited /usr/local/libexec/pim-qa-owner-restorer.
+# This source tree does NOT ship that hardware adapter and MUST NOT enable QA.
+[Unit]
+Description=PIM owner-fenced durable camera recovery (NOT INSTALLED)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/pim-check/qa-owner-restorer-reviewed.json
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=jhw
+Group=jhw
+WorkingDirectory=/home/jhw/ai/opencode/projects/pim-check
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/pim-check/qa-owner-restorer.env
+StateDirectory=pim-qa-owner
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/libexec/pim-qa-owner-restorer --policy /etc/pim-check/qa-owner-restorer-reviewed.json
+WatchdogSec=30s
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=1900s
+KillMode=control-group
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateNetwork=no
+ReadWritePaths=/var/lib/pim-qa-owner
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

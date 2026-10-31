@@ -69,23 +69,26 @@ def owner_lock(path: Path) -> Iterator[None]:
     dfd = open_state_dir(path)
     fd = None
     try:
-        fd = os.open(".owner-service.lock", os.O_CREAT | os.O_RDWR
-                     | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
-        info = os.fstat(fd)
-        name = os.stat(".owner-service.lock", dir_fd=dfd, follow_symlinks=False)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or stat.S_IMODE(info.st_mode) != 0o600
-                or info.st_uid != os.getuid()
-                or (info.st_ino, info.st_dev) != (name.st_ino, name.st_dev)):
-            raise OwnerServiceError("unsafe owner lock")
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise OwnerServiceError("owner already running") from exc
-        os.fsync(dfd)
+            fd = os.open(".owner-service.lock", os.O_CREAT | os.O_RDWR
+                         | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+            info = os.fstat(fd)
+            name = os.stat(".owner-service.lock", dir_fd=dfd, follow_symlinks=False)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_uid != os.getuid()
+                    or (info.st_ino, info.st_dev) != (name.st_ino, name.st_dev)):
+                raise OwnerServiceError("unsafe owner lock")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise OwnerServiceError("owner already running") from exc
+            os.fsync(dfd)
+        except OSError as exc:
+            raise OwnerServiceError("owner lock unavailable") from exc
+        # Do NOT catch OSError thrown from the yielded recovery callback:
+        # InterruptedError must propagate, leaving RESTORE_PENDING durable.
         yield
-    except OSError as exc:
-        raise OwnerServiceError("owner lock unavailable") from exc
     finally:
         if fd is not None:
             os.close(fd)
