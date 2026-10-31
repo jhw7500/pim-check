@@ -40,7 +40,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _PID = re.compile(r"[1-9][0-9]*\Z")
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 _REASON = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{3,80}\Z")
-_ALLOWED_RECOVERY_PHASES = frozenset({"JOURNALED", "APPLIED", "REBOOTED"})
+_ALLOWED_RECOVERY_PHASES = frozenset({"APPLIED", "REBOOTED"})
 
 
 class AdapterBlocked(RuntimeError):
@@ -264,7 +264,9 @@ class PinnedBoardRecoveryAdapter:
                 or row.on_board_run_id != run_id
                 or row.on_board_original_sha != original_sha256
                 or phase not in _ALLOWED_RECOVERY_PHASES):
-            raise AdapterBlocked("journal is missing, ambiguous, or already restoring")
+            raise AdapterBlocked(
+                "journal not proven applied; no blind reboot from JOURNALED "
+                "or an already-restoring phase")
         # The existing recover_pending_transaction is the ONLY mutating call.
         # It validates the onboard manifest and original before restoring,
         # reboots for readiness, verifies SHA and closes the board journal.

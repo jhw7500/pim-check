@@ -192,7 +192,7 @@ def test_only_known_dirty_board_journal_can_trigger_existing_restorer(tmp_path, 
     assert bound.observe().on_board_journal_state == "ABSENT"
 
 
-@pytest.mark.parametrize("phase", ["RESTORED", "VERIFIED", "CLOSED", "FOREIGN"])
+@pytest.mark.parametrize("phase", ["JOURNALED", "RESTORED", "VERIFIED", "CLOSED", "FOREIGN"])
 def test_uncertain_journal_phase_refuses_automatic_second_reboot(
         tmp_path, monkeypatch, phase):
     bound, _ = adapter(tmp_path, monkeypatch,
