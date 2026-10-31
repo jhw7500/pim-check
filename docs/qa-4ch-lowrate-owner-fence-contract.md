@@ -10,6 +10,15 @@
 - At the historical 2026-10-31T09:23Z root886/1000 SD snapshot, nominal 88 entries yield root974 assuming ZERO restarts. The corrected pure gate now BLOCKS without an explicit per-channel extra-segment bound. Synthetic bound0 gives root974, bound1 adds 8 entries (root982), bound2 adds 16 (root990) and BLOCKS due to the 16-file reserve. Explicit numeric bounds are planning assumptions, not evidence of actual hardware restart inhibition. All results remain execution_authorized=false. Observation expires after 120s.
 - Strict custom checks search the **second finalized** MP4 session since boot and check all 4 FPS and bitrate plus ch0 MP4/SRT. A 120-second monitor may be insufficient if camera startup/session boundaries delay second finalize. Do not weaken/skip those checks; if failure is only due to missing second finalize, consider a separately reviewed longer monitor after a NEW capacity calculation.
 
+## Executability gate
+- This experimental YAML now explicitly sets setup.qa_review_only: true.
+- SetupManager.run_setup immediately refuses ANY presence of that key, before
+  remote configuration reads, snapshot, injection, changes, reboot or restoration.
+  This covers direct CLI, Web, SSE, Plan and SetupManager call paths.
+- Numeric offline capacity review is not permission to remove this guard.
+  After product owner integration, create a separately reviewed approved profile
+  rather than flipping or deleting this field without independent authorization.
+
 ## Product owner stop/fencing findings
 
 - Product source `pim-package-jhw` commit `f26b99fabda5955229041ecd182091fb8b340137`, `docs/camera-health/cam-recovery-operations.md`: `cam-recoveryctl request gstapp_stop` terminates gstApp, but `cam_liveness_tick` can immediately submit `gstapp_restart` in the same owner iteration. **This is not a persistent fence**.

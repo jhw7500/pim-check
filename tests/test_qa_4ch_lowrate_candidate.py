@@ -56,6 +56,8 @@ def test_only_intended_semantic_profile_fields_differ_from_original():
     # Exact intentional allowlist, so a future config drift fails CI.
     for key in ("name", "description", "tags"):
         standard[key] = short[key]
+    assert short["setup"].get("qa_review_only") is True
+    standard["setup"]["qa_review_only"] = True
     for bus, ch in CHANNELS:
         key = f".VHL_CAM.{bus}.{ch}.bps"
         assert standard["setup"]["edgeconf_changes"][key][0] > 512
@@ -192,3 +194,32 @@ def test_noninteger_or_negative_restart_segment_bounds_fail_closed(invalid):
     with pytest.raises(AdmissionError):
         assess_bounded_4ch(historical_snapshot(), profile(),
                           age_seconds=0, max_extra_segments_per_channel=invalid)
+
+
+def test_review_only_setup_has_a_direct_unbypassable_hardware_stop():
+    """A direct case/plan/web/stream setup must fail before target mutation."""
+    from setup import SetupManager
+
+    candidate = profile()
+    cfg = candidate["setup"]
+    assert cfg["qa_review_only"] is True
+
+    class NoTarget:
+        def __getattr__(self, name):
+            raise AssertionError(f"target was touched: {name}")
+
+    mgr = SetupManager(NoTarget())
+    with pytest.raises(RuntimeError, match="REVIEW_ONLY_PROFILE_BLOCKED"):
+        mgr.run_setup(cfg)
+    assert mgr._setup_mutation_attempted is False
+
+
+@pytest.mark.parametrize("flag", [True, False, "true", None])
+def test_review_only_presence_cannot_be_downgraded_to_execution(flag):
+    """Changing the flag's value is not an implicit execution approval."""
+    from setup import SetupManager
+    mgr = SetupManager(object())
+    with pytest.raises(RuntimeError, match="REVIEW_ONLY_PROFILE_BLOCKED"):
+        mgr.run_setup({"qa_review_only": flag,
+                       "edgeconf_changes": {".VHL_CAM.cam_width": 1280}})
+    assert mgr._setup_mutation_attempted is False

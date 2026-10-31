@@ -9,6 +9,9 @@ target:
   host: 192.168.214.4
 
 setup:
+  # Structural guard: SetupManager refuses this profile on every execution path.
+  # Do not remove for physical tests; use a separately reviewed approved profile.
+  qa_review_only: true
   edgeconf_changes:
     ".VHL_CAM.cam_width": 1280
     ".VHL_CAM.cam_height": 720
