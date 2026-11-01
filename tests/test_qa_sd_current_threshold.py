@@ -2,8 +2,6 @@
 
 Offline-only; no SSH, board lease, recording, or file mutation.
 """
-from dataclasses import replace
-
 import pytest
 
 from scripts.qa_acceptance_safety import Snapshot, GateError, current_sd_limits, storage_gate
