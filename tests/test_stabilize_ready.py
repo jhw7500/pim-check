@@ -1018,11 +1018,13 @@ class TestCasesUseSessionAnchor:
                 # 로그 readers may still use the boot-time fallback: they do not select
                 # an ordered recording from a prior case.
                 assert '[ -z "$BOOT" ] && BOOT=$(uptime -s)' in command, label
-        assert len(strict_recording) == 120, (
+        assert len(strict_recording) == 121, (
             f"strict 녹화 세션 앵커 사용처가 {len(strict_recording)}건 "
-            "(기대 120 = multi_* 108 + 녹화 개수 창 11 + MCP 미장착 SRT 1)"
+            "(기대 121 = multi_* 108 + 녹화 개수 창 11 + MCP 미장착 SRT 1 + 저비트레이트 후보 SRT 1)"
         )
         assert sum(label.startswith("720p_4ch_mcp_absent.yaml:")
+                   for label in strict_recording) == 1
+        assert sum(label.startswith("720p_4ch_mcp_absent_lowrate_120s.yaml:")
                    for label in strict_recording) == 1
         assert len(legacy_fallback) >= 30, (
             f"boot-time 폴백 로그 리더가 너무 적다 ({len(legacy_fallback)})"

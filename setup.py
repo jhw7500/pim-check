@@ -1348,6 +1348,14 @@ class SetupManager:
             False: skip됨
         """
         self._setup_mutation_attempted = False
+        # A review-only QA candidate may be parsed by tests and dashboards,
+        # but it must NEVER be applied by CLI, web, SSE, plan or direct setup.
+        # Presence (including false/malformed values) is a hard stop, not an
+        # unreviewed opt-in flag. This runs before ANY remote config reads.
+        if "qa_review_only" in setup_config:
+            raise RuntimeError(
+                "REVIEW_ONLY_PROFILE_BLOCKED: create a separately reviewed "
+                "and owner-authorized executable profile")
         self._preserve_session_anchor = False
         # reboot_and_wait → _stabilize 가 참조하므로 reboot 전에 저장한다.
         self._ready_processes_list = list(ready_processes or [])
