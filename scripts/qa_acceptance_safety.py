@@ -102,6 +102,46 @@ def parse_observation(data: dict[str, str]) -> Snapshot:
         raise GateError("INVALID_OBSERVATION") from None
 
 
+def current_sd_limits(s: Snapshot) -> dict[str, object]:
+    """Current counters against configured ORD thresholds, no extra reserves.
+
+    This is state evidence ONLY; it neither predicts future writes/ORD cleanup
+    nor grants permission to configure, restart, or record on a PIM board.
+    """
+    if type(s) is not Snapshot:
+        raise GateError("INVALID_SNAPSHOT")
+    used = _natural(s.used_kib, "used_kib")
+    available = _natural(s.avail_kib, "avail_kib")
+    files = _natural(s.root_files, "root_files")
+    limit_pct = _natural(s.disk_limit_per, "disk_limit_per", True)
+    limit_files = _natural(s.disk_limit_file, "disk_limit_file", True)
+    capacity = used + available
+    if capacity <= 0 or limit_pct > 100:
+        raise GateError("INVALID_CURRENT_SD_LIMITS")
+
+    # Compare raw integers: rounded 90.00 must not hide 90.00001% overflow.
+    usage_ok = used * 100 <= capacity * limit_pct
+    files_ok = files <= limit_files
+    reasons = []
+    if not usage_ok:
+        reasons.append("CURRENT_SD_USAGE_OVER_LIMIT")
+    if not files_ok:
+        reasons.append("CURRENT_ROOT_FILES_OVER_LIMIT")
+    return {
+        "allowed": not reasons,
+        "decision": "PASS" if not reasons else "FAIL",
+        "reason_codes": reasons,
+        "usage_within_limit": usage_ok,
+        "root_files_within_limit": files_ok,
+        "used_percent_display": round(used * 100 / capacity, 2),
+        "configured_limit_percent": limit_pct,
+        "root_files": files,
+        "configured_file_limit": limit_files,
+        "execution_authorized": False,
+        "evidence_only": True,
+    }
+
+
 def storage_gate(s: Snapshot) -> dict[str, object]:
     for key in ("used_kib", "avail_kib", "root_files", "event_files",
                 "event_kib", "recycle_kib", "recovery_files"):
@@ -118,6 +158,9 @@ def storage_gate(s: Snapshot) -> dict[str, object]:
     projected_kib = int(RECORD_KBPS * 1000 / 8 * PLAN_SECONDS / 1024)
     projected_files = RECORD_CHANNELS * ((PLAN_SECONDS + 59) // 60)
     event_quota_kib = capacity * s.event_storage_size / 100
+    current_limits = current_sd_limits(s)
+    # Legacy allowed is still the conservative CAMPAIGN gate, not the
+    # present-day ORD limit result. Keep future-growth safety separate.
     reasons = []
     if not s.disk_manage:
         reasons.append("DISK_MANAGEMENT_DISABLED")
@@ -139,6 +182,9 @@ def storage_gate(s: Snapshot) -> dict[str, object]:
         reasons.append("STALE_PROCESS_RESTART_MARKERS")
     return {
         "allowed": not reasons, "reason_codes": reasons,
+        "current_sd_limits": current_limits,
+        "forecast_decision": "BLOCK" if reasons else "REVIEW_REQUIRED",
+        "forecast_reason_codes": list(reasons),
         "effective_used_pct": round(pct, 2), "limit_pct": s.disk_limit_per,
         "headroom_to_limit_kib": slack, "projected_recording_kib": projected_kib,
         "root_files": s.root_files, "root_file_limit": s.disk_limit_file,
