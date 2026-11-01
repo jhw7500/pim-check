@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from math import ceil
 
-from scripts.qa_acceptance_safety import Snapshot
+from scripts.qa_acceptance_safety import Snapshot, current_sd_limits
 
 TARGET = "192.168.214.4"
 CHANNELS = (("i2c2", "ch0"), ("i2c2", "ch1"),
@@ -140,6 +140,9 @@ def assess_bounded_4ch(
     limit_bytes = (capacity * snapshot.disk_limit_per) // 100
     slack = max(0, limit_bytes - snapshot.used_kib)
     projected_root = snapshot.root_files + projected_files
+    # The operator's current-state acceptance is exactly the configured
+    # limits. Reserve and future-growth assumptions apply ONLY to forecast.
+    current_limits = current_sd_limits(snapshot)
     needed_bytes = max(0, video_kib + reserve - slack + 1)
     required_rotations = max(
         0, projected_root + keep_files - snapshot.disk_limit_file + 1)
@@ -164,6 +167,8 @@ def assess_bounded_4ch(
         "target": TARGET,
         "decision": "BLOCK" if reasons else "CAPACITY_REVIEW_ONLY",
         "reason_codes": reasons,
+        "current_sd_limits": current_limits,
+        "forecast_decision": "BLOCK" if reasons else "CAPACITY_REVIEW_ONLY",
         "board_touched": False,
         "execution_authorized": False,
         "evidence_only": True,
