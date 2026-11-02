@@ -1,0 +1,80 @@
+# Bounded camera-functional follow-up to smoke_camera_functional.
+# Existing channel_verify.yaml (48 forced-I2C cases) remains untouched.
+name: "Camera channel verify: isolated ch1, ch2, ch3"
+description: >-
+  Enable each non-baseline camera alone, confirm actual gstApp frame flow,
+  recording sessions and channel-specific runtime settings.
+  Do not make forced register reads on a driver-owned ISP.
+version: 1
+
+cases:
+  regression:
+    - gen_fhd_1ch_ch1
+    - gen_fhd_1ch_ch2
+    - gen_fhd_1ch_ch3
+
+execution:
+  stop_on_fail: true
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 200
+  wait_between_cases: 0
+  reset_mode: reboot
+  monitor_until_pass: true
+  skip_finalize_checks: false
+
+case_overrides:
+  target:
+    host: 192.168.214.4
+  monitor:
+    duration_sec: 210
+  setup:
+    reboot_after: true
+    stabilize_sec: 120
+    edgeconf_changes:
+      ".VHL_CAM.cam_width": 1920
+      ".VHL_CAM.cam_height": 1080
+      ".VHL_CAM.fps": 15
+      ".VHL_CAM.enc": h265
+      ".VHL_CAM.i2c2.ch0.led_flash.enable": false
+      ".VHL_CAM.i2c2.ch1.led_flash.enable": false
+      ".VHL_CAM.i2c1.ch2.led_flash.enable": false
+      ".VHL_CAM.i2c1.ch3.led_flash.enable": false
+  checks:
+    max9296_abi:
+      expected_version: null
+    frame_flow:
+      enabled: true
+      path: /run/pim-camera/gstApp.json
+      sample_sec: 3
+    recording:
+      expected_channels: 1
+      session_progress: required
+    # Replace generated I2C force probes with one exact runtime check.
+    custom_commands:
+      - name: enabled channel and bitrate applied to live runtime
+        command: >-
+          A=$(jq -c '[.VHL_CAM.fps,
+            (.VHL_CAM.i2c2.ch0 | {enable,bps}),
+            (.VHL_CAM.i2c2.ch1 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch2 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch3 | {enable,bps})]'
+            /root/shared_v/edgeconf_pim.json 2>/dev/null);
+          B=$(jq -c '[.VHL_CAM.fps,
+            (.VHL_CAM.i2c2.ch0 | {enable,bps}),
+            (.VHL_CAM.i2c2.ch1 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch2 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch3 | {enable,bps})]'
+            /run/pim-camera/config/pim_runtime.json 2>/dev/null);
+          [ -n "$A" ] && [ "$A" = "$B" ] && echo OK || echo FAIL:RUNTIME_CHANNEL
+        expected: OK
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: json
+    path: reports/channel_camera_functional/{timestamp}.json
+  - format: markdown_summary
+    path: reports/channel_camera_functional/{timestamp}.md
