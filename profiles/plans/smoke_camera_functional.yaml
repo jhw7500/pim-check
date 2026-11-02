@@ -31,6 +31,8 @@ case_overrides:
   monitor:
     duration_sec: 210
   setup:
+    # A failed original snapshot aborts BEFORE any camera config mutation.
+    require_snapshot: true
     reboot_after: true
     stabilize_sec: 120
     edgeconf_changes:
