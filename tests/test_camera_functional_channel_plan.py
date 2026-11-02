@@ -23,7 +23,7 @@ def test_actual_frame_and_recording_checks_replace_forced_register_probes():
     plan = load_plan(str(PATH))
     for i, case in enumerate(CASES, start=1):
         original = load_profile(str(PROFILES), case=case)
-        assert "i2ctransfer" in str(original.get("checks", {}).get("custom_commands"))
+        assert "i2cdetect" in str(original.get("checks", {}).get("custom_commands"))
         runtime = plan_runtime_profile(plan, original)
         checks = runtime["checks"]
         assert runtime["target"]["host"] == "192.168.214.4"
