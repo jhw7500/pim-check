@@ -31,10 +31,16 @@ def test_actual_frame_and_recording_checks_replace_forced_register_probes():
         assert checks["frame_flow"]["enabled"] is True
         assert checks["recording"]["expected_channels"] == 1
         assert checks["recording"]["session_progress"] == "required"
-        assert len(checks["custom_commands"]) == 1
+        assert len(checks["custom_commands"]) == 2
         command = checks["custom_commands"][0]["command"]
+        evidence = checks["custom_commands"][1]["command"]
         assert "pim_runtime.json" in command and "bps" in command
-        assert "i2ctransfer" not in command and "i2cdetect" not in command
+        assert "ffprobe" in evidence and "avg_frame_rate" in evidence
+        assert "bit_rate" in evidence and "codec_name" in evidence
+        assert "journalctl -t gstApp -b" in evidence
+        assert "NEED_2_FINALIZES_AFTER_BOOT" in evidence
+        assert "i2ctransfer" not in command + evidence
+        assert "i2cdetect" not in command + evidence
         changes = runtime["setup"]["edgeconf_changes"]
         for ch in range(4):
             bus = "i2c2" if ch <= 1 else "i2c1"
