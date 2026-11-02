@@ -13,7 +13,7 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
         run: ruff check .
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ['3.9', '3.11', '3.12']
@@ -75,7 +75,7 @@ jobs:
     # tests/test_viewer_js_smoke.py — pim_web_viewer 의 임베디드 JS 가 실제
     # 브라우저에서 parse + 실행되는지 검증 (SyntaxError / ReferenceError 같은
     # silent JS regression 가드). pytest 단위 테스트 + ruff 가 못 잡는 영역.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 무한 hang 방지 — chromium download cold cache + playwright hang + viewer
     # hang 등 누적해도 15분이면 충분. 정상 case 는 약 1~2분.
     timeout-minutes: 15
