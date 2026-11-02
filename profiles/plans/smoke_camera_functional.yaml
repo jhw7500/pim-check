@@ -1,0 +1,81 @@
+# Focused live-camera smoke, reusing ORIGINAL generated channel cases.
+# The historical smoke.yaml stays unchanged (its register/LED checks are still
+# useful for equipped boards; they are not safe on the MCP4018-absent PIM).
+name: "Camera smoke: actual frame flow and recording"
+description: >-
+  Short first physical phase: ch0 HFlip OFF, AE ON and AWB OFF at FHD15.
+  Uses existing plan engine and generated cases, replacing direct forced
+  I2C commands with actual frame-flow and recording session checks.
+  Image orientation/exposure/colour require before/after clip comparison.
+version: 1
+
+cases:
+  regression:
+    - gen_fhd_ch0_hflip_off
+    - gen_fhd_ch0_ae_on
+    - gen_fhd_ch0_awb_off
+
+execution:
+  stop_on_fail: true
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 200
+  wait_between_cases: 0
+  reset_mode: reboot
+  monitor_until_pass: true
+  skip_finalize_checks: false
+
+case_overrides:
+  target:
+    host: 192.168.214.4
+  monitor:
+    duration_sec: 210
+  setup:
+    reboot_after: true
+    stabilize_sec: 120
+    edgeconf_changes:
+      ".VHL_CAM.cam_width": 1920
+      ".VHL_CAM.cam_height": 1080
+      ".VHL_CAM.fps": 15
+      ".VHL_CAM.enc": h265
+      ".VHL_CAM.i2c2.ch0.enable": true
+      ".VHL_CAM.i2c2.ch1.enable": false
+      ".VHL_CAM.i2c1.ch2.enable": false
+      ".VHL_CAM.i2c1.ch3.enable": false
+      ".VHL_CAM.i2c2.ch0.led_flash.enable": false
+      ".VHL_CAM.i2c2.ch1.led_flash.enable": false
+      ".VHL_CAM.i2c1.ch2.led_flash.enable": false
+      ".VHL_CAM.i2c1.ch3.led_flash.enable": false
+  checks:
+    # Existing, operator-approved MAX9296 2.12 baseline needn't be rechecked
+    # on every Flip/AE/AWB case.
+    max9296_abi:
+      expected_version: null
+    frame_flow:
+      enabled: true
+      path: /run/pim-camera/gstApp.json
+      sample_sec: 3
+    recording:
+      expected_channels: 1
+      session_progress: required
+    # Deep-merge list REPLACEMENT: generated cases' i2ctransfer -f is NEVER
+    # executed by this plan. The only custom command checks *runtime* state.
+    custom_commands:
+      - name: ch0 camera controls applied to live runtime
+        command: >-
+          A=$(jq -c '.VHL_CAM.i2c2.ch0 | {enable,vflip,hflip,ae_on,ae_gain,awb}'
+            /root/shared_v/edgeconf_pim.json 2>/dev/null);
+          B=$(jq -c '.VHL_CAM.i2c2.ch0 | {enable,vflip,hflip,ae_on,ae_gain,awb}'
+            /run/pim-camera/config/pim_runtime.json 2>/dev/null);
+          [ -n "$A" ] && [ "$A" = "$B" ] && echo OK || echo FAIL:RUNTIME_CAMERA
+        expected: OK
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: json
+    path: reports/smoke_camera_functional/{timestamp}.json
+  - format: markdown_summary
+    path: reports/smoke_camera_functional/{timestamp}.md
