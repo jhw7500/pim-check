@@ -1347,6 +1347,11 @@ class SetupManager:
         edge_changes = setup_config.get("edgeconf_changes", {})
         ord_changes = setup_config.get("ord_vcm_changes", {})
         inject = setup_config.get("inject_command")
+        # Opt-in physical QA fail-closed admission. Legacy case behavior is
+        # unchanged unless the reviewed plan explicitly requests it.
+        require_snapshot = setup_config.get("require_snapshot", False)
+        if type(require_snapshot) is not bool:
+            raise ValueError("setup.require_snapshot must be a boolean")
 
         if not edge_changes and not ord_changes:
             # inject-only 모드: edgeconf 변경 없이 fault만 주입
@@ -1375,6 +1380,21 @@ class SetupManager:
             )
             return False
 
+        # Capture ALL configurations that will change BEFORE the first write.
+        # If either snapshot is missing, no edgeconf/ORD mutation or reboot is
+        # allowed. Host-memory snapshots do not survive SIGKILL/power loss.
+        if require_snapshot:
+            needs = (
+                (EDGECONF_PATH, bool(edge_changes) and not edge_match),
+                (ORD_VCM_PATH, bool(ord_changes) and not ord_match),
+            )
+            for path, needed in needs:
+                if needed and not self.snapshot_config(path):
+                    self._snapshot_failures.add(path)
+                    self._config_snapshots.clear()  # no partial preflight basis
+                    self._local0_log(f"setup ABORT — strict snapshot unavailable: {path}")
+                    raise RuntimeError(f"strict camera snapshot unavailable: {path}")
+
         self._local0_log(
             f"setup START — edge_changes={len(edge_changes)} ord_changes={len(ord_changes)}"
         )
@@ -1384,19 +1404,25 @@ class SetupManager:
             # 복원 원본은 **변경 전에** 찍어야 한다. 스냅샷 실패는 '이번 케이스는
             # 복원 불가'일 뿐 오늘 동작과 같으므로 경고만 하고 진행한다 —
             # 케이스를 죽이는 편이 더 나쁘다.
-            self._snapshot_or_warn(EDGECONF_PATH)
+            if not require_snapshot:
+                self._snapshot_or_warn(EDGECONF_PATH)
             if not self.backup(EDGECONF_PATH):
                 print("ERROR: Failed to backup edgeconf — aborting setup")
                 self._local0_log("setup ABORT — edgeconf backup failed")
+                if require_snapshot:
+                    raise RuntimeError("strict camera edgeconf backup failed")
                 return False
             self.apply_changes(edge_changes, EDGECONF_PATH)
 
         if ord_changes and not ord_match:
             print(f"ord_vcm_conf differs — applying {len(ord_changes)} changes...")
-            self._snapshot_or_warn(ORD_VCM_PATH)
+            if not require_snapshot:
+                self._snapshot_or_warn(ORD_VCM_PATH)
             if not self.backup(ORD_VCM_PATH):
                 print("ERROR: Failed to backup ord_vcm_conf — aborting setup")
                 self._local0_log("setup ABORT — ord_vcm backup failed")
+                if require_snapshot:
+                    raise RuntimeError("strict camera ord_vcm backup failed")
                 return False
             self.apply_changes(ord_changes, ORD_VCM_PATH)
 
