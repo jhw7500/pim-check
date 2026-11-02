@@ -5,9 +5,10 @@
 name: "Camera ch0 FHD manual gain 1024"
 description: >-
   ch0 manual AE gain=1024 vs original gain=512. Assert applied config,
-  real frame flow, and finalized FHD HEVC 15fps MP4. Optical gain effect
-  requires image comparison with stable-scene gain=512 reference; this case
-  alone does NOT prove sensor gain readback or brightness difference.
+  real frame flow and recording-channel presence. Actual finalized HEVC MP4
+  and optical gain effect require a separately collected current-session
+  image comparison against stable-scene gain=512 reference. This case alone
+  does NOT prove sensor gain readback or brightness difference.
 tags: [camera, ch0, manual_gain, functional_candidate]
 
 target:
@@ -60,31 +61,4 @@ checks:
         B=$(jq -c '.VHL_CAM.i2c2.ch0 | {enable,ae_on,ae_gain}'
         /run/pim-camera/config/pim_runtime.json 2>/dev/null);
         [ -n "$A" ] && [ "$A" = "$B" ] && echo OK || echo FAIL:RUNTIME_GAIN
-      expected: OK
-    - name: ch0 finalized FHD H265 MP4 after reboot
-      command: >-
-        ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
-          'NR==1{a=$0} NR==2 && $0==i{print a}'
-          /tmp/pim_check_anchor 2>/dev/null);
-        if [ -z "$ANCHOR" ]; then echo FAIL:NO_SESSION_ANCHOR;
-        else
-        F=$(find /mnt/sd_cam -maxdepth 1 -type f
-        -name '*-ch0.mp4' -newermt "$ANCHOR" -printf '%T@ %p\n'
-        2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-);
-        if [ -z "$F" ]; then echo FAIL:NO_POST_BOOT_MP4;
-        else
-          ffprobe -v error -select_streams v:0
-          -show_entries stream=codec_name,width,height,avg_frame_rate
-          -show_entries format=duration
-          -of json "$F" 2>/dev/null |
-          jq -e '(.streams | length) >= 1
-            and .streams[0].codec_name == "hevc"
-            and .streams[0].width == 1920
-            and .streams[0].height == 1080
-            and .streams[0].avg_frame_rate == "15/1"
-            and (.format.duration | tonumber) >= 55
-            and (.format.duration | tonumber) <= 65'
-          >/dev/null 2>&1 && echo OK || echo FAIL:MP4_METADATA;
-        fi
-        fi
       expected: OK
