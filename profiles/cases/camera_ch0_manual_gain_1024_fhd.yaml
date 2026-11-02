@@ -63,9 +63,13 @@ checks:
       expected: OK
     - name: ch0 finalized FHD H265 MP4 after reboot
       command: >-
-        BOOT=$(uptime -s);
+        ANCHOR=$(awk -v i="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+          'NR==1{a=$0} NR==2 && $0==i{print a}'
+          /tmp/pim_check_anchor 2>/dev/null);
+        if [ -z "$ANCHOR" ]; then echo FAIL:NO_SESSION_ANCHOR;
+        else
         F=$(find /mnt/sd_cam -maxdepth 1 -type f
-        -name '*-ch0.mp4' -newermt "$BOOT" -printf '%T@ %p\n'
+        -name '*-ch0.mp4' -newermt "$ANCHOR" -printf '%T@ %p\n'
         2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-);
         if [ -z "$F" ]; then echo FAIL:NO_POST_BOOT_MP4;
         else
@@ -81,5 +85,6 @@ checks:
             and (.format.duration | tonumber) >= 55
             and (.format.duration | tonumber) <= 65'
           >/dev/null 2>&1 && echo OK || echo FAIL:MP4_METADATA;
+        fi
         fi
       expected: OK
