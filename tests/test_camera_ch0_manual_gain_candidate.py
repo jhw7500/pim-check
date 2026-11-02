@@ -34,18 +34,20 @@ def test_ch0_manual_gain_case_touches_only_expected_camera_settings():
     assert config["setup"]["reboot_after"] is True
 
 
-def test_gain_case_has_actual_frame_and_video_checks_not_just_config():
+def test_gain_case_has_actual_frame_and_recording_checks_not_just_config():
     config = load_profile(str(ROOT / "profiles"), case=CASE)
     assert config["checks"]["frame_flow"]["enabled"] is True
     assert config["checks"]["recording"]["expected_channels"] == 1
     commands = config["checks"]["custom_commands"]
-    assert len(commands) == 3
+    assert len(commands) == 2
     assert all(row["expected"] == "OK" for row in commands)
     text = "\n".join(row["command"] for row in commands)
     assert "ae_gain == 1024" in text
     assert "pim_runtime.json" in text
-    assert "ffprobe" in text and "avg_frame_rate" in text
-    assert "NO_POST_BOOT_MP4" in text
+    # Source-only case does not invent a post-boot MP4 session provenance.
+    # The real board campaign collects matching finalized media separately.
+    assert "ffprobe" not in text
+    assert "pim_check_anchor" not in text
     assert "i2ctransfer" not in text and "i2cdetect" not in text
     assert "systemctl" not in text and "rm -f" not in text
 
