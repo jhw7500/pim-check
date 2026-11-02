@@ -1,0 +1,129 @@
+# Bounded camera-functional follow-up to smoke_camera_functional.
+# Existing channel_verify.yaml (48 forced-I2C cases) remains untouched.
+name: "Camera channel verify: isolated ch1, ch2, ch3"
+description: >-
+  Enable each non-baseline camera alone, confirm actual gstApp frame flow,
+  recording sessions and channel-specific runtime settings.
+  Do not make forced register reads on a driver-owned ISP.
+version: 1
+
+cases:
+  regression:
+    - gen_fhd_1ch_ch1
+    - gen_fhd_1ch_ch2
+    - gen_fhd_1ch_ch3
+
+execution:
+  stop_on_fail: true
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 200
+  wait_between_cases: 0
+  reset_mode: reboot
+  monitor_until_pass: true
+  skip_finalize_checks: false
+
+case_overrides:
+  target:
+    host: 192.168.214.4
+  monitor:
+    duration_sec: 210
+  setup:
+    # A failed original snapshot aborts BEFORE any camera config mutation.
+    require_snapshot: true
+    reboot_after: true
+    stabilize_sec: 120
+    edgeconf_changes:
+      ".VHL_CAM.cam_width": 1920
+      ".VHL_CAM.cam_height": 1080
+      ".VHL_CAM.fps": 15
+      ".VHL_CAM.enc": h265
+      ".VHL_CAM.i2c2.ch0.led_flash.enable": false
+      ".VHL_CAM.i2c2.ch1.led_flash.enable": false
+      ".VHL_CAM.i2c1.ch2.led_flash.enable": false
+      ".VHL_CAM.i2c1.ch3.led_flash.enable": false
+  checks:
+    max9296_abi:
+      expected_version: null
+    frame_flow:
+      enabled: true
+      path: /run/pim-camera/gstApp.json
+      sample_sec: 3
+    recording:
+      expected_channels: 1
+      session_progress: required
+    # Replace generated I2C force probes with one exact runtime check.
+    custom_commands:
+      - name: enabled channel and bitrate applied to live runtime
+        command: >-
+          A=$(jq -c '[.VHL_CAM.fps,
+            (.VHL_CAM.i2c2.ch0 | {enable,bps}),
+            (.VHL_CAM.i2c2.ch1 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch2 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch3 | {enable,bps})]'
+            /root/shared_v/edgeconf_pim.json 2>/dev/null);
+          B=$(jq -c '[.VHL_CAM.fps,
+            (.VHL_CAM.i2c2.ch0 | {enable,bps}),
+            (.VHL_CAM.i2c2.ch1 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch2 | {enable,bps}),
+            (.VHL_CAM.i2c1.ch3 | {enable,bps})]'
+            /run/pim-camera/config/pim_runtime.json 2>/dev/null);
+          [ -n "$A" ] && [ "$A" = "$B" ] && echo OK || echo FAIL:RUNTIME_CHANNEL
+        expected: OK
+      - name: finalized active-channel HEVC MP4 fps duration and bitrate
+        command: >-
+          CH=$(jq -r '[.VHL_CAM.i2c2.ch0.enable,
+            .VHL_CAM.i2c2.ch1.enable,.VHL_CAM.i2c1.ch2.enable,
+            .VHL_CAM.i2c1.ch3.enable] | to_entries |
+            map(select(.value == true)) |
+            if length == 1 then .[0].key else "INVALID" end'
+            /root/shared_v/edgeconf_pim.json 2>/dev/null);
+          [ "$CH" != INVALID ] && [ -n "$CH" ] ||
+            { echo FAIL:CHANNEL_SET; exit 0; };
+          EX=$(jq -r --argjson ch "$CH"
+            '[.VHL_CAM.i2c2.ch0.bps[1],.VHL_CAM.i2c2.ch1.bps[1],
+              .VHL_CAM.i2c1.ch2.bps[1],.VHL_CAM.i2c1.ch3.bps[1]] |
+              .[$ch] // 0' /root/shared_v/edgeconf_pim.json 2>/dev/null);
+          case "$EX" in ''|*[!0-9]*) echo FAIL:BPS_SETPOINT; exit 0;; esac;
+          [ "$EX" -gt 0 ] || { echo FAIL:BPS_SETPOINT; exit 0; };
+          SESSION=$(journalctl -t gstApp -b --no-pager -n 500 2>/dev/null |
+            sed -n 's/.*Session complete: \([0-9]\{8\}_[0-9]\{4\}\).*/\1/p' |
+            tail -1);
+          [ -n "$SESSION" ] ||
+            { echo NEED_2_FINALIZES_AFTER_BOOT; exit 0; };
+          FILE=$(find /mnt/sd_cam /dev/shm/recordings -maxdepth 2 -type f
+            -name "*$SESSION*-ch$CH.mp4"
+            -printf '%T@ %p\n' 2>/dev/null | sort -nr |
+            head -1 | cut -d' ' -f2-);
+          [ -n "$FILE" ] ||
+            { echo NEED_2_FINALIZES_AFTER_BOOT; exit 0; };
+          META=$(ffprobe -v error -select_streams v:0
+            -show_entries stream=codec_name,width,height,avg_frame_rate,bit_rate
+            -show_entries format=duration,size -of json "$FILE" 2>/dev/null);
+          [ -n "$META" ] ||
+            { echo NEED_2_FINALIZES_AFTER_BOOT; exit 0; };
+          printf '%s\n' "$META" | jq -e --argjson bps "$EX"
+            '(.streams[0] // {}) as $v |
+             (.format // {}) as $m |
+             (try ($v.avg_frame_rate | split("/") | map(tonumber)) catch []) as $f |
+             (try ($v.bit_rate | tonumber) catch 0) as $br |
+             (try ($m.duration | tonumber) catch 0) as $dur |
+             ($v.codec_name == "hevc" and $v.width == 1920 and
+              $v.height == 1080 and ($f | length) == 2 and
+              $f[1] > 0 and ($f[0] / $f[1]) >= 14.5 and
+              ($f[0] / $f[1]) <= 15.5 and
+              $dur >= 55 and $dur <= 65 and
+              $br >= ($bps * 800) and $br <= ($bps * 1200))'
+            >/dev/null 2>&1 && echo OK || echo FAIL:MEDIA_METADATA
+        expected: OK
+        on_fail: real finalized camera media frame rate/duration/bitrate mismatch
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: json
+    path: reports/channel_camera_functional/{timestamp}.json
+  - format: markdown_summary
+    path: reports/channel_camera_functional/{timestamp}.md
