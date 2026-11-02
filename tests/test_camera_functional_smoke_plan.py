@@ -46,9 +46,14 @@ def test_each_effective_case_checks_real_frames_and_recording_without_forced_i2c
         assert runtime["checks"]["recording"]["expected_channels"] == 1
         assert runtime["checks"]["recording"]["session_progress"] == "required"
         commands = runtime["checks"]["custom_commands"]
-        assert len(commands) == 1
-        assert commands[0]["expected"] == "OK"
+        assert len(commands) == 2
+        assert all(item["expected"] == "OK" for item in commands)
         assert "pim_runtime.json" in commands[0]["command"]
+        assert "ffprobe" in commands[1]["command"]
+        assert "avg_frame_rate" in commands[1]["command"]
+        assert "bit_rate" in commands[1]["command"]
+        assert "journalctl -t gstApp -b" in commands[1]["command"]
+        assert "NEED_2_FINALIZES_AFTER_BOOT" in commands[1]["command"]
         assert "i2ctransfer" not in str(commands)
         assert "i2cdetect" not in str(commands)
         assert "systemctl" not in str(commands)
