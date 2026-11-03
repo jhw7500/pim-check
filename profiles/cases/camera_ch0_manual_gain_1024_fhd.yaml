@@ -1,0 +1,64 @@
+# Targeted ch0 manual gain STEP ONLY. Use existing generated FHD ch0
+# hflip/AE/AWB cases for adjacent comparisons; do not launch whole 48-case plan.
+# Source candidate. A real board run requires a reviewed board lease + restore.
+# No forced I2C probing: previous direct AP1302 probe was denied.
+name: "Camera ch0 FHD manual gain 1024"
+description: >-
+  ch0 manual AE gain=1024 vs original gain=512. Assert applied config,
+  real frame flow and recording-channel presence. Actual finalized HEVC MP4
+  and optical gain effect require a separately collected current-session
+  image comparison against stable-scene gain=512 reference. This case alone
+  does NOT prove sensor gain readback or brightness difference.
+tags: [camera, ch0, manual_gain, functional_candidate]
+
+target:
+  host: 192.168.214.4
+
+setup:
+  edgeconf_changes:
+    ".VHL_CAM.cam_width": 1920
+    ".VHL_CAM.cam_height": 1080
+    ".VHL_CAM.fps": 15
+    ".VHL_CAM.recording_time": 1
+    ".VHL_CAM.enc": "h265"
+    ".VHL_CAM.muxer": "mp4"
+    ".VHL_CAM.capture.enable": false
+    ".VHL_CAM.i2c2.ch0.enable": true
+    ".VHL_CAM.i2c2.ch1.enable": false
+    ".VHL_CAM.i2c1.ch2.enable": false
+    ".VHL_CAM.i2c1.ch3.enable": false
+    ".VHL_CAM.i2c2.ch0.vflip": false
+    ".VHL_CAM.i2c2.ch0.hflip": true
+    ".VHL_CAM.i2c2.ch0.ae_on": false
+    ".VHL_CAM.i2c2.ch0.ae_gain": 1024
+    ".VHL_CAM.i2c2.ch0.awb": "auto"
+    ".VHL_CAM.i2c2.ch0.bps": [1024, 1024]
+    ".VHL_CAM.i2c2.ch0.led_flash.enable": false
+    ".VHL_CAM.i2c2.ch1.led_flash.enable": false
+    ".VHL_CAM.i2c1.ch2.led_flash.enable": false
+    ".VHL_CAM.i2c1.ch3.led_flash.enable": false
+  reboot_after: true
+  stabilize_sec: 120
+
+checks:
+  frame_flow:
+    enabled: true
+    path: /run/pim-camera/gstApp.json
+    sample_sec: 3
+  recording:
+    expected_channels: 1
+  custom_commands:
+    - name: ch0 manual gain setting and AE disabled
+      command: >-
+        jq -e '.VHL_CAM.i2c2.ch0 | .enable == true and .ae_on == false
+        and .ae_gain == 1024' /root/shared_v/edgeconf_pim.json
+        >/dev/null 2>&1 && echo OK || echo FAIL:GAIN_CONFIG
+      expected: OK
+    - name: ch0 runtime gain setting matches edgeconf
+      command: >-
+        A=$(jq -c '.VHL_CAM.i2c2.ch0 | {enable,ae_on,ae_gain}'
+        /root/shared_v/edgeconf_pim.json 2>/dev/null);
+        B=$(jq -c '.VHL_CAM.i2c2.ch0 | {enable,ae_on,ae_gain}'
+        /run/pim-camera/config/pim_runtime.json 2>/dev/null);
+        [ -n "$A" ] && [ "$A" = "$B" ] && echo OK || echo FAIL:RUNTIME_GAIN
+      expected: OK
