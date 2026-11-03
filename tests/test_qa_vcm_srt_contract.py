@@ -35,6 +35,7 @@ def complete_trace(session: str = "20261102_0950") -> dict[str, object]:
         if stage == "inflight_drained":
             item["inflight"] = 0
         if stage == "append_checked":
+            item["bytes_expected"] = 512
             item["bytes_written"] = 512
         events.append(item)
     return {"schema": 1, "session": session, "events": events}
@@ -147,6 +148,48 @@ def test_extra_post_marker_write_and_missing_doc_are_rejected():
     assert policy.review_srt_done_evidence(trace)["decision"] == "BLOCK"
     assert policy.review_srt_done_evidence({})["decision"] == "BLOCK"
     assert policy.review_srt_done_evidence(None)["decision"] == "BLOCK"
+
+
+@pytest.mark.parametrize("expected,written,reason", [
+    (512, 511, "APPEND_BYTE_COUNT_MISMATCH"),
+    (512, 513, "APPEND_BYTE_COUNT_MISMATCH"),
+    (513, 512, "APPEND_BYTE_COUNT_MISMATCH"),
+    (0, 0, "APPEND_RESULT_UNVERIFIED"),
+    (0, 512, "APPEND_RESULT_UNVERIFIED"),
+    (True, 512, "APPEND_RESULT_UNVERIFIED"),
+    (512, -1, "APPEND_RESULT_UNVERIFIED"),
+    (512, 512.0, "APPEND_RESULT_UNVERIFIED"),
+])
+def test_partial_or_invalid_srt_append_cannot_qualify_as_complete(
+    expected: object, written: object, reason: str
+):
+    """The total session byte count must be exact, not merely nonzero."""
+    trace = complete_trace()
+    item = _event(trace, "append_checked")
+    item["bytes_expected"] = expected
+    item["bytes_written"] = written
+    result = policy.review_srt_done_evidence(trace)
+    assert result["decision"] == "BLOCK"
+    assert result["reason_codes"] == [reason]
+    assert result["hardware_execution_authorized"] is False
+
+
+def test_missing_expected_srt_byte_count_is_rejected():
+    trace = complete_trace()
+    del _event(trace, "append_checked")["bytes_expected"]
+    result = policy.review_srt_done_evidence(trace)
+    assert result["decision"] == "BLOCK"
+    assert result["reason_codes"] == ["INVALID_EVENT_FIELDS"]
+
+
+def test_exact_reported_bytes_are_still_untrusted_synthetic_evidence():
+    trace = complete_trace()
+    _event(trace, "append_checked")["bytes_expected"] = 2048
+    _event(trace, "append_checked")["bytes_written"] = 2048
+    result = policy.review_srt_done_evidence(trace)
+    assert result["decision"] == "REVIEW_REQUIRED"
+    assert result["trusted_installed_evidence"] is False
+    assert result["hardware_execution_authorized"] is False
 
 
 def test_cli_fail_closed_even_on_perfect_trace(tmp_path, capsys):

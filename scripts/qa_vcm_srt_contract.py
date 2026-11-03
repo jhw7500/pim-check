@@ -64,7 +64,7 @@ def review_srt_done_evidence(document: Any) -> dict[str, object]:
         if stage in _COUNTS:
             fields.add(_COUNTS[stage][0])
         if stage == "append_checked":
-            fields.add("bytes_written")
+            fields.update(("bytes_expected", "bytes_written"))
         if set(event) != fields:
             return _outcome("BLOCK", "INVALID_EVENT_FIELDS")
         # bool is an int subclass, but must never be accepted as a sequence.
@@ -81,8 +81,15 @@ def review_srt_done_evidence(document: Any) -> dict[str, object]:
             if type(event[key]) is not int or event[key] != required_count:
                 return _outcome("BLOCK", "QUEUED_OR_INFLIGHT_IO_REMAINING")
         if stage == "append_checked":
-            if type(event["bytes_written"]) is not int or event["bytes_written"] <= 0:
+            # Session-total expected bytes must match acknowledged bytes; a
+            # positive short write is not completion. Caller evidence remains
+            # untrusted even when counts match exactly.
+            expected, written = event["bytes_expected"], event["bytes_written"]
+            if (type(expected) is not int or expected <= 0
+                    or type(written) is not int or written <= 0):
                 return _outcome("BLOCK", "APPEND_RESULT_UNVERIFIED")
+            if written != expected:
+                return _outcome("BLOCK", "APPEND_BYTE_COUNT_MISMATCH")
 
     # Even a perfect synthetic trace is not a trusted Owner/Writer/Fsync attestation.
     return _outcome("REVIEW_REQUIRED", "UNTRUSTED_OFFLINE_EVENT_TRACE", ordered=True)
