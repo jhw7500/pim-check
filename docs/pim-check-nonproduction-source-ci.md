@@ -74,3 +74,27 @@
   빌드서버에 직접 반영하지 않는다.
 - GitHub-hosted 워크플로우 작업과 단위 테스트에서 실제 PIM board SSH,
   OHT 메시지, config 변경, 서비스 재시작, 녹화 파일 삭제를 수행하지 않는다.
+
+## 비양산 빌드서버 소스 승격의 독립 승인 게이트
+
+`scripts/qa_nonprod_source_promotion_preflight.py`는 **읽기 전용** 정책
+사전검사다. GitHub CI `nonprod-source-manifest.json`의 SHA·브랜치·
+필수 S0/S1 소스 목록과, 별도로 수집한 빌드서버 상태(HEAD·미커밋
+경로 지문), GitHub 비교의 변경 파일 경로를 교차 점검한다.
+
+- `AGENTS.md` 등 빌드서버 사용자 미커밋 파일과 업데이트 대상 경로가
+  겹치면 `DIRTY_WORKTREE_PATH_CONFLICT`를 표시한다.
+- 유효한 검증 명세라도 항상 `OWNER_APPROVAL_REQUIRED`,
+  `owner_promotion_authorized=false`, `buildserver_changed=false`를
+  반환하고 종료 코드 2로 끝난다. 원격 작업이나 Git 수정 기능 자체가 없다.
+- 입력 manifest/관측 JSON만으로는 CI run의 진위나 소스 반영 권한을
+  증명할 수 없다. 신뢰된 공식 GitHub Actions 기록과 현행 빌드서버
+  상태를 owner가 독립적으로 재확인해야 한다.
+- 기존 source staging 안전 거부는 **새 정책 수립/검토 없이 유효**하다.
+  이 도구를 새로운 배포 명령·실행 프로파일로 오인하지 않는다.
+
+실제 승격이 가능해지려면 빌드서버 소유자 등록형 **독립된
+source-promotion 프로파일 및 별도 명시 승인**이 필요하다. 설치 대상,
+충돌 파일 처리, 정확한 Git commit SHA, 원본 파일 백업/복구 및 승인된
+적용 방식이 해당 프로파일에 고정돼야 한다. 기존 `pim-check/main`의
+사용자 미커밋 작업을 저장·삭제·덮어쓰기 위해 이 도구를 사용하지 않는다.
