@@ -144,3 +144,63 @@ def test_live_path_still_blocks_measured_risk_without_calling_board(monkeypatch,
     output = __import__("json").loads(capsys.readouterr().out)
     assert output["decision"] == "BLOCK"
     assert "ROOT_FILE_COUNT_CLOSE_TO_LIMIT" in output["storage"]["reason_codes"]
+
+@pytest.mark.parametrize("used,available,files,expected", [
+    (90, 10, 1000, "PASS"),
+    (89, 11, 999, "PASS"),
+    (9000000, 1000000, 1000, "PASS"),
+    (9000001, 999999, 1000, "FAIL"),  # 90.00001% rounds to 90.00
+    (89, 11, 1001, "FAIL"),
+    (91, 9, 1001, "FAIL"),
+])
+def test_current_configured_ord_limits_are_inclusive_without_extra_margin(
+    used: int, available: int, files: int, expected: str,
+):
+    snapshot = replace(safe_snapshot(), used_kib=used, avail_kib=available,
+                       root_files=files)
+    result = gate.current_sd_limits(snapshot)
+    assert result["decision"] == expected
+    assert result["allowed"] == (expected == "PASS")
+    assert result["execution_authorized"] is False
+    assert result["evidence_only"] is True
+
+
+def test_historical_current_sd_counters_pass_but_campaign_stays_blocked():
+    snapshot = gate.parse_observation(board_observation())
+    current = gate.current_sd_limits(snapshot)
+    assert current["decision"] == "PASS"
+    assert current["root_files"] == 978
+    future = gate.storage_gate(snapshot)
+    assert future["current_sd_limits"] == current
+    assert future["forecast_decision"] == "BLOCK"
+    assert future["allowed"] is False
+    assert "PLANNED_RECORDING_CROSSES_FILE_LIMIT" in future["reason_codes"]
+
+
+def test_exact_cap_current_pass_never_unlocks_future_qa_campaign():
+    snapshot = replace(safe_snapshot(), used_kib=90, avail_kib=10, root_files=1000)
+    future = gate.storage_gate(snapshot)
+    assert future["current_sd_limits"]["decision"] == "PASS"
+    assert future["forecast_decision"] == "BLOCK"
+    assert future["allowed"] is False
+    assert future["current_sd_limits"]["execution_authorized"] is False
+
+
+@pytest.mark.parametrize("change", [
+    {"used_kib": -1},
+    {"used_kib": True},
+    {"avail_kib": -1},
+    {"avail_kib": True},
+    {"root_files": True},
+    {"disk_limit_per": 101},
+    {"disk_limit_file": 0},
+    {"used_kib": 0, "avail_kib": 0},
+])
+def test_bad_current_snapshot_fields_fail_closed(change: dict[str, object]):
+    with pytest.raises(gate.GateError):
+        gate.current_sd_limits(replace(safe_snapshot(), **change))
+
+
+def test_current_snapshot_wrong_type_is_rejected():
+    with pytest.raises(gate.GateError, match="INVALID_SNAPSHOT"):
+        gate.current_sd_limits({})
