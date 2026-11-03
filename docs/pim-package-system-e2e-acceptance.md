@@ -31,8 +31,12 @@ CI/pytest는 QA 소스 동작의 증거일 뿐 **설치된 제품의 시스템 P
 - 설정 변경, 재부팅, restart, fault injection, OHT 메시지 전송,
   SD 기존 미디어 삭제 없음. 세 case 모두 `setup`/`teardown` 미설정.
 - `verify_pim_system_live_pipeline`:
-  1. 설치 pim-mp 버전 및 ORD·VSD·VCM 바이너리 SHA256을 **관측**한다.
-     관측된 SHA가 승인한 제품 소스와 일치하는지는 별도 릴리스 검증이 필요하다.
+  1. 설치 pim-mp 버전 및 ORD·VSD·VCM 바이너리 SHA256을 **관측**하고,
+     각각의 실행 중인 단일 PID에 대해 `/proc/PID/exe`의 SHA256과 설치 파일의
+     SHA256이 같아야 한다. 다르면 구버전 실행/설치 드리프트로 실패 처리한다.
+     프로세스가 0개 또는 2개 이상이어도 모호하므로 FAIL이다.
+     이 일치성은 실행본-설치본 동일성만 뜻하며 승인된 제품 소스/빌드 SHA와의
+     대응은 별도 릴리스 검증이 필요하다.
   2. owner cam-operate, ord-operate, vsd-operate systemd와 필수 프로세스
      gstApp/BG_Check/chk_cam_operate/ord/vcm/vsd를 확인한다.
   3. edgeconf의 채널 enable/Flip/AE/AWB/BPS/FPS/해상도·녹화시간이

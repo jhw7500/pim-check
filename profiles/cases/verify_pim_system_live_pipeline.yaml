@@ -34,9 +34,16 @@ checks:
           grep -Fxq 'install ok installed' || { echo FAIL:PACKAGE_NOT_INSTALLED; exit 0; };
         V=$(dpkg-query -W -f='${Version}' pim-mp 2>/dev/null);
         [ -n "$V" ] || { echo FAIL:PACKAGE_EMPTY; exit 0; };
-        O=$(sha256sum /usr/local/bin/ord 2>/dev/null | awk '{print $1}');
-        D=$(sha256sum /usr/local/bin/vsd 2>/dev/null | awk '{print $1}');
-        C=$(sha256sum /usr/local/bin/vcm 2>/dev/null | awk '{print $1}');
+        for APP in ord vsd vcm; do
+          set -- $(pgrep -x "$APP" 2>/dev/null);
+          [ "$#" -eq 1 ] ||
+            { echo "FAIL:PROCESS_COUNT:$APP"; exit 0; };
+          F=$(sha256sum "/usr/local/bin/$APP" 2>/dev/null | awk '{print $1}');
+          P=$(sha256sum "/proc/$1/exe" 2>/dev/null | awk '{print $1}');
+          [ "${#F}" -eq 64 ] && [ "$F" = "$P" ] ||
+            { echo "FAIL:EXECUTABLE_MISMATCH:$APP"; exit 0; };
+          case "$APP" in ord) O=$F;; vsd) D=$F;; vcm) C=$F;; esac;
+        done;
         printf 'PACKAGE:%s ORD:%s VSD:%s VCM:%s\n' "$V" "$O" "$D" "$C"
       expected_regex: '^PACKAGE:[A-Za-z0-9.+:~_-]+ ORD:[0-9a-f]{64} VSD:[0-9a-f]{64} VCM:[0-9a-f]{64}$'
       on_fail: "pim-mp package or installed binary identity unavailable. A SHA alone does not prove reviewed source or installed service provenance."

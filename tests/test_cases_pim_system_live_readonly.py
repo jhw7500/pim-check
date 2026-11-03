@@ -73,8 +73,12 @@ def test_package_inventory_has_installed_binaries_and_provenance_limitation():
     assert "dpkg-query" in spec["command"]
     assert "pim-mp" in spec["command"]
     assert "sha256sum" in spec["command"]
-    for name in ("ord", "vcm", "vsd"):
-        assert f"/usr/local/bin/{name}" in spec["command"]
+    assert 'pgrep -x "$APP"' in spec["command"]
+    assert '"/proc/$1/exe"' in spec["command"]
+    assert "FAIL:PROCESS_COUNT:" in spec["command"]
+    assert "FAIL:EXECUTABLE_MISMATCH:" in spec["command"]
+    assert "for APP in ord vsd vcm" in spec["command"]
+    assert '"/usr/local/bin/$APP"' in spec["command"]
     assert "expected_regex" in spec
     assert "source" in spec["on_fail"]
 
@@ -175,3 +179,74 @@ def test_plan_is_observation_not_fault_or_complete_release_acceptance():
     for forbidden in ("fault_gstapp_crash", "fault_sd_unmounted",
                       "qa_recovery_acceptance", "fhd_4ch"):
         assert forbidden not in body
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("ok", "PACKAGE:0.6.3.2+jhw.camera19 ORD:" + "0" * 63 + "1"),
+    ("missing_ord", "FAIL:PROCESS_COUNT:ord"),
+    ("duplicate_ord", "FAIL:PROCESS_COUNT:ord"),
+    ("changed_ord", "FAIL:EXECUTABLE_MISMATCH:ord"),
+    ("missing_binary_ord", "FAIL:EXECUTABLE_MISMATCH:ord"),
+])
+def test_installed_binary_matches_actual_process_executable_fail_closed(
+    tmp_path, mode: str, expected: str,
+):
+    """All commands here are fake PATH stubs; NO board or live process reads."""
+    import os
+
+    bin_dir = tmp_path / "fake-commands"
+    bin_dir.mkdir()
+    stubs = {
+        "dpkg-query": """#!/bin/sh
+case "$2" in
+  *Status*) printf 'install ok installed';;
+  *Version*) printf '0.6.3.2+jhw.camera19';;
+  *) exit 1;;
+esac
+""",
+        "pgrep": """#!/bin/sh
+case "$2" in
+  ord)
+    [ "$MOCK_PID_CASE" = missing_ord ] && exit 1
+    printf '1001\\n'
+    [ "$MOCK_PID_CASE" = duplicate_ord ] && printf '1004\\n';;
+  vsd) printf '1002\\n';;
+  vcm) printf '1003\\n';;
+  *) exit 1;;
+esac
+""",
+        "sha256sum": """#!/bin/sh
+case "$1" in
+  /usr/local/bin/ord|/proc/1001/exe) SUFFIX=1;;
+  /usr/local/bin/vsd|/proc/1002/exe) SUFFIX=2;;
+  /usr/local/bin/vcm|/proc/1003/exe) SUFFIX=3;;
+  *) exit 1;;
+esac
+if [ "$MOCK_PID_CASE" = missing_binary_ord ] &&
+   [ "$1" = /usr/local/bin/ord ]; then exit 1; fi
+if [ "$MOCK_PID_CASE" = changed_ord ] &&
+   [ "$1" = /proc/1001/exe ]; then SUFFIX=4; fi
+printf '%063d%s  %s\\n' 0 "$SUFFIX" "$1"
+""",
+    }
+    for name, body in stubs.items():
+        executable = bin_dir / name
+        executable.write_text(body, encoding="utf-8")
+        executable.chmod(0o700)
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", commands()[0]["command"]],
+        env={**os.environ, "PATH": str(bin_dir) + ":" + os.environ["PATH"],
+             "MOCK_PID_CASE": mode},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    if mode == "ok":
+        assert result.stdout.strip().startswith(expected)
+        assert re.fullmatch(
+            commands()[0]["expected_regex"], result.stdout.strip()
+        )
+    else:
+        assert result.stdout.strip() == expected
+
+
