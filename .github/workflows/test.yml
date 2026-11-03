@@ -2,7 +2,11 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    # Non-production pim-check: exact QA feature branch runs the existing
+    # no-LLM Tests workflow without a PR or costly review agents.
+    # This CI is SOURCE evidence only. It never stages or deploys code to a
+    # buildserver/PIM target, nor overrides owner-controlled safety gates.
+    branches: [main, 'feat/qa-recovery-ord-vcm-20261026']
   # base 를 제한하지 않는다. `branches: [main]` 이 있으면 **스택 PR**(base 가 다른
   # 피처 브랜치인 PR)에서 이 워크플로우가 아예 발동하지 않아, 체크 목록에 `Tests`
   # 가 **나타나지도 않는다** — 실패가 없으니 통과로 읽힌다(pim-check#86).
@@ -114,3 +118,32 @@ jobs:
 
       - name: Run JS smoke test
         run: uv run pytest tests/test_viewer_js_smoke.py -v
+
+  # Cost-controlled QA source evidence; never deploys to cantopsbuildserver/PIM.
+  nonprod-source-candidate:
+    if: github.event_name == 'push' && github.ref_name == 'feat/qa-recovery-ord-vcm-20261026'
+    needs: [lint, test, js-smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tested exact revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Produce SHA-locked metadata only (no source delivery)
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+        run: >-
+          python3 scripts/qa_nonprod_source_manifest.py
+          --source-sha "$SOURCE_SHA" --branch "$SOURCE_BRANCH"
+
+      - name: Upload owner-review candidate, never an execution approval
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pim-check-nonprod-source-${{ github.sha }}
+          path: nonprod-source-manifest.json
+          if-no-files-found: error
+          retention-days: 14
