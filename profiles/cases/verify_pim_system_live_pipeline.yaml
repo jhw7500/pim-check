@@ -1,0 +1,152 @@
+# READ-ONLY S0/S1 system baseline: no config writes, faults or service restarts.
+# This is not S2-S6 configuration/OHT/fault/soak physical E2E acceptance.
+name: "PIM installed system live pipeline observation"
+description: >-
+  Installed package, owner services, config-to-runtime, camera frame flow,
+  and same-session finalized MP4/VCM-SRT across all active channels.
+tags: [system, integration, read_only, media]
+
+target:
+  host: 192.168.214.4
+
+monitor:
+  duration_sec: 210
+  interval_sec: 10
+
+checks:
+  processes:
+    required: [gstApp, BG_Check_for_pim, chk_cam_operate, ord, vcm, vsd]
+    optional: []
+
+  frame_flow:
+    enabled: true
+    path: /run/pim-camera/gstApp.json
+    sample_sec: 3
+    fps_tolerance_pct: 10
+
+  recording:
+    session_progress: required
+
+  custom_commands:
+    - name: installed pim-mp package and binary identity observed
+      command: >-
+        dpkg-query -W -f='${Status}' pim-mp 2>/dev/null |
+          grep -Fxq 'install ok installed' || { echo FAIL:PACKAGE_NOT_INSTALLED; exit 0; };
+        V=$(dpkg-query -W -f='${Version}' pim-mp 2>/dev/null);
+        [ -n "$V" ] || { echo FAIL:PACKAGE_EMPTY; exit 0; };
+        O=$(sha256sum /usr/local/bin/ord 2>/dev/null | awk '{print $1}');
+        D=$(sha256sum /usr/local/bin/vsd 2>/dev/null | awk '{print $1}');
+        C=$(sha256sum /usr/local/bin/vcm 2>/dev/null | awk '{print $1}');
+        printf 'PACKAGE:%s ORD:%s VSD:%s VCM:%s\n' "$V" "$O" "$D" "$C"
+      expected_regex: '^PACKAGE:[A-Za-z0-9.+:~_-]+ ORD:[0-9a-f]{64} VSD:[0-9a-f]{64} VCM:[0-9a-f]{64}$'
+      on_fail: "pim-mp package or installed binary identity unavailable. A SHA alone does not prove reviewed source or installed service provenance."
+
+    - name: owner cam/ORD/VSD systemd services active
+      command: >-
+        for U in cam-operate.service ord-operate.service vsd-operate.service; do
+          systemctl is-active --quiet "$U" ||
+            { echo "FAIL:SERVICE:$U"; exit 0; };
+        done;
+        echo OK
+      expected: OK
+      on_fail: "A required PIM service is not active"
+
+    - name: edgeconf camera settings reflected in merged runtime
+      command: >-
+        jq -en
+        --slurpfile cfg /root/shared_v/edgeconf_pim.json
+        --slurpfile rt /run/pim-camera/config/pim_runtime.json
+        '
+          def view: .VHL_CAM |
+            [.cam_width,.cam_height,.fps,.enc,.recording_time,
+             (.i2c2.ch0 | {enable,bps,vflip,hflip,ae_on,ae_gain,awb}),
+             (.i2c2.ch1 | {enable,bps,vflip,hflip,ae_on,ae_gain,awb}),
+             (.i2c1.ch2 | {enable,bps,vflip,hflip,ae_on,ae_gain,awb}),
+             (.i2c1.ch3 | {enable,bps,vflip,hflip,ae_on,ae_gain,awb})];
+          ($cfg|length) == 1 and ($rt|length) == 1 and
+          ($cfg[0].VHL_CAM.fps|type) == "number" and
+          ($cfg[0].VHL_CAM.cam_width|type) == "number" and
+          ($cfg[0].VHL_CAM.cam_height|type) == "number" and
+          ($cfg[0].VHL_CAM.recording_time|type) == "number" and
+          ($cfg[0].VHL_CAM.enc|type) == "string" and
+          ([ $cfg[0].VHL_CAM.i2c2.ch0.enable,
+             $cfg[0].VHL_CAM.i2c2.ch1.enable,
+             $cfg[0].VHL_CAM.i2c1.ch2.enable,
+             $cfg[0].VHL_CAM.i2c1.ch3.enable ] | all(type == "boolean")) and
+          ($cfg[0]|view) == ($rt[0]|view)
+        ' >/dev/null 2>&1 && echo OK || echo FAIL:ACTIVE_RUNTIME_MISMATCH
+      expected: OK
+      on_fail: "Actual merged camera runtime does not match edgeconf configuration"
+
+    - name: same-current-boot finalized channel MP4 and configured SRT
+      command: >-
+        S=$(journalctl -t gstApp -b --no-pager -n 500 2>/dev/null |
+            sed -n 's/.*Session complete: \([0-9]\{8\}_[0-9]\{4\}\).*/\1/p' |
+            tail -1);
+        [ -n "$S" ] || { echo NEED_2_FINALIZES_AFTER_BOOT; exit 0; };
+        E=$(jq -er '.VHL_CAM.fps|select(type=="number" and .>0)' /root/shared_v/edgeconf_pim.json 2>/dev/null) ||
+          { echo FAIL:FPS_CONFIG; exit 0; };
+        W=$(jq -er '.VHL_CAM.cam_width|select(type=="number" and .>0)' /root/shared_v/edgeconf_pim.json 2>/dev/null) ||
+          { echo FAIL:WIDTH_CONFIG; exit 0; };
+        H=$(jq -er '.VHL_CAM.cam_height|select(type=="number" and .>0)' /root/shared_v/edgeconf_pim.json 2>/dev/null) ||
+          { echo FAIL:HEIGHT_CONFIG; exit 0; };
+        R=$(jq -er '.VHL_CAM.recording_time|select(type=="number" and .>0)' /root/shared_v/edgeconf_pim.json 2>/dev/null) ||
+          { echo FAIL:SEGMENT_CONFIG; exit 0; };
+        T=$(jq -r '.VHL_CAM.enc' /root/shared_v/edgeconf_pim.json 2>/dev/null);
+        case "$T" in h265) CODEC=hevc;; h264) CODEC=h264;; *)
+          echo FAIL:CODEC_CONFIG; exit 0;; esac;
+        CH=$(jq -r '[.VHL_CAM.i2c2.ch0.enable,.VHL_CAM.i2c2.ch1.enable,
+                      .VHL_CAM.i2c1.ch2.enable,.VHL_CAM.i2c1.ch3.enable] |
+                      to_entries|map(select(.value==true)|.key)|join(" ")'
+                      /root/shared_v/edgeconf_pim.json 2>/dev/null) ||
+          { echo FAIL:CHANNEL_CONFIG; exit 0; };
+        [ -n "$CH" ] || { echo FAIL:NO_ENABLED_CHANNEL; exit 0; };
+        for ch in $CH; do
+          F=$(find /mnt/sd_cam /dev/shm -maxdepth 3 -type f
+                    -name "*$S*-ch$ch.mp4" -mmin -5
+                    -printf '%T@ %p\n' 2>/dev/null |
+                    sort -nr | head -1 | cut -d' ' -f2-);
+          [ -n "$F" ] && [ -s "$F" ] ||
+            { echo "FAIL:MP4_MISSING:ch$ch:$S"; exit 0; };
+          B=$(jq -r --argjson ch "$ch"
+                '[.VHL_CAM.i2c2.ch0.bps[1],.VHL_CAM.i2c2.ch1.bps[1],
+                  .VHL_CAM.i2c1.ch2.bps[1],.VHL_CAM.i2c1.ch3.bps[1]]
+                 | .[$ch] // 0' /root/shared_v/edgeconf_pim.json 2>/dev/null);
+          M=$(ffprobe -v error -select_streams v:0
+                -show_entries stream=codec_name,width,height,avg_frame_rate,bit_rate
+                -show_entries format=duration,size -of json "$F" 2>/dev/null);
+          printf '%s\n' "$M" | jq -e
+                --arg codec "$CODEC" --argjson w "$W" --argjson h "$H"
+                --argjson fps "$E" --argjson minutes "$R"
+                --argjson bps "$B" '
+             (.streams[0] // {}) as $v | (.format // {}) as $f |
+             (try ($v.avg_frame_rate | split("/") | map(tonumber)) catch []) as $rate |
+             (try ($v.bit_rate | tonumber) catch 0) as $bit |
+             (try ($f.duration | tonumber) catch 0) as $dur |
+             ($v.codec_name==$codec and $v.width==$w and $v.height==$h and
+              ($rate|length)==2 and $rate[1]>0 and
+              ($rate[0]/$rate[1])>=($fps*0.9) and
+              ($rate[0]/$rate[1])<=($fps*1.1) and
+              $dur>=($minutes*60-10) and $dur<=($minutes*60+10) and
+              $bps>0 and $bit>=($bps*800) and $bit<=($bps*1200))
+          ' >/dev/null 2>&1 ||
+            { echo "FAIL:MP4_METADATA:ch$ch:$S"; exit 0; };
+        done;
+        ENABLE=$(jq -r '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json 2>/dev/null);
+        case "$ENABLE" in
+          true)
+            F=$(find /mnt/sd_cam /dev/shm -maxdepth 3 -type f
+                      -name "*${S}00-data.srt" -mmin -5 -size +0c
+                      -printf '%T@ %p\n' 2>/dev/null |
+                      sort -nr | head -1 | cut -d' ' -f2-);
+            [ -n "$F" ] && [ -s "$F" ] ||
+              { echo FAIL:SRT_MISSING; exit 0; };;
+          false) ;;
+          *) echo FAIL:SRT_CONFIG; exit 0;;
+        esac;
+        echo OK
+      expected: OK
+      on_fail: >-
+        Same-current-boot finalized MP4 for every active channel, measured
+        metadata and SRT co-occurrence are not confirmed.
+        These observations alone cannot prove fsync/EOS writer closure.

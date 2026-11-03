@@ -1,0 +1,41 @@
+# Installed full PIM-package S0/S1 READ-ONLY system baseline.
+# No OHT request, setting changes, fault injection, reboot, or media deletion.
+# Passing this plan is NOT the full S2-S6 system acceptance.
+name: "PIM integrated installed-system S0/S1 observation"
+description: >-
+  Installed package + source/active runtime inventory, system services,
+  ORD/VCM shared configuration, camera frame flow and same-session
+  finalized media for all enabled channels. S2-S6 require separate authority.
+version: 1
+
+cases:
+  regression:
+    - config_integrity
+    - verify_ord_vcm_integration
+    - verify_pim_system_live_pipeline
+
+execution:
+  stop_on_fail: true
+  case_retry: 0
+  retry_wait_sec: 0
+  reboot_wait_sec: 0
+  wait_between_cases: 0
+  monitor_until_pass: true
+  skip_finalize_checks: false
+
+case_overrides:
+  target:
+    host: 192.168.214.4
+  known_issues: []
+
+gate:
+  threshold_pass_rate: 1.0
+  allow_known_issue: false
+
+reports:
+  - format: json
+    path: reports/pim_system_live_readonly/{timestamp}.json
+  - format: junit
+    path: reports/pim_system_live_readonly/{timestamp}.xml
+  - format: markdown_summary
+    path: reports/pim_system_live_readonly/{timestamp}.md
