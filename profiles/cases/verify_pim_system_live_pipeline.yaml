@@ -29,23 +29,112 @@ checks:
 
   custom_commands:
     - name: installed pim-mp package and binary identity observed
-      command: >-
-        dpkg-query -W -f='${Status}' pim-mp 2>/dev/null |
-          grep -Fxq 'install ok installed' || { echo FAIL:PACKAGE_NOT_INSTALLED; exit 0; };
-        V=$(dpkg-query -W -f='${Version}' pim-mp 2>/dev/null);
-        [ -n "$V" ] || { echo FAIL:PACKAGE_EMPTY; exit 0; };
-        for APP in ord vsd vcm; do
-          set -- $(pgrep -x "$APP" 2>/dev/null);
-          [ "$#" -eq 1 ] ||
-            { echo "FAIL:PROCESS_COUNT:$APP"; exit 0; };
-          F=$(sha256sum "/usr/local/bin/$APP" 2>/dev/null | awk '{print $1}');
-          P=$(sha256sum "/proc/$1/exe" 2>/dev/null | awk '{print $1}');
-          [ "${#F}" -eq 64 ] && [ "$F" = "$P" ] ||
-            { echo "FAIL:EXECUTABLE_MISMATCH:$APP"; exit 0; };
-          case "$APP" in ord) O=$F;; vsd) D=$F;; vcm) C=$F;; esac;
-        done;
-        printf 'PACKAGE:%s ORD:%s VSD:%s VCM:%s\n' "$V" "$O" "$D" "$C"
-      expected_regex: '^PACKAGE:[A-Za-z0-9.+:~_-]+ ORD:[0-9a-f]{64} VSD:[0-9a-f]{64} VCM:[0-9a-f]{64}$'
+      # Literal shell plus closed stdin keeps each read-only query noninteractive.
+      command: |-
+        {
+          set +e
+          set -f
+          OK=1
+          valid_hash() {
+            [ "${#1}" -eq 64 ] || return 1
+            case "$1" in *[!0-9a-f]*) return 1;; esac
+            return 0
+          }
+          STATUS=$(dpkg-query -W -f='${Status}' pim-mp 2>/dev/null); STATUS_RC=$?
+          VERSION=$(dpkg-query -W -f='${Version}' pim-mp 2>/dev/null); VERSION_RC=$?
+          printf 'PACKAGE:pim-mp STATUS_RC:%s STATUS:<%.160s> VERSION_RC:%s VERSION:<%.160s>\n' \
+            "$STATUS_RC" "$STATUS" "$VERSION_RC" "$VERSION"
+          if [ "$STATUS_RC" -ne 0 ] || [ "$STATUS" != 'install ok installed' ]; then
+            echo FAIL:PACKAGE_NOT_INSTALLED; OK=0
+          fi
+          if [ "$VERSION_RC" -ne 0 ] || [ -z "$VERSION" ]; then
+            echo FAIL:PACKAGE_EMPTY; OK=0
+          fi
+          case "$VERSION" in *[!A-Za-z0-9.+:~_-]*) echo FAIL:PACKAGE_VERSION_INVALID; OK=0;; esac
+          if [ "${#STATUS}" -gt 160 ] || [ "${#VERSION}" -gt 160 ]; then
+            echo FAIL:PACKAGE_EVIDENCE_TRUNCATED; OK=0
+          fi
+          for APP in ord vsd vcm; do
+            INSTALLED="/usr/local/bin/$APP"
+            RAW=$(sha256sum "$INSTALLED" 2>/dev/null); F_RC=$?
+            F=${RAW%% *}
+            printf 'APP:%s INSTALLED_PATH:%s INSTALLED_SHA256:%.64s INSTALLED_SHA256_RC:%s\n' \
+              "$APP" "$INSTALLED" "${F:-UNAVAILABLE}" "$F_RC"
+            IDENTITY_OK=1
+            if [ "$F_RC" -ne 0 ] || ! valid_hash "$F"; then IDENTITY_OK=0; fi
+            PIDS=$(pgrep -x "$APP" 2>/dev/null); PGREP_RC=$?
+            set -- $PIDS
+            COUNT=$#
+            printf 'APP:%s PGREP_RC:%s PROCESS_COUNT:%s\n' "$APP" "$PGREP_RC" "$COUNT"
+            if [ "$PGREP_RC" -ne 0 ] || [ "$COUNT" -ne 1 ]; then
+              printf 'FAIL:PROCESS_COUNT:%s\n' "$APP"; OK=0
+            fi
+            SEEN=0
+            for PID in "$@"; do
+              [ "$SEEN" -lt 8 ] || break
+              SEEN=$((SEEN + 1))
+              case "$PID" in ''|*[!0-9]*)
+                printf 'APP:%s PID:%.20s INVALID_PID:yes\n' "$APP" "$PID"
+                IDENTITY_OK=0; continue;;
+              esac
+              LINK=$(readlink "/proc/$PID/exe" 2>/dev/null); LINK_RC=$?
+              RAW=$(sha256sum "/proc/$PID/exe" 2>/dev/null); P_RC=$?
+              P=${RAW%% *}
+              MATCH=no
+              if [ "$F_RC" -eq 0 ] && [ "$P_RC" -eq 0 ] &&
+                 valid_hash "$F" && valid_hash "$P" && [ "$F" = "$P" ]; then
+                MATCH=yes
+              else
+                IDENTITY_OK=0
+              fi
+              printf 'APP:%s PID:%.20s EXE_LINK:<%.256s> EXE_LINK_RC:%s RUNNING_SHA256:%.64s RUNNING_SHA256_RC:%s MATCH:%s\n' \
+                "$APP" "$PID" "$LINK" "$LINK_RC" "${P:-UNAVAILABLE}" "$P_RC" "$MATCH"
+              if [ "$LINK_RC" -ne 0 ] || [ -z "$LINK" ] || [ "${#LINK}" -gt 256 ]; then
+                printf 'FAIL:EXECUTABLE_LINK:%s\n' "$APP"; IDENTITY_OK=0
+              fi
+            done
+            TRUNCATED=no
+            [ "$COUNT" -le "$SEEN" ] || TRUNCATED=yes
+            printf 'APP:%s PIDS_SHOWN:%s PIDS_TRUNCATED:%s\n' "$APP" "$SEEN" "$TRUNCATED"
+            if [ "$IDENTITY_OK" -ne 1 ]; then
+              printf 'FAIL:EXECUTABLE_MISMATCH:%s\n' "$APP"; OK=0
+            fi
+          done
+          # Historical diagnostics only; never execute maintainer scripts.
+          if [ "$STATUS" = 'install ok half-configured' ]; then
+            if command -v timeout >/dev/null 2>&1; then
+              TRACE=$(LC_ALL=C timeout -k 1s 8s journalctl --utc --no-pager \
+                -o short-iso --since '30 days ago' \
+                --grep '\[PKG\].*(preinst|postinst):|IIM-42652|post-installation script subprocess' \
+                -n 80 2>&1); TRACE_RC=$?
+              printf 'PACKAGE_JOURNAL_BEGIN SINCE:30-days LIMIT:80 RC:%s\n' "$TRACE_RC"
+              printf '%s\n' "$TRACE" | LC_ALL=C cut -b 1-320 | head -c 16000
+              printf '\nPACKAGE_JOURNAL_END\n'
+              BOOTS=$(LC_ALL=C timeout -k 1s 4s journalctl --utc --list-boots --no-pager 2>&1); BOOTS_RC=$?
+              printf 'PACKAGE_JOURNAL_BOOTS_BEGIN RC:%s\n' "$BOOTS_RC"
+              printf '%s\n' "$BOOTS" | tail -n 8 | LC_ALL=C cut -b 1-320
+              printf 'PACKAGE_JOURNAL_BOOTS_END\n'
+              if command -v zgrep >/dev/null 2>&1; then
+                SLOG=$(set +f; LC_ALL=C timeout -k 1s 8s zgrep -n -H -E \
+                  '(Oct (24|26)|2026-10-(24|26)).*(\[PKG\]|IIM-42652|[Ff]ailed to create .* directory\.)|(2026-10-24 13:0[01]:|2026-10-26 04:3[56]:).*update_network' \
+                  /var/log/cantops/local0.log* 2>&1); SLOG_RC=$?
+                printf 'PACKAGE_SYSLOG_BEGIN DATES:2026-10-24,2026-10-26 RC:%s\n' "$SLOG_RC"
+                printf '%s\n' "$SLOG" | LC_ALL=C cut -b 1-320 | head -c 16000
+                printf '\nPACKAGE_SYSLOG_END\n'
+              else
+                echo PACKAGE_SYSLOG_UNAVAILABLE:zgrep
+              fi
+            else
+              echo PACKAGE_JOURNAL_UNAVAILABLE:timeout
+            fi
+          fi
+          if [ "$OK" -eq 1 ]; then
+            echo VERDICT:PACKAGE_IDENTITY_OK
+          else
+            echo VERDICT:PACKAGE_IDENTITY_FAIL
+          fi
+        } </dev/null
+      expected_regex: '(?:^|\n)VERDICT:PACKAGE_IDENTITY_OK$'
       on_fail: "pim-mp package or installed binary identity unavailable. A SHA alone does not prove reviewed source or installed service provenance."
 
     - name: owner cam/ORD/VSD systemd services active
@@ -86,7 +175,8 @@ checks:
       on_fail: "Actual merged camera runtime does not match edgeconf configuration"
 
     - name: same-current-boot finalized channel MP4 and configured SRT
-      command: >-
+      # Preserve explicit shell continuations; folded YAML can detach argv.
+      command: |-
         S=$(journalctl -t gstApp -b --no-pager -n 500 2>/dev/null |
             sed -n 's/.*Session complete: \([0-9]\{8\}_[0-9]\{4\}\).*/\1/p' |
             tail -1);
@@ -104,27 +194,39 @@ checks:
           echo FAIL:CODEC_CONFIG; exit 0;; esac;
         CH=$(jq -r '[.VHL_CAM.i2c2.ch0.enable,.VHL_CAM.i2c2.ch1.enable,
                       .VHL_CAM.i2c1.ch2.enable,.VHL_CAM.i2c1.ch3.enable] |
-                      to_entries|map(select(.value==true)|.key)|join(" ")'
+                      to_entries|map(select(.value==true)|.key)|join(" ")' \
                       /root/shared_v/edgeconf_pim.json 2>/dev/null) ||
           { echo FAIL:CHANNEL_CONFIG; exit 0; };
         [ -n "$CH" ] || { echo FAIL:NO_ENABLED_CHANNEL; exit 0; };
         for ch in $CH; do
-          F=$(find /mnt/sd_cam /dev/shm -maxdepth 3 -type f
-                    -name "*$S*-ch$ch.mp4" -mmin -5
+          F=$(find /mnt/sd_cam /dev/shm -maxdepth 3 -type f \
+                    -name "*$S*-ch$ch.mp4" -mmin -5 \
                     -printf '%T@ %p\n' 2>/dev/null |
                     sort -nr | head -1 | cut -d' ' -f2-);
           [ -n "$F" ] && [ -s "$F" ] ||
             { echo "FAIL:MP4_MISSING:ch$ch:$S"; exit 0; };
-          B=$(jq -r --argjson ch "$ch"
+          B=$(jq -r --argjson ch "$ch" \
                 '[.VHL_CAM.i2c2.ch0.bps[1],.VHL_CAM.i2c2.ch1.bps[1],
                   .VHL_CAM.i2c1.ch2.bps[1],.VHL_CAM.i2c1.ch3.bps[1]]
                  | .[$ch] // 0' /root/shared_v/edgeconf_pim.json 2>/dev/null);
-          M=$(ffprobe -v error -select_streams v:0
-                -show_entries stream=codec_name,width,height,avg_frame_rate,bit_rate
+          M=$(ffprobe -v error -select_streams v:0 \
+                -show_entries stream=codec_name,width,height,avg_frame_rate,bit_rate \
                 -show_entries format=duration,size -of json "$F" 2>/dev/null);
-          printf '%s\n' "$M" | jq -e
-                --arg codec "$CODEC" --argjson w "$W" --argjson h "$H"
-                --argjson fps "$E" --argjson minutes "$R"
+          DATA=$(printf '%s\n' "$M" | jq -c \
+                --arg session "$S" --arg channel "ch$ch" --arg path "$F" '
+             {session:$session,channel:$channel,path:$path,
+              codec_name:.streams[0].codec_name,width:.streams[0].width,
+              height:.streams[0].height,avg_frame_rate:.streams[0].avg_frame_rate,
+              bit_rate:.streams[0].bit_rate,duration:.format.duration,size:.format.size}
+          ' 2>/dev/null);
+          [ -n "$DATA" ] || DATA=UNAVAILABLE;
+          printf 'MEDIA:%s\n' "$DATA";
+          D=$(LC_ALL=C df -P "$F" 2>/dev/null | sed -n '1,2p');
+          [ -n "$D" ] || D=UNAVAILABLE;
+          printf 'MEDIA_DF:ch%s\n%s\n' "$ch" "$D";
+          printf '%s\n' "$M" | jq -e \
+                --arg codec "$CODEC" --argjson w "$W" --argjson h "$H" \
+                --argjson fps "$E" --argjson minutes "$R" \
                 --argjson bps "$B" '
              (.streams[0] // {}) as $v | (.format // {}) as $f |
              (try ($v.avg_frame_rate | split("/") | map(tonumber)) catch []) as $rate |
@@ -140,19 +242,30 @@ checks:
             { echo "FAIL:MP4_METADATA:ch$ch:$S"; exit 0; };
         done;
         ENABLE=$(jq -r '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json 2>/dev/null);
+        printf 'SRT_ENABLED:%s\n' "$ENABLE";
         case "$ENABLE" in
           true)
-            F=$(find /mnt/sd_cam /dev/shm -maxdepth 3 -type f
-                      -name "*${S}00-data.srt" -mmin -5 -size +0c
+            F=$(find /mnt/sd_cam /dev/shm -maxdepth 3 -type f \
+                      -name "*${S}00-data.srt" -mmin -5 -size +0c \
                       -printf '%T@ %p\n' 2>/dev/null |
                       sort -nr | head -1 | cut -d' ' -f2-);
             [ -n "$F" ] && [ -s "$F" ] ||
-              { echo FAIL:SRT_MISSING; exit 0; };;
+              { echo FAIL:SRT_MISSING; exit 0; };
+            Z=$(stat -c %s "$F" 2>/dev/null) || Z=UNAVAILABLE;
+            DATA=$(jq -cn \
+                  --arg session "$S" --arg path "$F" --arg size "$Z" '
+                {session:$session,path:$path,size:$size}
+            ' 2>/dev/null);
+            [ -n "$DATA" ] || DATA=UNAVAILABLE;
+            printf 'SRT:%s\n' "$DATA";
+            D=$(LC_ALL=C df -P "$F" 2>/dev/null | sed -n '1,2p');
+            [ -n "$D" ] || D=UNAVAILABLE;
+            printf 'SRT_DF:\n%s\n' "$D";;
           false) ;;
           *) echo FAIL:SRT_CONFIG; exit 0;;
         esac;
-        echo OK
-      expected: OK
+        echo VERDICT:MEDIA_OK
+      expected_regex: '(?:^|\n)VERDICT:MEDIA_OK\Z'
       on_fail: >-
         Same-current-boot finalized MP4 for every active channel, measured
         metadata and SRT co-occurrence are not confirmed.

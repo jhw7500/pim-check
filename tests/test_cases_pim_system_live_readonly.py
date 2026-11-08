@@ -74,7 +74,10 @@ def test_package_inventory_has_installed_binaries_and_provenance_limitation():
     assert "pim-mp" in spec["command"]
     assert "sha256sum" in spec["command"]
     assert 'pgrep -x "$APP"' in spec["command"]
-    assert '"/proc/$1/exe"' in spec["command"]
+    assert "/proc/" in spec["command"] and "/exe" in spec["command"]
+    for field in ("STATUS_RC:", "VERSION_RC:", "INSTALLED_SHA256:",
+                  "PROCESS_COUNT:", "RUNNING_SHA256:", "EXE_LINK:"):
+        assert field in spec["command"]
     assert "FAIL:PROCESS_COUNT:" in spec["command"]
     assert "FAIL:EXECUTABLE_MISMATCH:" in spec["command"]
     assert "for APP in ord vsd vcm" in spec["command"]
@@ -104,10 +107,13 @@ def test_same_boot_channel_video_metadata_and_srt_are_cross_correlated():
                   "MP4_METADATA", "MP4_MISSING", "-mmin -5",
                   "*${S}00-data.srt"):
         assert value in cmd
-    assert spec["expected"] == "OK"
+    pattern = spec["expected_regex"]
+    assert re.search(pattern, "MEDIA:{}\nVERDICT:MEDIA_OK")
+    assert not re.search(pattern, "VERDICT:MEDIA_OK\nFAIL:AFTER_VERDICT")
 
 
-def test_remote_commands_are_nonmutating_and_bash_syntax_valid():
+@pytest.mark.parametrize("shell", ["/bin/sh", "/bin/bash"])
+def test_remote_commands_are_nonmutating_and_shell_syntax_valid(shell):
     for spec in commands():
         cmd = spec["command"]
         assert MUTATING.search(cmd) is None, spec["name"]
@@ -115,7 +121,7 @@ def test_remote_commands_are_nonmutating_and_bash_syntax_valid():
             r"(?:^|\s)>{1,2}\s*(?!/dev/null(?:\s|$))\S+", cmd
         ) is None
         result = subprocess.run(
-            ["/bin/bash", "-n", "-c", cmd],
+            [shell, "-n", "-c", cmd],
             capture_output=True, text=True, timeout=10, check=False,
         )
         assert result.returncode == 0, (spec["name"], result.stderr)
@@ -123,9 +129,8 @@ def test_remote_commands_are_nonmutating_and_bash_syntax_valid():
 
 def positive():
     return [
-        "PACKAGE:0.6.3.2+jhw.camera19 ORD:" + "a" * 64
-        + " VSD:" + "b" * 64 + " VCM:" + "c" * 64,
-        "OK", "OK", "OK",
+        "PACKAGE:pim-mp STATUS:<install ok installed>\nVERDICT:PACKAGE_IDENTITY_OK",
+        "OK", "OK", "MEDIA:{}\nVERDICT:MEDIA_OK",
     ]
 
 
@@ -182,7 +187,7 @@ def test_plan_is_observation_not_fault_or_complete_release_acceptance():
 
 
 @pytest.mark.parametrize("mode,expected", [
-    ("ok", "PACKAGE:0.6.3.2+jhw.camera19 ORD:" + "0" * 63 + "1"),
+    ("ok", "VERDICT:PACKAGE_IDENTITY_OK"),
     ("missing_ord", "FAIL:PROCESS_COUNT:ord"),
     ("duplicate_ord", "FAIL:PROCESS_COUNT:ord"),
     ("changed_ord", "FAIL:EXECUTABLE_MISMATCH:ord"),
@@ -214,6 +219,15 @@ case "$2" in
   vcm) printf '1003\\n';;
   *) exit 1;;
 esac
+exit 0
+""",
+        "readlink": """#!/bin/sh
+case "$1" in
+  /proc/1001/exe|/proc/1004/exe) printf '/usr/local/bin/ord\\n';;
+  /proc/1002/exe) printf '/usr/local/bin/vsd\\n';;
+  /proc/1003/exe) printf '/usr/local/bin/vcm\\n';;
+  *) exit 1;;
+esac
 """,
         "sha256sum": """#!/bin/sh
 case "$1" in
@@ -241,12 +255,17 @@ printf '%063d%s  %s\\n' 0 "$SUFFIX" "$1"
         capture_output=True, text=True, timeout=10, check=False,
     )
     assert result.returncode == 0, result.stderr
+    for app in ("ord", "vsd", "vcm"):
+        assert f"APP:{app} INSTALLED_PATH:" in result.stdout
     if mode == "ok":
-        assert result.stdout.strip().startswith(expected)
-        assert re.fullmatch(
-            commands()[0]["expected_regex"], result.stdout.strip()
-        )
+        assert result.stdout.strip().endswith(expected)
+        assert re.search(commands()[0]["expected_regex"], result.stdout.strip())
+        assert not re.search(
+            commands()[0]["expected_regex"],
+            result.stdout.strip() + "\nFAIL:AFTER_VERDICT")
     else:
-        assert result.stdout.strip() == expected
+        assert any(line.startswith(expected) for line in result.stdout.splitlines())
+        assert result.stdout.strip().endswith("VERDICT:PACKAGE_IDENTITY_FAIL")
+        assert not re.search(commands()[0]["expected_regex"], result.stdout.strip())
 
 
