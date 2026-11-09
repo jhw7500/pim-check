@@ -1,4 +1,6 @@
 name: Tests
+# ubuntu-latest moved to 26.04, which lacks setup-python 3.9 and
+# Playwright Chromium support. Pin supported runner for the existing matrix.
 
 on:
   push:
